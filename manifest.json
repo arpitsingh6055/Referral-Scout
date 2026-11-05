@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Cold Contact Pro — Phase 1",
+  "version": "0.1.0",
+  "description": "Profile, policy, storage, and read-only selector diagnostics. Campaign execution is not yet available.",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "alarms", "sidePanel", "scripting", "tabs", "notifications", "power", "unlimitedStorage", "offscreen"],
+  "host_permissions": ["https://www.linkedin.com/*", "https://linkedin.com/*", "https://mail.google.com/*", "https://gemini.google.com/*", "https://chatgpt.com/*", "https://dns.google/*"],
+  "optional_host_permissions": ["https://*/*"],
+  "background": { "service_worker": "service-worker.js", "type": "module" },
+  "action": { "default_title": "Open Cold Contact Pro" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "options_page": "options.html",
+  "content_scripts": [{
+    "matches": ["https://www.linkedin.com/*", "https://linkedin.com/*", "https://mail.google.com/*", "https://gemini.google.com/*", "https://chatgpt.com/*"],
+    "js": ["health.js"], "run_at": "document_idle"
+  }],
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'" }
+}

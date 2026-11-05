@@ -17,7 +17,7 @@ behavior, actual behavior, and whether a message might already have been sent.
 
 - Enable GitHub private vulnerability reporting before inviting public reports.
 - Enable available secret-scanning and push-protection features.
-- Require the Phase 0 checks before merging changes to the default branch.
+- Require the Extension checks workflow before merging changes to the default branch.
 - Review dependency and Actions updates before merging them.
 - Review staged files for private data; ignore rules are not a security scanner.
 - Keep CI read-only and independent of logged-in personal accounts.

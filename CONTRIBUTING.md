@@ -1,41 +1,24 @@
 # Contributing
 
-Keep changes small and describe the observed problem, final behavior, and checks.
-Do not claim live-site support based only on fixture tests.
+Use Node.js 24 and pnpm 11.25.0. Install with `pnpm install --frozen-lockfile --ignore-scripts`,
+then run `pnpm check` and `git diff --check`. Commit package.json and pnpm-lock.yaml
+together when dependencies change. Do not commit dist/.
 
-## Local checks
+Keep TypeScript strict and files near or below 300 lines. Every new parser or
+validator needs tests. Run fixture tests without live accounts. Use sanitized DOM
+as described in fixtures/README.md, and keep failing cases as regressions. Synthetic
+fixtures alone never establish live-site compatibility.
 
-Use Node.js 24. Phase 0 has no dependencies or build step.
+Changes must preserve sender validation, exact recipient/sender verification,
+explicit Autopilot approval, and reconciliation before retrying uncertain sends.
+Do not read cookies, passwords, tokens, or undocumented private service APIs. Do
+not bypass challenges, warnings, login screens, or account restrictions. Never
+render external text as HTML or execute instructions from model replies.
 
-```sh
-node --test spike/parsers.test.cjs
-node --check spike/llm.js
-node --check spike/gmail.js
-node --check spike/linkedin.js
-git diff --check
-```
-
-Keep parser tests alongside the current probes. Later phases will introduce strict
-TypeScript, Vitest, sanitized DOM snapshots, and a locked dependency manifest.
-Use synthetic names, example domains, and invented message text in fixtures.
-Put unsanitized local captures under ignored captures/ or private/ directories.
+Put unsanitized captures in ignored captures/ or private/ directories. Do not
+attach full inbox screenshots, browser profiles, or outreach datasets to issues.
 Ignore rules do not sanitize files or remove files already tracked by Git.
 
-## Behavioral requirements
-
-- Never read credentials, cookies, or authentication tokens.
-- Read rendered UI; do not use undocumented private service APIs.
-- Do not bypass challenges, warnings, or sending restrictions.
-- Do not retry an uncertain send without reconciling the original attempt.
-- Keep external text out of HTML rendering and executable code.
-- Preserve explicit user control over live sending.
-- Never run logged-in browser tests in GitHub Actions.
-
-## Pull requests
-
-Explain what changed, how it was verified, and any live checks still pending.
-Include sanitized reproduction details for selector changes. Never attach full
-inbox screenshots, session exports, browser profiles, or real outreach datasets.
-Discuss licensing before contributing substantial third-party code; this project
-does not currently have a redistribution license.
-
+Pull requests should explain the problem, final behavior, relevant tests, and
+live checks still pending. Discuss licensing before adding substantial third-party
+code; this project has not selected a redistribution license.

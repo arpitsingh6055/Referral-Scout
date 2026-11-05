@@ -1,71 +1,92 @@
 # Cold Contact Pro
 
-A Chrome extension project for a source-backed internship outreach workflow.
+A local Chrome Manifest V3 extension project for source-backed internship outreach.
 
-**Status: Phase 0 feasibility probes only.** The extension, campaign engine, and
-Autopilot are not implemented yet. Live website behavior has not been verified.
-Do not install this repository as an unpacked extension yet: there is no manifest.
+**Phase 1 is implemented:** profile and campaign settings, optional source permission,
+read-only selector diagnostics, IndexedDB records, prompts, strict validators, and
+tests. Campaign execution, provider automation, and sending are not available in
+this build. Phase 0 live-browser results remain unreported.
 
-## Try the current code
+## Build and install
 
-Requirements: Node.js 24 and Chrome with your own logged-in website sessions.
-No dependency installation, API keys, or server are needed for Phase 0.
+Use Node.js 24 with npm available. Commands work in Linux, macOS, and Windows:
 
 ```sh
-node --test spike/parsers.test.cjs
-node --check spike/llm.js
-node --check spike/gmail.js
-node --check spike/linkedin.js
+npm install --global pnpm@11.25.0
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm check
 ```
 
-Follow [the Phase 0 instructions](spike/README.md) to run the browser probes.
-The Gmail probe saves a self-addressed draft; sending requires a separate command.
-The LinkedIn probe only reads cards on the currently open company-search page.
-Automated tests cover synthetic parser inputs, not live DOM compatibility.
+For subsequent builds, run `pnpm build`. The production extension is in `dist/`.
+Open `chrome://extensions`, enable Developer mode, choose Load unpacked, and select
+`dist/`. Pin the extension and click its icon to open the side panel, then Open
+settings. Reload existing LinkedIn/Gmail/Gemini/ChatGPT tabs after installation so
+the read-only content script is present. No local development server is needed.
 
-## Planned delivery
+See [the Phase 1 checkpoint](docs/phase-1.md) and [Phase 0 probes](spike/README.md).
+
+## Checks
+
+```sh
+pnpm test          # Vitest validators, fixtures, settings and IndexedDB
+pnpm test:spike    # Standalone Phase 0 parser tests
+pnpm typecheck    # Strict TypeScript
+pnpm build        # Type-check, Vite bundles and MV3 output checks
+pnpm check        # All of the above
+```
+
+Dependencies are pinned in package.json and pnpm-lock.yaml. GitHub Actions runs
+the same complete check with read-only repository permissions. CI never signs in,
+submits prompts, reads an inbox, or sends emails. DOM fixtures are synthetic;
+passing tests do not prove current live-site compatibility.
+
+## Phases
 
 | Phase | Scope | Status |
 | --- | --- | --- |
-| 0 | Provider, Gmail, and LinkedIn feasibility probes | Code ready; live checkpoint pending |
-| 1 | MV3 manifest, settings, storage, selectors, validation | Planned |
-| 2 | Provider bridge, mock mode, diagnostics | Planned |
+| 0 | Provider, Gmail, and LinkedIn probes | Code ready; live results unreported |
+| 1 | Manifest, settings, storage, selectors, prompts, validators | Implemented; Chrome checkpoint pending |
+| 2 | LLM bridge, both provider drivers, mock mode, diagnostics | Planned |
 | 3 | Durable orchestration, scheduler, controls, dashboard | Planned |
 | 4 | Discovery, company vetting, contact selection | Planned |
 | 5 | Email evidence, source confirmation, MX, roles | Planned |
 | 6 | Personalized drafts and validation | Planned |
 | 7 | Sending, monitoring, follow-ups, retention, export | Planned |
 
-Each phase has a local checkpoint before the next phase begins. Future builds will
-start in Dry run and require explicit approval before Autopilot. The implementation
-will not bypass challenges, login screens, warnings, or account restrictions.
+## Data and permissions
 
-## Data and privacy
+Profile and campaign settings are stored in chrome.storage.sync, so Chrome may
+sync them with your browser account. Operational records and the last diagnostic
+report use local IndexedDB. Content scripts cannot read synced settings. Settings
+may be saved incomplete, but readiness checks identify missing required fields.
 
-Current probes read rendered page content. The provider probe submits only a tiny
-JSON test prompt. The Gmail probe keeps its test address, subject, body, and phase
-in that tab's sessionStorage; its clear() command removes those local test fields,
-not the draft or message held by Gmail. Probe output may appear in DevTools.
+The Phase 1 content script only checks rendered selectors on the four named sites
+when requested from Options. It does not click, type, send, or visit other pages.
+The optional HTTPS permission is requested only from the setup button; granting
+it does not enable Autopilot. Without it, future operation remains Dry run only.
+Broad source confirmation, DNS access, alarms, notifications and power permissions
+are reserved for the later pipeline. The windows API has no separate `windows`
+manifest permission. Offscreen permission is reserved for parsing, not orchestration.
 
-In the planned extension, prompts containing names, companies, and your profile
-will go to Gemini and ChatGPT through their websites. Email domains will go to
-dns.google for MX lookups. The design requires recorded sources for web-sourced
-contact data, opt-out handling, retention controls, and deletion/export tools.
-Those campaign features are not available in Phase 0.
+The planned bridge sends prompts containing names, companies and your profile to
+Gemini and ChatGPT through their websites. The planned MX check sends only email
+domains to dns.google. The contact policy requires recorded public sources,
+literal source confirmation, opt-out handling, and retention/deletion controls.
+Those live pipeline features are not implemented yet.
+
+Phase 0 scripts operate separately in DevTools. Their Gmail self-test uses tab
+sessionStorage for its test fields and phase. Its clear() command does not delete
+the draft or message held by Gmail.
 
 Automated access may breach service terms and lead to account restrictions. Run
-live probes only in sessions you control. Keep Chrome open and the tested window
-visible. The planned campaign runtime also requires the computer to remain awake.
-Do not commit real profiles, inbox captures, campaign exports, or credentials.
+live probes only in sessions you control. Keep Chrome open and tested windows
+visible; the later campaign also requires the computer to remain awake. Never
+commit real profiles, inbox captures, campaign exports, or credentials.
 
-## Development and publication
+## Contributing and publishing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
-GitHub Actions runs syntax checks and parser tests on pushes and pull requests.
-It does not sign into websites, submit prompts, or send emails.
-
-Before publishing, inspect the staged diff for personal information and verify the
-checks pass. This repository is an early feasibility project, not a production
-release or Chrome Web Store package. A redistribution license has not been chosen;
-no open-source license is granted by this repository at this stage.
-
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the
+[fixture refresh guide](fixtures/README.md). Generated output and local captures
+are ignored. Review the staged diff before publication; ignore rules do not remove
+already-tracked private data. This is a development build, not a production or
+Chrome Web Store release. No redistribution license has been selected.

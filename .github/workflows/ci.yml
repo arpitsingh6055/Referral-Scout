@@ -1,4 +1,4 @@
-name: Phase 0 checks
+name: Extension checks
 
 on:
   push:
@@ -9,13 +9,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: phase0-${{ github.workflow }}-${{ github.ref }}
+  group: extension-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  probes:
+  extension:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -25,11 +25,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Check script syntax
-        run: |
-          node --check spike/llm.js
-          node --check spike/gmail.js
-          node --check spike/linkedin.js
-      - name: Run parser tests
-        run: node --test spike/parsers.test.cjs
+      - name: Install pinned package manager
+        run: npm install --global pnpm@11.25.0
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Test, type-check, and build
+        run: pnpm check
 
