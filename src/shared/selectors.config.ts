@@ -22,6 +22,9 @@ export const selectors = {
     challenge: ['iframe[src*="captcha"]', '#captcha-internal', 'form[action*="checkpoint/challenge"]']
   },
   gmail: {
+    message: ['.adn.ads', '[data-message-id]', '.adn'],
+    quote: ['.gmail_quote', 'blockquote', '[data-smartmail="gmail_quote"]'],
+    older: ['[role="button"][aria-label="Older"]', '[role="button"][data-tooltip="Older"]'],
     sender: ['.gD[email]', '[data-hovercard-id][email]'],
     messageBody: ['.a3s.aiL', '.a3s', '[data-message-body]'],
     messageSubject: ['h2.hP', '[data-message-subject]'],

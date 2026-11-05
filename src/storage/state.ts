@@ -1,7 +1,17 @@
 import { all, get, put, openDatabase } from "./database";
 import type { Lead, Job, Campaign, SendLog, ProviderHealth } from "../shared/runtime";
 export async function read<T>(id: string): Promise<T | undefined> { return (await get("meta", id))?.value as T | undefined; }
-export async function write(id: string, value: unknown): Promise<void> { await put("meta", { id, value }); }
+export async function write(id: string, value: unknown): Promise<void> {
+  if (id === "campaign") {
+    const incoming = value as Campaign;
+    await mutate<Campaign>(id, old => old ? { ...incoming, status: old.status, reason: old.reason, pausedByAlarm: old.pausedByAlarm, settings: old.settings, profile: old.profile, approvedAt: old.approvedAt, startedAt: old.startedAt, mock: old.mock } : incoming);
+  } else await put("meta", { id, value });
+}
+export async function setCampaign(value: Campaign): Promise<void> { await put("meta", { id: "campaign", value }); }
+export async function policyUpdate(update: (c: Campaign) => void): Promise<void> {
+  const next = await mutate<Campaign>("campaign", old => { if (!old) throw new Error("Campaign not configured"); update(old); return old; });
+  await chrome.storage.sync.set({ campaign: { ...next.settings, mode: "dry-run" } });
+}
 export async function list<T>(prefix: string): Promise<T[]> { return (await all("meta")).filter(v => v.id.startsWith(prefix)).map(v => v.value as T); }
 export const leads = () => list<Lead>("lead:");
 export const jobs = () => list<Job>("job:");

@@ -19,7 +19,11 @@ export function failedRecipients(body: string): string[] {
 export function isAutomatic(subject: string): boolean { return /automatic reply|out of office|auto[- ]reply/i.test(subject); }
 export function isOptOut(body: string): boolean { return /\b(?:unsubscribe|no thanks|not interested|please stop|remove me)\b/i.test(body); }
 export function messageData(doc: ParentNode) {
-  const sender = first(doc, s.gmail.sender);
-  const body = many(doc, s.gmail.messageBody).map(textOf).at(-1) ?? "";
+  const messages = many(doc, s.gmail.message);
+  const last = messages.at(-1) ?? doc;
+  const sender = many(last, s.gmail.sender).at(-1);
+  const bodyNode = many(last, s.gmail.messageBody).at(-1)?.cloneNode(true) as HTMLElement | undefined;
+  for (const quote of bodyNode?.querySelectorAll(s.gmail.quote.join(",")) ?? []) quote.remove();
+  const body = textOf(bodyNode ?? null);
   return { sender: (sender?.getAttribute("email") ?? "").toLowerCase(), subject: textOf(first(doc, s.gmail.messageSubject)), body, failed: failedRecipients(body) };
 }

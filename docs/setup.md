@@ -25,7 +25,9 @@ startup after a day. ChatGPT has its own data retention and privacy settings.
 Provider preference: **ChatGPT first for writing and CV extraction; Gemini first
 for research.** CV extraction does not silently send your CV to another provider.
 
-This build includes guided setup and diagnostics. The autonomous campaign engine
-is still unfinished; no campaign sending is enabled. See implementation-status.md.
+This build includes guided setup, diagnostics, campaign controls, and a complete
+mock campaign that does not open websites or send mail. Live automation remains
+gated and needs verification in your own Chrome sessions; passing mock tests is not
+proof that live selectors work. See implementation-status.md.
 The CV driver has fixture/unit tests but still needs a live ChatGPT upload test on
 your account. If upload controls change, pasted text remains the simpler fallback.

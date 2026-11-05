@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => mode === "content" ? {
   publicDir: false,
   build: {
     emptyOutDir: false, target: "chrome120",
-    lib: { entry: "src/content/onboarding.ts", name: "ColdContactSetup", formats: ["iife"], fileName: () => "health.js" }
+    lib: { entry: "src/content/runtime.ts", name: "ColdContactRuntime", formats: ["iife"], fileName: () => "health.js" }
   }
 } : {
   base: "./",

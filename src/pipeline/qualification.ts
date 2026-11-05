@@ -4,11 +4,11 @@ import { enqueue } from "../bridge/runner";
 import { schemas } from "../bridge/schemas";
 import { vettingPrompt, emailPrompt, roleAddressPrompt, rolesPrompt } from "../shared/prompts";
 import { linkedinPage, scoreCompany } from "./discovery";
-import { confirmSource, checkMx } from "./sources";
-import { emailSyntax, emailErrors } from "../validators/email";
-export async function manual(lead: Lead, reason: string): Promise<void> { lead.stage = "NeedsManual"; lead.manualReason = reason; await saveLead(lead); }
+import { emailSyntax } from "../validators/email";
+import { tryPattern, validateContact } from "./email-policy";
+export async function manual(lead: Lead, reason: string): Promise<void> { if (lead.stage !== "NeedsManual") lead.resumeStage = lead.stage; lead.stage = "NeedsManual"; lead.manualReason = reason; await saveLead(lead); }
 export async function jobResult(lead: Lead, kind: Parameters<typeof enqueue>[1], prompt: string, sourced: boolean) {
-  const id = `${lead.id}:${kind}:${lead.attempts}`; lead.pendingJob = id; await saveLead(lead);
+  const id = `${lead.id}:${kind}:${lead.contact?.url ?? "company"}:${kind === "followup" ? lead.followups : 0}:${lead.attempts}`; lead.pendingJob = id; await saveLead(lead);
   const job = await enqueue(id, kind, prompt, sourced);
   if (job.state === "manual") { await manual(lead, `Both providers failed: ${job.error}. Paste a valid JSON reply below.`); return undefined; }
   if (job.state === "not_found") return null;
@@ -60,19 +60,17 @@ export async function qualify(lead: Lead, c: Campaign, signal: AbortSignal): Pro
       const raw = await jobResult(lead, role ? "roleEmail" : "email", role ? roleAddressPrompt(lead.name, lead.domain) : emailPrompt(lead.contact.name, lead.contact.title, lead.name, lead.domain, lead.contact.url), true);
       if (raw === undefined) return;
       const result = raw === null ? null : role ? schemas.roleEmail.parse(raw) : schemas.email.parse(raw);
+      if (!role && raw) { const published = schemas.email.parse(raw); lead.pattern = published.company_email_pattern ?? ""; lead.patternUrl = published.pattern_example_url ?? ""; }
       if (result?.email && result.source_url) {
         lead.email = result.email; lead.sourceUrl = result.source_url; lead.evidence = result.evidence_quote ?? ""; lead.method = role ? "published-role-address" : "published-web"; lead.step = "validate-email";
       } else if (!role) lead.step = "role-email";
+      else if (await tryPattern(lead, c, signal)) lead.step = "validate-email";
+      else if (lead.contacts.length > 1 && lead.contact.url === lead.contacts[0]?.url) { lead.contact = lead.contacts[1] ?? lead.contact; lead.step = "linkedin-email"; lead.pendingJob = ""; }
       else { lead.stage = "Skipped"; lead.manualReason = "Needs LinkedIn outreach — no usable public business email"; }
     } else {
-      if (c.mock) { lead.confirmed = true; lead.mx = true; }
-      else {
-        if (!lead.confirmed) lead.confirmed = (await confirmSource(lead.sourceUrl, lead.email, signal)).confirmed;
-        const domain = lead.email.split("@")[1] ?? ""; lead.mx = await checkMx(domain, signal);
-      }
-      const errors = emailErrors({ address: lead.email, companyDomain: lead.domain, aliases: [], method: lead.method, sourceUrl: lead.sourceUrl, confirmed: lead.confirmed, allowPattern: false, patternSourced: false, patternSentToday: 0, patternBounced: false });
+      const errors = await validateContact(lead, c, signal);
       if (errors.length || !lead.mx) {
-        if (lead.method !== "published-role-address") { lead.email = ""; lead.confirmed = false; lead.step = "role-email"; }
+        if (lead.method !== "published-role-address" && lead.method !== "inferred-pattern") { lead.email = ""; lead.confirmed = false; lead.step = "role-email"; }
         else { lead.stage = "Skipped"; lead.manualReason = `Needs LinkedIn outreach — ${errors.join("; ") || "No usable MX"}`; }
       } else { lead.stage = "EmailFound"; lead.step = "linkedin-roles"; }
     }

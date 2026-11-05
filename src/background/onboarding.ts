@@ -62,7 +62,8 @@ export function registerOnboarding(): void {
     return true;
   });
   chrome.runtime.onConnect.addListener(port => {
-    if (port.name !== "cv-heartbeat" || !port.sender || !trustedSite(port.sender, chrome.runtime.id) || !port.sender.url?.startsWith("https://chatgpt.com/")) { port.disconnect(); return; }
+    if (port.name !== "cv-heartbeat") return;
+    if (!port.sender || !trustedSite(port.sender, chrome.runtime.id) || !port.sender.url?.startsWith("https://chatgpt.com/")) { port.disconnect(); return; }
     port.onMessage.addListener(() => { /* Receipt of a validated port message renews worker activity. */ });
   });
   chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "cv-progress") void cvTick(); });

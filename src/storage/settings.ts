@@ -9,10 +9,10 @@ export async function loadSettings() {
 export async function saveSettings(profileInput: unknown, campaignInput: unknown): Promise<void> {
   const profile = profileSchema.parse(profileInput);
   const campaign = campaignSchema.parse(campaignInput);
-  if (campaign.mode !== "dry-run") throw new Error("Autopilot approval is unavailable in Phase 1");
+  if (campaign.mode !== "dry-run") throw new Error("Autopilot requires dashboard approval after ten drafts, not a settings edit (Phase 1 safety rule)");
   for (const [key, value] of Object.entries({ profile, campaign })) {
     if (new TextEncoder().encode(key + JSON.stringify(value)).length > 7500)
       throw new Error(`${key} is too large for Chrome sync; shorten the lists or text`);
   }
-  await chrome.storage.sync.set({ profile, campaign });
+  await chrome.storage.sync.set({ profile, campaign, settingsUpdatedAt: Date.now() });
 }

@@ -6,7 +6,7 @@ export function excluded(lead: Lead, c: Campaign): boolean {
 }
 export function eligible(lead: Lead, c: Campaign, history: SendLog[], followup: boolean, now = Date.now()): string | null {
   if (excluded(lead, c)) return "Opt-out or already-contacted exclusion";
-  if (!lead.email || !lead.mx || !lead.confirmed) return "Missing confirmed email or MX";
+  if (!lead.email || !lead.mx || (!lead.confirmed && c.settings.mode !== "dry-run" && !(lead.method === "inferred-pattern" && lead.patternExample))) return "Missing confirmed email or MX";
   if (lead.mock !== c.mock) return "Mock/live data mismatch";
   if (followup && (lead.followups >= 2 || ["Replied", "Bounced", "Skipped"].includes(lead.stage))) return "Follow-ups ended";
   if (!followup && history.some(s => !s.followup && s.leadId === lead.id && ["sent", "intent", "uncertain"].includes(s.state))) return "Existing or uncertain send";

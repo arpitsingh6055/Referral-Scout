@@ -18,6 +18,8 @@ export interface Lead extends CompanyCard {
   draft: DraftOutput | null; provider: Provider; subject: string; attempts: number;
   step: string; manualReason: string; pendingJob: string; threadUrl: string;
   sentAt: number; followups: number; followupAfter: number; optOut: boolean; mock: boolean;
+  resumeStage?: Stage; initialSubject?: string; initialBody?: string; followupCheckAt?: number;
+  pattern?: string; patternUrl?: string; patternExample?: string; retryAfter?: number; errors?: number;
 }
 export interface Job {
   id: string; kind: "vet" | "email" | "roleEmail" | "roles" | "draft" | "followup" | "probe";
@@ -33,4 +35,5 @@ export interface SendLog {
   id: string; leadId: string; at: number; email: string; domain: string; sourceUrl: string; evidence: string;
   confirmed: boolean; method: EmailMethod; subject: string; body: string; provider: Provider;
   state: "intent" | "sent" | "dry" | "uncertain"; followup: boolean; mock: boolean;
+  sequence?: number; threadUrl?: string; tabId?: number;
 }

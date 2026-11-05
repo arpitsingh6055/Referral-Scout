@@ -46,6 +46,7 @@ export async function get<S extends Store>(store: S, id: string): Promise<Record
 export async function all<S extends Store>(store: S): Promise<Records[S][]> {
   return operation(store, "readonly", s => s.getAll() as IDBRequest<Records[S][]>);
 }
+export async function remove(store: Store, id: string): Promise<void> { await operation(store, "readwrite", s => s.delete(id)); }
 export async function closeDatabase(): Promise<void> { if (pending) (await pending).close(); pending = undefined; }
 export async function clearDatabase(): Promise<void> {
   const db = await openDatabase();

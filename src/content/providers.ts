@@ -26,7 +26,7 @@ export async function runProvider(cmd: Extract<Command, { kind: "llm.run" }>, si
     if (!find(selectors.chatgpt.searchOn)) {
       let search = find(selectors.chatgpt.search);
       if (!search) { find(selectors.chatgpt.tools)?.click(); await sleep(500, signal); search = find(selectors.chatgpt.search); }
-      if (!search) throw new Error("Search toggle missing"); search.click();
+      if (!search) throw new Error("HALT: Critical Search toggle missing"); search.click();
       await wait(() => find(selectors.chatgpt.searchOn), signal, 5000);
     }
   }
