@@ -26,6 +26,10 @@ export async function fillCompose(cmd: Compose, signal: AbortSignal): Promise<un
 }
 export async function sendCompose(cmd: Compose, signal: AbortSignal): Promise<unknown> {
   const root = await compose(cmd, signal, false); guard(signal);
+  if (cmd.kind !== "gmail.send") throw new Error("Missing send authorization");
+  const permission: unknown = await chrome.runtime.sendMessage({ kind: "send.authorize", requestId: crypto.randomUUID(), sendId: cmd.sendId });
+  if (!permission || typeof permission !== "object" || !("allowed" in permission) || permission.allowed !== true) throw new Error("HALT: Sending is no longer authorized");
+  guard(signal);
   const send = find(s.gmail.send, root); if (!send || send.getAttribute("aria-disabled") === "true") throw new Error("HALT: Critical Send control unavailable");
   send.click();
   await wait(() => [...document.querySelectorAll(s.gmail.toast.join(","))].some(e => /message sent/i.test((e as HTMLElement).innerText)), signal, 15000);

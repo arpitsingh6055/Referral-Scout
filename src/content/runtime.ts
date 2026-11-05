@@ -10,7 +10,7 @@ let controller = new AbortController();
 const running = new Map<string, LlmStatus>();
 let port: chrome.runtime.Port | null = null;
 function heartbeat(jobId: string): void {
-  try { port ??= chrome.runtime.connect({ name: "automation-heartbeat" }); port.onDisconnect.addListener(() => { port = null; }); port.postMessage({ kind: "heartbeat", jobId }); } catch { port = null; }
+  try { if (!port) { port = chrome.runtime.connect({ name: "automation-heartbeat" }); port.onDisconnect.addListener(() => { port = null; }); } port.postMessage({ kind: "heartbeat", jobId }); } catch { port = null; }
 }
 function background(sender: chrome.runtime.MessageSender): boolean {
   if (sender.id !== chrome.runtime.id || sender.tab) return false;
@@ -45,7 +45,7 @@ chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
       case "gmail.send": return sendCompose(cmd, signal);
       case "gmail.saved": return draftSaved(signal);
       case "gmail.find": return findMessage(cmd.subject, cmd.email, cmd.folder, signal);
-      case "gmail.scan": return scanMessages(signal);
+      case "gmail.scan": return scanMessages(signal, cmd.offset);
       case "gmail.message": return messageData(document);
     }
   })().then(value => answer(true, value)).catch((e: unknown) => answer(false, undefined, e instanceof Error ? e.message : String(e))).finally(() => clearInterval(beat));

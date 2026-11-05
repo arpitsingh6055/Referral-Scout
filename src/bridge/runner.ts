@@ -24,7 +24,7 @@ async function fail(job: Job, error: string, refusal = false): Promise<void> {
   if (!job.tried.includes(other)) { job.provider = other; job.state = "queued"; job.repaired = false; job.tabId = null; await event(`Fallback to ${other}: ${error}`, "warning", job.id); }
   else {
     job.state = refusal ? "not_found" : "manual"; job.finishedAt = Date.now();
-    const c = await campaign(); if (c && !refusal) { c.bothFailed++; await write("campaign", c); if (c.bothFailed >= 5) throw new Halt("Both LLM providers failed five consecutive jobs"); }
+    const c = await campaign(); if (c && !refusal) { c.bothFailed++; await write("campaign", c); await write(`job:${job.id}`, job); if (c.bothFailed >= 5) throw new Halt("Both LLM providers failed five consecutive jobs"); }
   }
   await write(`job:${job.id}`, job); await event(`${job.provider}: ${job.failureClass}; ${Date.now() - job.startedAt} ms; ${error}`, "warning", job.id);
 }
@@ -53,6 +53,7 @@ export async function bridgeStep(signal: AbortSignal): Promise<boolean> {
         if (!job.tried.includes(other) && (await providerHealth(other)).disabledUntil <= Date.now()) { job.provider = other; await write(`job:${job.id}`, job); } return true;
       }
       job.tried.push(job.provider); job.startedAt = Date.now(); job.state = "awaiting_reply";
+      await write(`result:${job.id}`, null); await write(`result:${job.id}:repair`, null);
       job.tabId = await openPage(job.provider, job.provider === "gemini" ? "https://gemini.google.com/app" : "https://chatgpt.com/?temporary-chat=true", signal, true);
       await write(`job:${job.id}`, job);
       await command(job.tabId, { kind: "llm.run", jobId: job.id, prompt: job.promptText, search: job.requiresSources, first: job.timeouts.first, total: job.timeouts.total, repair: false }, signal);

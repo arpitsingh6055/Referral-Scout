@@ -1,9 +1,10 @@
 # Implementation checkpoint
 
-The installed build includes settings, diagnostics and guided CV onboarding. Work on
-later phases was interrupted before the campaign scheduler, dashboard, and live
-drivers were integrated. Do not describe this revision as ready for unattended
-outreach, and do not enable the dormant sending modules without their safety tests.
+The installed build includes settings, diagnostics, guided CV onboarding, campaign
+controls, and a guarded campaign runtime. The mock path exercises discovery through
+ten dry-run drafts without opening websites. Do not describe this revision as ready
+for unattended outreach: live provider, LinkedIn, and Gmail behavior still needs
+verification in real user sessions.
 
 ## Ready in the build
 
@@ -12,6 +13,8 @@ outreach, and do not enable the dormant sending modules without their safety tes
 - Configurable writing style, with migration for older saved profiles.
 - Generic CV upload, public-link download and pasted text flows, explicit ChatGPT
   consent, validated extraction, restart recovery, cancellation and editable review.
+- Start, pause, resume, stop, approval, mock campaign execution, retention, export,
+  manual recovery, and Delete All Data controls.
 
 Optional private profiles can be stored in ignored private/profile.json, outside
 source control. Select that file in Options > Import your saved profile to copy it
@@ -20,21 +23,22 @@ before using one for outreach. No personal profile is embedded in the extension
 bundle or public fixtures. Each user reviews their own extracted facts and supplies
 availability and role preferences.
 
-## Source implemented but not integrated or live-validated
+## Source implemented but not fully live-validated
 
 Bridge queue/repair/fallback, provider DOM driver, page command protocol, lease,
 Kolkata calendar, discovery/vetting/email/roles/drafting/sending/monitoring modules,
-and parser helpers. The CV-specific ChatGPT driver is now integrated, but campaign
-drivers remain disabled. Provider selection prefers ChatGPT for draft/follow-up jobs
-and Gemini for vetting/contact/role searches. These modules are not yet bundled into
-the installed extension's automation runtime.
+and parser helpers are wired into the scheduler and dashboard. The CV-specific
+ChatGPT driver is integrated, and provider selection prefers ChatGPT for
+draft/follow-up jobs and Gemini for vetting/contact/role searches. Live selectors
+and account-specific behavior remain unverified.
 
 ## Required before enabling campaign execution
 
-- Connect and test the scheduler, service-worker RPC, heartbeats, pause cancellation,
-  lease recovery, durable status transitions, and six-hour/start/resume health gates.
-- Finish dashboard controls, ten-live-draft approval, manual results, retention,
-  full CSV/debug export, notifications, and confirmed send reconciliation.
+- Verify the scheduler, service-worker RPC, heartbeats, pause cancellation, lease
+  recovery, durable status transitions, and six-hour/start/resume health gates in
+  a live Chrome session.
+- Verify dashboard controls, ten-live-draft approval, manual results, retention,
+  CSV/debug export, notifications, and confirmed send reconciliation in that session.
 - Complete pattern inference and verification policy, LinkedIn action pacing and
   search filtering, monitoring pagination and per-recipient follow-up checks.
 - Correctly ignore quoted text when detecting opt-outs and use the latest message's

@@ -11,7 +11,7 @@ export async function draftLead(lead: Lead, c: Campaign, followup = false): Prom
   if (errors.length) { lead.attempts++; if (lead.attempts >= 3) { await manual(lead, `Draft rules failed: ${errors.join("; ")}`); return; } lead.pendingJob = ""; }
   else {
     lead.draft = draftSchema.parse(raw); const sequence = (await logs()).filter(l => l.mock === c.mock).length;
-    lead.subject = sequence % 2 ? lead.draft.subject_b : lead.draft.subject_a;
+    lead.subject = followup ? lead.initialSubject || lead.subject : sequence % 2 ? lead.draft.subject_b : lead.draft.subject_a;
     lead.stage = "Drafted"; lead.step = followup ? "followup" : "initial"; lead.attempts = 0;
   } await saveLead(lead);
 }

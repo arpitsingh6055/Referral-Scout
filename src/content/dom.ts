@@ -10,6 +10,7 @@ export function guard(signal: AbortSignal): void {
   if (find(selectors[site].login) && (site === "linkedin" || site === "gmail")) throw new Error("HALT: Signed out");
   const notices = [...document.querySelectorAll('[role="alert"], [role="alertdialog"], [role="status"]')].filter(visible).map(e => (e as HTMLElement).innerText).join(" ");
   if (/unusual activity|suspicious activity|sending limit|too many requests|rate limit|verify you are human/i.test(notices)) throw new Error("HALT: Site security or rate-limit warning");
+  if (/unusual activity|verify you are human|too many requests/i.test(document.title)) throw new Error("HALT: Site restriction page");
 }
 export async function sleep(ms: number, signal: AbortSignal): Promise<void> {
   for (let left = ms; left > 0; left -= 250) { guard(signal); await new Promise(r => setTimeout(r, Math.min(left, 250))); }

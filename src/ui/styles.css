@@ -12,3 +12,4 @@ button:disabled { background: #5e6f86; cursor: wait; }
 :focus-visible { outline: 3px solid #d16b00; outline-offset: 3px; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
 [role=status] { white-space: pre-wrap; overflow-wrap: anywhere; }
+button { margin: 4px 6px 4px 0; } details { margin: 18px 0; } summary { cursor: pointer; font-weight: 650; }

@@ -25,6 +25,7 @@ export const campaignSchema = z.strictObject({
   mode: z.enum(["dry-run", "autopilot"]), allowPatternInferred: z.boolean(), patternDailyCap: z.int().min(0).max(3),
   dailyHardCap: z.int().min(1).max(25), searchPageBudget: z.int().min(1).max(10), profilePageBudget: z.int().min(1).max(40),
   optOutPeople: list(), optOutDomains: z.array(domainSchema).max(200), alreadyContacted: list(),
+  domainAliases: z.record(domainSchema, z.array(domainSchema).max(10)).default({}),
   mockMode: z.boolean(), firstTokenSeconds: z.int().min(5).max(60), totalSeconds: z.int().min(20).max(300), webSeconds: z.int().min(30).max(300)
 }).refine(s => s.minEmployees <= s.maxEmployees, "Minimum size exceeds maximum")
   .refine(s => s.windowStart < s.windowEnd, "Sending window must end after it starts")

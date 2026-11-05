@@ -47,6 +47,7 @@ async function main(): Promise<void> {
   add(targeting, "allowPatternInferred", "Allow sourced pattern inference (off by default; disabled after any pattern bounce)", campaign.allowPatternInferred, "checkbox");
   add(targeting, "mockMode", "Use mock provider replies when the bridge is available", campaign.mockMode, "checkbox");
   const exclusions = section("Exclusions");
+  add(exclusions, "domainAliases", "Known company domain aliases (JSON object; optional)", JSON.stringify(campaign.domainAliases, null, 2), "textarea");
   for (const [id, label] of [["optOutPeople", "Opt-out people (name, email or profile URL)"], ["optOutDomains", "Opt-out domains"], ["alreadyContacted", "Already contacted (email or profile URL)"]] as const)
     add(exclusions, id, `${label} — one per line`, campaign[id].join("\n"), "textarea");
   const save = element("button", "Save settings"); save.type = "submit"; form.append(save);
@@ -56,7 +57,7 @@ async function main(): Promise<void> {
       const nextProfile = profileSchema.parse({ ...profile, name: value("name"), gmail: value("gmail"), accountIndex: Number(value("accountIndex")),
         education: value("education"), target: value("target"), resumeUrl: value("resumeUrl"), availability: value("availability"), writingStyle: value("writingStyle"), proofPoints: proofLines(value("proofPoints")) });
       const numbers = Object.fromEntries(Object.keys(numeric).map(id => [id, Number(value(id))]));
-      const nextCampaign = campaignSchema.parse({ ...campaign, ...numbers, mode: "dry-run", cities: lines(value("cities")), keywords: lines(value("keywords")),
+      const nextCampaign = campaignSchema.parse({ ...campaign, ...numbers, domainAliases: JSON.parse(value("domainAliases") || "{}") as unknown, mode: "dry-run", cities: lines(value("cities")), keywords: lines(value("keywords")),
         holidays: lines(value("holidays")), windowStart: value("windowStart"), windowEnd: value("windowEnd"), allowPatternInferred: checked("allowPatternInferred"),
         mockMode: checked("mockMode"), optOutPeople: lines(value("optOutPeople")), optOutDomains: lines(value("optOutDomains")), alreadyContacted: lines(value("alreadyContacted")) });
       await saveSettings(nextProfile, nextCampaign);

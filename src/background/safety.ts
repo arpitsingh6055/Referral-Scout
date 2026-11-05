@@ -1,4 +1,5 @@
-import { campaign, write, event, leads, logs } from "../storage/state";
+import { campaign, mutate, event, leads, logs } from "../storage/state";
+import type { Campaign } from "../shared/runtime";
 import type { SendLog } from "../shared/runtime";
 export class Halt extends Error {}
 export const aborted = (signal: AbortSignal) => { if (signal.aborted) throw new DOMException("Paused", "AbortError"); };
@@ -6,8 +7,13 @@ export async function notify(message: string): Promise<void> {
   await chrome.notifications.create({ type: "basic", iconUrl: chrome.runtime.getURL("icon.png"), title: "Cold Contact Pro", message: message.slice(0, 400) }).catch(() => undefined);
 }
 export async function pause(reason: string, automatic = true): Promise<void> {
-  const c = await campaign(); if (c) { c.status = "paused"; c.reason = reason; c.pausedByAlarm = automatic; await write("campaign", c); }
+  if (await campaign()) await mutate<Campaign>("campaign", old => { if (!old) throw new Error("Campaign missing"); return { ...old, status: "paused", reason, pausedByAlarm: automatic }; });
   chrome.power.releaseKeepAwake(); await event(reason, "warning"); await notify(reason);
+}
+export async function ensureActive(expected: Campaign, signal: AbortSignal): Promise<Campaign> {
+  aborted(signal); const c = await campaign();
+  if (!c || c.startedAt !== expected.startedAt || c.status !== "active") throw new DOMException("Campaign is not active", "AbortError");
+  return c;
 }
 export function bounceThreshold(sent: SendLog[], bounced: Set<string>): boolean {
   const ordered = sent.filter(v => v.state === "sent" && !v.mock).sort((a, b) => a.at - b.at);

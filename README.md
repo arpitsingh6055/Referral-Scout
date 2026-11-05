@@ -7,11 +7,12 @@ and writing a useful email takes time. Cold Contact Pro aims to handle that rese
 and routine follow-up, while keeping the user in control of their profile, messages,
 and real conversations.
 
-> **Current status: setup preview, not a finished outreach product.**
-> Guided CV setup, editable profiles, settings, and diagnostics are implemented.
-> CV extraction still needs live verification in the user's ChatGPT session.
-> The autonomous campaign engine is unfinished and **campaign sending is disabled**.
-> Code for later stages exists, but its presence does not mean those features are ready.
+> **Current status: guarded preview, not a live-browser-certified outreach product.**
+> Guided CV setup, editable profiles, settings, diagnostics, campaign controls, and
+> a complete no-website mock campaign are implemented. CV extraction and live website
+> automation still need verification in the user's own sessions. Live sending remains
+> gated behind health checks, ten real Gmail drafts, explicit approval, and recovery
+> safeguards.
 
 [First-time setup](docs/setup.md) · [Implementation status](docs/implementation-status.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
@@ -97,14 +98,14 @@ Drive link returns a preview or login page rather than a downloadable file, the 
 flow asks the user to upload the downloaded CV instead. Users must check that their
 outgoing resume link is accessible to recipients.
 
-### 2. Try drafts before enabling sending — planned
+### 2. Try drafts before enabling sending
 
 Every campaign starts in **Dry run**. The completed pipeline will prepare messages
 in Gmail Drafts without sending them. After ten drafts, it will pause for review.
 Only the user can choose **Approve and switch to Autopilot**. The extension must
 never switch itself into that mode, and mock results must never count as approval.
 
-### 3. Run a campaign with clear controls — planned
+### 3. Run a campaign with clear controls
 
 Once approved, the intended workflow is:
 
@@ -127,11 +128,11 @@ extension will notify them and stop follow-ups for that contact.
 | Generic guided setup and editable profile | Included in the build |
 | CV upload, public-link download, pasted text, consent and review | Included; live ChatGPT compatibility still needs verification |
 | Profile import, settings, storage, validation and read-only diagnostics | Included |
-| Website parsers, provider bridge and pipeline modules | Source exists; campaign integration/testing is incomplete |
-| Start/Pause/Resume/Stop campaign dashboard and recovery | Not ready |
-| Ten-draft approval and live campaign sending | Disabled; not ready |
-| Complete reply/bounce monitoring and follow-up scheduling | Not ready |
-| Campaign retention, Delete All Data, and complete exports | Not ready |
+| Website parsers, provider bridge and pipeline modules | Integrated; live selectors still need user-session verification |
+| Start/Pause/Resume/Stop campaign dashboard and recovery | Included; mock and recovery paths are tested |
+| Ten-draft approval and live campaign sending | Guarded in code; requires live-browser verification |
+| Reply/bounce monitoring and follow-up scheduling | Implemented with bounded checks; live Gmail pagination needs verification |
+| Campaign retention, Delete All Data, and send-log export | Included; Gmail/AI provider history is outside extension deletion |
 
 See [implementation-status.md](docs/implementation-status.md) for specific outstanding
 work. Passing unit tests is not evidence that live website automation works.
@@ -261,7 +262,8 @@ Log into the websites yourself; never enter their passwords into extension setti
 
 For subsequent builds, use `pnpm build`, then Reload the extension in Chrome.
 Follow [the setup guide](docs/setup.md) to test CV extraction and editing.
-Do not expect the current preview to run an outreach campaign.
+Use Mock mode first to exercise the full campaign without opening websites. Do not treat
+passing mock tests as proof that live website selectors or account behavior work.
 
 ## Development, verification, and contribution
 
