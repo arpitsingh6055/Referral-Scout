@@ -1,0 +1,12 @@
+{
+  "company": {
+    "href": "https://www.linkedin.com/company/example-ai/?tracking=test",
+    "name": " Example AI \n",
+    "industry": "Software Development",
+    "location": "Bengaluru, Karnataka",
+    "tagline": "Product tools for teams",
+    "text": "Example AI\nSoftware Development\nBengaluru, Karnataka\n11–50 employees"
+  },
+  "replies": ["{\"ok\":true}", "```json\n{\"ok\":true}\n```"],
+  "threadHashes": ["#sent/FMfcgzQZSexample123", "#search/in%3Asent/FMfcgzQZSexample123"]
+}

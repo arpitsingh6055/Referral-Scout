@@ -1,0 +1,34 @@
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+test-results/
+playwright-report/
+*.tsbuildinfo
+*.log
+*.zip
+*.crx
+*.pem
+
+# Local settings and secrets
+.env
+.env.*
+!.env.example
+*.local
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Private browser captures and campaign exports; commit sanitized fixtures only
+private/
+exports/
+browser-profile/
+browser-profiles/
+captures/
+*.har
+*.csv
+*.sqlite
+*.sqlite3
+*.db
+
