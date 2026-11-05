@@ -1,5 +1,10 @@
 export const selectors = {
   linkedin: {
+    website: ['a[data-control-name="page_details_website"]', '.org-page-details__definition-text a[href^="http"]', 'a[aria-label*="website"]'],
+    about: ['.org-page-details__definition-text', '.org-about-us-organization-description', 'main'],
+    firstDegree: ['.dist-value', '[data-test-distance-badge]'],
+    mailto: ['a[href^="mailto:"]'],
+    jobTitle: ['.job-card-list__title', '.job-card-container__link', 'a[href*="/jobs/view/"]'],
     navigation: ['nav[aria-label="Primary Navigation"]', '#global-nav', 'header.global-nav'],
     cards: ['.entity-result', '[data-chameleon-result-urn]', 'li.reusable-search__result-container'],
     companyLink: ['.entity-result__title-text a[href*="/company/"]', 'a.app-aware-link[href*="/company/"]', 'a[href*="/company/"]'],
@@ -17,6 +22,13 @@ export const selectors = {
     challenge: ['iframe[src*="captcha"]', '#captcha-internal', 'form[action*="checkpoint/challenge"]']
   },
   gmail: {
+    sender: ['.gD[email]', '[data-hovercard-id][email]'],
+    messageBody: ['.a3s.aiL', '.a3s', '[data-message-body]'],
+    messageSubject: ['h2.hP', '[data-message-subject]'],
+    rowSubject: ['.bog', '[data-subject]'],
+    rowSender: ['.yW [email]', '[data-hovercard-id]', '[email]'],
+    messageLink: ['a[href*="#inbox/"]', 'a[href*="#search/"]'],
+    closeCompose: ['[data-tooltip="Save & close"]', '[aria-label="Save & close"]'],
     search: ['input[aria-label="Search mail"]', 'input[name="q"]'],
     compose: ['[role="button"][gh="cm"]', '.T-I.T-I-KE.L3'],
     subject: ['input[name="subjectbox"]', 'input[placeholder="Subject"]'],
@@ -42,6 +54,9 @@ export const selectors = {
     challenge: ['iframe[src*="recaptcha"]', '#captchaimg']
   },
   chatgpt: {
+    fileInput: ['input[type="file"][accept]', 'input[type="file"]'],
+    attachment: ['[data-testid="file-thumbnail"]', '[data-testid="attachment"]', '[aria-label*="Remove file"]', '[aria-label*="Remove attachment"]'],
+    uploading: ['[role="progressbar"]', '[aria-label*="Uploading"]'],
     composer: ['#prompt-textarea[contenteditable="true"]', '.ProseMirror[contenteditable="true"]', 'textarea#prompt-textarea'],
     send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]'],
     stop: ['button[data-testid="stop-button"]', 'button[aria-label*="Stop"]'],
