@@ -1,6 +1,6 @@
 {
   "name": "cold-contact-pro",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Local Chrome MV3 internship outreach extension — Phase 1 foundation",

@@ -18,7 +18,7 @@ export function trustedExtension(sender: chrome.runtime.MessageSender, id: strin
     const url = new URL(sender.url);
     return url.protocol === "chrome-extension:" && url.hostname === id &&
       (!sender.origin || sender.origin === `chrome-extension://${id}`) &&
-      ["/options.html", "/sidepanel.html"].includes(url.pathname);
+      ["/options.html", "/sidepanel.html", "/onboarding.html"].includes(url.pathname);
   } catch { return false; }
 }
 

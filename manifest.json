@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Cold Contact Pro — Phase 1",
-  "version": "0.1.0",
-  "description": "Profile, policy, storage, and read-only selector diagnostics. Campaign execution is not yet available.",
+  "name": "Cold Contact Pro — Setup Preview",
+  "version": "0.2.0",
+  "description": "Guided CV setup with ChatGPT, editable profiles and diagnostics. Campaign sending is not yet enabled.",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "alarms", "sidePanel", "scripting", "tabs", "notifications", "power", "unlimitedStorage", "offscreen"],
   "host_permissions": ["https://www.linkedin.com/*", "https://linkedin.com/*", "https://mail.google.com/*", "https://gemini.google.com/*", "https://chatgpt.com/*", "https://dns.google/*"],

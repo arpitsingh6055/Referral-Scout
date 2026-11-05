@@ -6,8 +6,11 @@ import { siteForHost } from "../shared/selectors.config";
 import { put } from "../storage/database";
 import { appRoot, element, errorText } from "./render";
 import { field, lines, proofLines, type Control } from "./fields";
+import { profileImport } from "./profile-import";
 
 const root = appRoot();
+const setupLink = element("a", "Set up from your CV — guided setup"); setupLink.href = chrome.runtime.getURL("onboarding.html"); root.append(setupLink);
+root.append(element("p", "Provider preference: ChatGPT for email writing and CV extraction; Gemini for company, contact, and role research."));
 root.append(element("h1", "Cold Contact Pro"), element("p", "Phase 1 • Settings and read-only diagnostics. Campaign execution is not available yet."));
 const status = element("p"); status.setAttribute("role", "status");
 const form = element("form");
@@ -22,7 +25,8 @@ async function main(): Promise<void> {
   for (const [id, label, type] of [
     ["name", "Name", "text"], ["gmail", "Sending Gmail address", "email"], ["accountIndex", "Gmail account index", "number"],
     ["education", "Degree, college, graduation year", "textarea"], ["target", "Target roles", "textarea"],
-    ["resumeUrl", "Resume URL", "url"], ["availability", "Start date, duration, remote/onsite city", "textarea"]
+    ["resumeUrl", "Resume URL", "url"], ["availability", "Start date, duration, remote/onsite city", "textarea"],
+    ["writingStyle", "Email writing style", "textarea"]
   ] as const) add(p, id, label, profile[id], type);
   add(p, "proofPoints", "Proof points — one ID | evidence per line", profile.proofPoints.map(v => `${v.id} | ${v.text}`).join("\n"), "textarea");
   p.append(element("p", `Tone: ${profile.tone}`));
@@ -50,7 +54,7 @@ async function main(): Promise<void> {
     event.preventDefault(); save.disabled = true;
     void (async () => {
       const nextProfile = profileSchema.parse({ ...profile, name: value("name"), gmail: value("gmail"), accountIndex: Number(value("accountIndex")),
-        education: value("education"), target: value("target"), resumeUrl: value("resumeUrl"), availability: value("availability"), proofPoints: proofLines(value("proofPoints")) });
+        education: value("education"), target: value("target"), resumeUrl: value("resumeUrl"), availability: value("availability"), writingStyle: value("writingStyle"), proofPoints: proofLines(value("proofPoints")) });
       const numbers = Object.fromEntries(Object.keys(numeric).map(id => [id, Number(value(id))]));
       const nextCampaign = campaignSchema.parse({ ...campaign, ...numbers, mode: "dry-run", cities: lines(value("cities")), keywords: lines(value("keywords")),
         holidays: lines(value("holidays")), windowStart: value("windowStart"), windowEnd: value("windowEnd"), allowPatternInferred: checked("allowPatternInferred"),
@@ -60,7 +64,7 @@ async function main(): Promise<void> {
       status.textContent = problems.length ? `Saved as incomplete: ${problems.join("; ")}. Campaign execution is unavailable in Phase 1.` : "Saved. Profile is complete; campaign execution arrives in later phases.";
     })().catch(e => { status.textContent = errorText(e); }).finally(() => { save.disabled = false; });
   });
-  root.append(form, status);
+  root.append(form, status, profileImport());
   const tools = element("section"); tools.append(element("h2", "Source permission and diagnostics"));
   const permissionStatus = element("p");
   const permission = element("button", "Allow HTTPS source confirmation"); permission.type = "button";

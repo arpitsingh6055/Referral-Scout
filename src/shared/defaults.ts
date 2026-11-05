@@ -1,7 +1,8 @@
 import type { CampaignSettings, Profile } from "./schemas";
 export const defaultProfile: Profile = {
   name: "", gmail: "", accountIndex: 0, education: "", target: "Product Management internship; APM, Product Analyst, Product Ops, Business/Growth with product exposure",
-  proofPoints: [], resumeUrl: "", availability: "", tone: "concise, specific, respectful, no flattery"
+  proofPoints: [], resumeUrl: "", availability: "", tone: "concise, specific, respectful, no flattery",
+  writingStyle: "Use a warm, direct note: a specific company observation, relevant prior work, the internship interest, and one clear ask. Avoid generic praise."
 };
 export const defaultCampaign: CampaignSettings = {
   cities: ["Bengaluru", "Delhi NCR", "Hyderabad", "Pune", "Mumbai"], keywords: ["AI", "ML", "GenAI", "SaaS", "fintech", "developer tools"],

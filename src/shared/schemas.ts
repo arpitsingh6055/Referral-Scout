@@ -10,6 +10,7 @@ export const profileSchema = z.strictObject({
   name: text(100), gmail: z.union([z.literal(""), z.email()]), accountIndex: z.int().min(0).max(20),
   education: text(300), target: text(200), proofPoints: z.array(proofSchema).max(10),
   resumeUrl: z.union([z.literal(""), urlSchema]), availability: text(300),
+  writingStyle: text(1000).default("Use a warm, direct note: a specific company observation, relevant prior work, the internship interest, and one clear ask. Avoid generic praise."),
   tone: z.literal("concise, specific, respectful, no flattery")
 }).refine(p => new Set(p.proofPoints.map(v => v.id)).size === p.proofPoints.length, "Proof-point IDs must be unique");
 const clock = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
