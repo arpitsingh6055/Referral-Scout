@@ -5,7 +5,9 @@ import { guard } from "./dom";
 const pending = new Map<string, LlmStatus>();
 let controller = new AbortController();
 chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
-  if (sender.id !== chrome.runtime.id || sender.tab || (sender.url && sender.url !== chrome.runtime.getURL("service-worker.js")) || (sender.origin && sender.origin !== `chrome-extension://${chrome.runtime.id}`)) return false;
+  if (sender.id !== chrome.runtime.id || (sender.frameId !== undefined && sender.frameId !== 0) ||
+      (sender.url && sender.url !== chrome.runtime.getURL("service-worker.js")) ||
+      (sender.origin && ![`chrome-extension://${chrome.runtime.id}`, `extension://${chrome.runtime.id}`, `edge-extension://${chrome.runtime.id}`].includes(sender.origin))) return false;
   const parsed = commandSchema.safeParse(input);
   if (!parsed.success || parsed.data.deadline < Date.now() || parsed.data.deadline > Date.now() + 310000) return false;
   const cmd = parsed.data;

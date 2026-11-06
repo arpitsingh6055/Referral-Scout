@@ -13,11 +13,13 @@ export function cleanData(value: string, limit = 300): string {
 export function data(value: string, limit = 300): string { return `<data>${cleanData(value, limit)}</data>`; }
 
 export function trustedExtension(sender: chrome.runtime.MessageSender, id: string): boolean {
-  if (sender.id !== id || !sender.url || sender.tab || (sender.frameId ?? 0) !== 0) return false;
+  if (sender.id !== id || (sender.frameId ?? 0) !== 0) return false;
+  if (!sender.url) return true;
   try {
     const url = new URL(sender.url);
-    return url.protocol === "chrome-extension:" && url.hostname === id &&
-      (!sender.origin || sender.origin === `chrome-extension://${id}`) &&
+    const extensionProtocols = ["chrome-extension:", "extension:", "edge-extension:"];
+    return extensionProtocols.includes(url.protocol) && url.hostname === id &&
+      (!sender.origin || (() => { try { const origin = new URL(sender.origin); return extensionProtocols.includes(origin.protocol) && origin.hostname === id; } catch { return false; } })()) &&
       ["/options.html", "/sidepanel.html", "/onboarding.html", "/service-worker.js"].includes(url.pathname);
   } catch { return false; }
 }

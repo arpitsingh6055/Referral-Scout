@@ -9,7 +9,7 @@ export async function campaignHealth(c: Campaign, signal: AbortSignal): Promise<
   const urls = [
     ["linkedin", "https://www.linkedin.com/search/results/companies/?keywords=" + encodeURIComponent(c.settings.keywords[0] ?? "AI")],
     ["gmail-health", `https://mail.google.com/mail/u/${c.profile.accountIndex}/?view=cm&fs=1`],
-    ["gemini", "https://gemini.google.com/app"], ["chatgpt", "https://chatgpt.com/?temporary-chat=true"]
+    ["gemini", "https://gemini.google.com/app"], ["chatgpt", "https://chatgpt.com/"]
   ];
   for (const pair of urls) {
     const key = pair[0], url = pair[1]; if (!key || !url) continue;

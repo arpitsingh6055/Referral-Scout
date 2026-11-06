@@ -8,7 +8,7 @@ export function inspectPage(doc: Document, site: Site, pathname: string, visible
   const warnings: string[] = [];
   if (exists(config.challenge) || /checkpoint|challenge/.test(pathname)) warnings.push("Challenge/checkpoint detected; manual inspection required");
   if (exists(config.login)) warnings.push("Login control detected; verify your existing session manually");
-  let scope = "composer presence only; send, search and temporary-chat actions untested";
+  let scope = "ChatGPT composer presence only; live send and response polling require a provider run";
   if (site === "linkedin") {
     add("navigation", selectors.linkedin.navigation);
     if (pathname.startsWith("/search/results/companies")) add("company cards", selectors.linkedin.cards);

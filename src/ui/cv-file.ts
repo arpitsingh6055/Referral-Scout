@@ -1,33 +1,44 @@
-import { attachmentSchema } from "../shared/onboarding";
-export const MAX_CV = 5 * 1024 * 1024;
-export async function cvAttachment(file: File) {
-  if (file.size > MAX_CV || file.size === 0) throw new Error("Choose a nonempty PDF, DOCX or TXT file under 5 MB");
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const extension = file.name.split(".").at(-1)?.toLowerCase();
-  let mime: "application/pdf" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "text/plain";
-  if (extension === "pdf" && new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-") mime = "application/pdf";
-  else if (extension === "docx" && bytes[0] === 80 && bytes[1] === 75) mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  else if (extension === "txt" && !bytes.includes(0)) mime = "text/plain";
-  else throw new Error("The CV file type does not match its contents. Upload PDF, DOCX or plain TXT.");
-  let binary = ""; for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.slice(i, i + 8192));
-  return attachmentSchema.parse({ name: file.name, mime, base64: btoa(binary) });
+import { unzipSync, strFromU8 } from "fflate";
+const MAX_CV_TEXT = 20000;
+
+export function extractCvText(buffer: ArrayBuffer, type: string, name: string): string {
+  const bytes = new Uint8Array(buffer);
+  if (/wordprocessingml|\.docx$/i.test(type) || /\.docx$/i.test(name)) {
+    const xml = strFromU8(unzipSync(bytes)["word/document.xml"] ?? new Uint8Array());
+    const text = xml.replace(/<w:tab[^>]*\/>/g, " ").replace(/<\/w:p>/g, "\n").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    if (text) return text.slice(0, MAX_CV_TEXT);
+  }
+  if (/pdf|\.pdf$/i.test(type) || /\.pdf$/i.test(name)) {
+    const raw = new TextDecoder("latin1").decode(bytes);
+    const text = [...raw.matchAll(/\(([^()]*)\)\s*T[jJ]/g)].map(m => m[1]).join(" ").replace(/\\([()\\])/g, "$1").replace(/\s+/g, " ").trim();
+    if (text) return text.slice(0, MAX_CV_TEXT);
+  }
+  return new TextDecoder().decode(bytes).replace(/\s+/g, " ").trim().slice(0, MAX_CV_TEXT);
 }
+
 export function downloadUrl(value: string): string {
   const url = new URL(value);
   if (url.protocol !== "https:" || url.username || url.password) throw new Error("Use a public HTTPS resume link");
-  if (url.hostname === "drive.google.com") {
-    const id = /^\/file\/d\/([\w-]+)\//.exec(url.pathname)?.[1];
-    if (id) return `https://drive.google.com/uc?export=download&id=${encodeURIComponent(id)}`;
-  } return url.href;
+  return url.href;
 }
-export async function fetchCv(value: string): Promise<File> {
-  const response = await fetch(downloadUrl(value), { credentials: "omit", referrerPolicy: "no-referrer", signal: AbortSignal.timeout(20000) });
-  if (!response.ok || !response.body) throw new Error("Could not download this public link. Upload the CV instead.");
-  const reader = response.body.getReader(), chunks: Uint8Array<ArrayBuffer>[] = []; let size = 0;
-  try { while (true) { const part = await reader.read(); if (part.done) break; size += part.value.byteLength; if (size > MAX_CV) throw new Error("CV exceeds 5 MB"); chunks.push(new Uint8Array(part.value)); } }
-  finally { await reader.cancel(); }
+
+export async function fetchCvText(value: string): Promise<string> {
+  const response = await fetch(downloadUrl(value), {
+    credentials: "omit",
+    referrerPolicy: "no-referrer",
+    signal: AbortSignal.timeout(20000)
+  });
+  if (!response.ok) throw new Error("Could not download this public resume URL.");
   const type = response.headers.get("content-type") ?? "";
-  const ext = type.includes("pdf") ? "pdf" : type.includes("wordprocessingml") ? "docx" : type.includes("text/plain") ? "txt" : "unknown";
-  if (ext === "unknown") throw new Error("The link returned a web page instead of a CV file. Upload your downloaded PDF/DOCX instead.");
-  return new File(chunks, `resume.${ext}`, { type });
+  if (/application\/pdf|wordprocessingml|application\/octet-stream/i.test(type))
+    throw new Error("Use a public HTML or plain-text resume URL, not a PDF or file download.");
+  const raw = await response.text();
+  const document = new DOMParser().parseFromString(raw, "text/html");
+  document.querySelectorAll("script, style, noscript, template").forEach(node => node.remove());
+  const text = (document.body?.innerText || document.documentElement.textContent || raw)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_CV_TEXT);
+  if (!text) throw new Error("The public resume URL did not contain readable text.");
+  return text;
 }

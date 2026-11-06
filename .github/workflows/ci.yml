@@ -31,4 +31,11 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Test, type-check, and build
         run: pnpm check
-
+      - name: Package extension
+        run: pnpm package
+      - name: Upload extension package
+        uses: actions/upload-artifact@v4
+        with:
+          name: cold-contact-pro-extension
+          path: cold-contact-pro.zip
+          if-no-files-found: error

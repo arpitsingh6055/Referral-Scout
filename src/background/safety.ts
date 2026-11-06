@@ -4,7 +4,7 @@ import type { SendLog } from "../shared/runtime";
 export class Halt extends Error {}
 export const aborted = (signal: AbortSignal) => { if (signal.aborted) throw new DOMException("Paused", "AbortError"); };
 export async function notify(message: string): Promise<void> {
-  await chrome.notifications.create({ type: "basic", iconUrl: chrome.runtime.getURL("icon.png"), title: "Cold Contact Pro", message: message.slice(0, 400) }).catch(() => undefined);
+  await chrome.notifications.create({ type: "basic", iconUrl: chrome.runtime.getURL("icons/icon48.png"), title: "Cold Contact Pro", message: message.slice(0, 400) }).catch(() => undefined);
 }
 export async function pause(reason: string, automatic = true): Promise<void> {
   if (await campaign()) await mutate<Campaign>("campaign", old => { if (!old) throw new Error("Campaign missing"); return { ...old, status: "paused", reason, pausedByAlarm: automatic }; });

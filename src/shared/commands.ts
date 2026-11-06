@@ -1,12 +1,11 @@
 import { z } from "zod";
 import { urlSchema } from "./schemas";
-import { attachmentSchema } from "./onboarding";
 const base = { requestId: z.uuid(), deadline: z.number().finite() };
 export const commandSchema = z.discriminatedUnion("kind", [
   z.strictObject({ ...base, kind: z.literal("ping") }),
   z.strictObject({ ...base, kind: z.literal("cancel") }),
   z.strictObject({ ...base, kind: z.literal("llm.status"), jobId: z.string().max(200) }),
-  z.strictObject({ ...base, kind: z.literal("llm.run"), jobId: z.string().max(200), prompt: z.string().max(30000), search: z.boolean(), first: z.number().min(1000).max(60000), total: z.number().min(1000).max(300000), repair: z.boolean(), attachment: attachmentSchema.optional() }),
+  z.strictObject({ ...base, kind: z.literal("llm.run"), jobId: z.string().max(200), prompt: z.string().max(30000), search: z.boolean(), first: z.number().min(1000).max(60000), total: z.number().min(1000).max(300000), repair: z.boolean() }),
   z.strictObject({ ...base, kind: z.literal("linkedin.read"), page: z.enum(["companies", "company", "people", "contact", "jobs"]) }),
   z.strictObject({ ...base, kind: z.literal("gmail.fill"), to: z.email(), from: z.email(), subject: z.string().max(200), body: z.string().max(8000), reply: z.boolean() }),
   z.strictObject({ ...base, kind: z.literal("gmail.send"), sendId: z.string().max(500), to: z.email(), from: z.email(), subject: z.string().max(200), body: z.string().max(8000), reply: z.boolean() }),

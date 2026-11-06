@@ -6,11 +6,12 @@ import type { CvTask } from "../src/shared/onboarding";
 vi.mock("../src/background/browser", () => ({ openPage: vi.fn().mockResolvedValue(123), command: vi.fn() }));
 import { command, openPage } from "../src/background/browser";
 import { cvTick } from "../src/background/onboarding";
-const task = (): CvTask => ({ id: crypto.randomUUID(), state: "queued", request: { kind: "onboarding.extract", requestId: crypto.randomUUID(), consent: true, resumeUrl: "https://example.com/cv.pdf", text: "Example Person CV" }, tabId: null, startedAt: Date.now(), repaired: false, result: null, resumeUrl: "https://example.com/cv.pdf", error: "" });
+const task = (): CvTask => ({ id: crypto.randomUUID(), state: "queued", request: { kind: "onboarding.extract", requestId: crypto.randomUUID(), consent: true, resumeUrl: "https://example.com/resume", text: "Example Person CV" }, tabId: null, startedAt: Date.now(), repaired: false, result: null, resumeUrl: "https://example.com/resume", error: "" });
 afterEach(async () => { await clearDatabase(); await closeDatabase(); vi.clearAllMocks(); });
 it("resumes a submitted CV job and clears its private input after extraction", async () => {
   vi.mocked(command).mockResolvedValueOnce({ state: "running" }); await write("cv-task", task());
   await cvTick(); expect((await read<CvTask>("cv-task"))?.state).toBe("running");
+  expect(vi.mocked(command).mock.calls[0]?.[1]).toMatchObject({ kind: "llm.run", search: false });
   await closeDatabase();
   vi.mocked(command).mockResolvedValueOnce({ state: "done", text: JSON.stringify({ name: "Example Person", gmail: "person@example.com", education: "PGDM 2026–2028", proofPoints: [] }), sources: [], error: "", notes: [] });
   await cvTick(); const result = await read<CvTask>("cv-task");

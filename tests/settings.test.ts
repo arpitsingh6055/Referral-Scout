@@ -21,7 +21,7 @@ it("accepts defaults and rejects unsafe settings", () => {
 });
 it("saves atomically, rejects premature autopilot and oversized sync values", async () => {
   await saveSettings(defaultProfile, defaultCampaign); expect(set).toHaveBeenCalledTimes(1);
-  await expect(saveSettings(defaultProfile, { ...defaultCampaign, mode: "autopilot" })).rejects.toThrow("Phase 1");
+  await expect(saveSettings(defaultProfile, { ...defaultCampaign, mode: "autopilot" })).rejects.toThrow("dashboard approval");
   await expect(saveSettings(defaultProfile, { ...defaultCampaign, alreadyContacted: Array(100).fill("x".repeat(100)) })).rejects.toThrow("too large");
   expect(readiness(defaultProfile, { ...defaultCampaign, mode: "autopilot" }, false)).toContain("Autopilot requires source-confirmation permission");
 });
