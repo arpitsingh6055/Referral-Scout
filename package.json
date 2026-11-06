@@ -1,9 +1,9 @@
 {
   "name": "cold-contact-pro",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "Local Chrome MV3 internship outreach extension — Phase 1 foundation",
+  "description": "LinkedIn profiles, connection tracking and introductions after acceptance",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=24.0.0"
@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:spike": "node --test spike/parsers.test.cjs",
     "build": "tsc --noEmit && vite build && vite build --mode content && node scripts/check-build.mjs",
+    "package": "pnpm build && node scripts/package-extension.mjs",
     "check": "node --test spike/parsers.test.cjs && vitest run && tsc --noEmit && vite build && vite build --mode content && node scripts/check-build.mjs"
   },
   "devDependencies": {
@@ -26,6 +27,8 @@
     "vitest": "5.1.0"
   },
   "dependencies": {
+    "fflate": "^0.8.3",
+    "pdfjs-dist": "^6.5.438",
     "zod": "4.6.7"
   }
 }

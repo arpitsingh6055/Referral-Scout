@@ -1,26 +1,29 @@
 import { cvRequestSchema, cvControlSchema, cvPrompt, extractedSchema, type CvTask } from "../shared/onboarding";
 import { read, write, mutate } from "../storage/state";
-import { openPage, command } from "./browser";
+import { openPage, waitForPage, command } from "./browser";
 import { acquire, renew, release } from "./lease";
 import { extractJson } from "../parsers/json";
 import { resultSchema } from "../bridge/schemas";
 import { trustedExtension, trustedSite } from "../validators/security";
 let active: AbortController | null = null;
+let ticking: Promise<void> | null = null;
 async function save(task: CvTask): Promise<void> {
   await mutate<CvTask>("cv-task", old => old && (old.id !== task.id || old.state === "cancelled") ? old : task);
 }
-export async function cvTick(): Promise<void> {
-  const owner = crypto.randomUUID(); if (!await acquire(owner)) return;
+async function runCvTick(): Promise<void> {
+  const owner = crypto.randomUUID(); if (!await acquire(owner)) throw new Error("Another extension task is running. Pause the campaign and try CV extraction again.");
   const abort = new AbortController(); active = abort;
   const timer = setInterval(() => { void renew(owner).then(ok => { if (!ok) abort.abort(); }); }, 20000);
   try {
     const task = await read<CvTask>("cv-task"); if (!task || !["queued", "running"].includes(task.state)) return;
     try {
       if (task.state === "queued") {
-        if (!task.request) throw new Error("CV input missing; please upload again");
-        task.tabId = await openPage("chatgpt", "https://chatgpt.com/?temporary-chat=true", abort.signal, true);
+        if (!task.request) throw new Error("CV input missing; enter the URL or paste the CV text again");
+        task.tabId = task.request.tabId
+          ? await waitForPage(task.request.tabId, "https://chatgpt.com/", abort.signal)
+          : await openPage("chatgpt", "https://chatgpt.com/", abort.signal, true);
         task.state = "running"; task.startedAt = Date.now(); await save(task);
-        await command(task.tabId, { kind: "llm.run", jobId: task.id, prompt: cvPrompt(task.request.text), search: false, first: 20000, total: 150000, repair: false, ...(task.request.attachment ? { attachment: task.request.attachment } : {}) }, abort.signal);
+        await command(task.tabId, { kind: "llm.run", jobId: task.id, prompt: cvPrompt(task.request.text, task.request.resumeUrl), search: false, first: 20000, total: 150000, repair: false }, abort.signal);
         return;
       }
       if (task.tabId === null) throw new Error("CV extraction tab was closed");
@@ -39,34 +42,63 @@ export async function cvTick(): Promise<void> {
     }
   } finally { clearInterval(timer); if (active === abort) active = null; await release(owner); }
 }
+export function cvTick(): Promise<void> {
+  if (!ticking) {
+    ticking = runCvTick().finally(() => { ticking = null; });
+  }
+  return ticking;
+}
 export function registerOnboarding(): void {
-  chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
-    if (!trustedExtension(sender, chrome.runtime.id)) return false;
+  async function handle(input: unknown): Promise<unknown> {
     const extract = cvRequestSchema.safeParse(input), control = cvControlSchema.safeParse(input);
-    if (!extract.success && !control.success) return false;
-    const requestId = extract.success ? extract.data.requestId : control.success ? control.data.requestId : "";
-    void (async () => {
+    if (!extract.success && !control.success) throw new Error("Invalid onboarding request");
       if (extract.success) {
         await mutate<CvTask>("cv-task", old => {
           if (old && ["queued", "running"].includes(old.state)) throw new Error("A CV is already being processed. Wait or cancel it first.");
           return { id: extract.data.requestId, state: "queued", request: extract.data, tabId: null, startedAt: Date.now(), repaired: false, result: null, resumeUrl: extract.data.resumeUrl, error: "" };
         });
-        await chrome.alarms.create("cv-progress", { periodInMinutes: 1 }); void cvTick();
+        await chrome.alarms.create("cv-progress", { periodInMinutes: 1 });
       } else if (control.success && control.data.kind === "onboarding.cancel") {
         active?.abort(); const old = await read<CvTask>("cv-task");
         if (old) { old.state = "cancelled"; old.request = null; old.result = null; await write("cv-task", old); if (old.tabId !== null) await command(old.tabId, { kind: "cancel" }, new AbortController().signal).catch(() => undefined); }
       }
       const task = await read<CvTask>("cv-task");
-      return task ? { id: task.id, state: task.state, result: task.result, resumeUrl: task.resumeUrl, error: task.error } : null;
-    })().then(data => respond({ requestId, ok: true, data })).catch((e: unknown) => respond({ requestId, ok: false, error: e instanceof Error ? e.message : String(e) }));
+      const data = task ? { id: task.id, state: task.state, result: task.result ?? null, resumeUrl: task.resumeUrl ?? "", error: task.error ?? "" } : null;
+      if (extract.success) {
+        void cvTick().catch(async (e: unknown) => {
+          const current = await read<CvTask>("cv-task");
+          if (current?.id === extract.data.requestId && ["queued", "running"].includes(current.state)) {
+            await write("cv-task", { ...current, state: "error", request: null, error: e instanceof Error ? e.message : String(e) });
+          }
+        });
+      }
+      return data;
+  }
+  chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
+    if (!trustedExtension(sender, chrome.runtime.id)) return false;
+    if (typeof input !== "object" || input === null || !("kind" in input)
+      || (input.kind !== "onboarding.extract" && input.kind !== "onboarding.status" && input.kind !== "onboarding.cancel")) return false;
+    const requestId = typeof input === "object" && input !== null && "requestId" in input && typeof input.requestId === "string" ? input.requestId : "";
+    void handle(input).then(data => respond({ requestId, ok: true, data })).catch((e: unknown) => respond({ requestId, ok: false, error: e instanceof Error ? e.message : String(e) }));
     return true;
   });
   chrome.runtime.onConnect.addListener(port => {
+    if (port.name === "onboarding") {
+      if (!port.sender || !trustedExtension(port.sender, chrome.runtime.id)) {
+        console.warn("Rejected onboarding port", { id: port.sender?.id, url: port.sender?.url, origin: port.sender?.origin, tab: port.sender?.tab?.id, frameId: port.sender?.frameId });
+        port.disconnect(); return;
+      }
+      port.onMessage.addListener((input: unknown) => {
+        const requestId = typeof input === "object" && input !== null && "requestId" in input && typeof input.requestId === "string" ? input.requestId : "";
+        void handle(input).then(data => port.postMessage({ requestId, ok: true, data })).catch((e: unknown) => port.postMessage({ requestId, ok: false, error: e instanceof Error ? e.message : String(e) }));
+      });
+      return;
+    }
     if (port.name !== "cv-heartbeat") return;
     if (!port.sender || !trustedSite(port.sender, chrome.runtime.id) || !port.sender.url?.startsWith("https://chatgpt.com/")) { port.disconnect(); return; }
     port.onMessage.addListener(() => { /* Receipt of a validated port message renews worker activity. */ });
   });
-  chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "cv-progress") void cvTick(); });
+  chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "cv-progress") void cvTick().catch(console.error); });
 }
 export async function resumeOnboarding(): Promise<void> {
   const task = await read<CvTask>("cv-task");

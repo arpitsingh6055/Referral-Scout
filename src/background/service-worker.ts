@@ -1,19 +1,18 @@
 import { openDatabase } from "../storage/database";
-import { registerOnboarding, resumeOnboarding } from "./onboarding";
-import { registerCampaignMessages } from "./messages";
-import { tick } from "./scheduler";
-import { campaign } from "../storage/state";
-registerOnboarding();
-registerCampaignMessages();
-chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "campaign-tick") void tick(); });
+import { registerNetworkMessages } from "./network-messages";
+import { networkTick, pauseNetwork } from "./network";
+registerNetworkMessages();
+chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "network-tick") void networkTick(); });
 async function initialize(): Promise<void> {
   await chrome.storage.sync.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   await openDatabase();
-  await resumeOnboarding();
-  if (!await chrome.alarms.get("campaign-tick")) await chrome.alarms.create("campaign-tick", { periodInMinutes: 1 });
-  const c = await campaign(); if (c?.status === "active" && !c.pausedByAlarm) chrome.power.requestKeepAwake("system");
+  // Updating must never resume the retired Gmail / AI campaign.
+  await chrome.alarms.clear("campaign-tick");
+  await chrome.alarms.clear("cv-progress");
+  chrome.power.releaseKeepAwake();
+  if (!await chrome.alarms.get("network-tick")) await chrome.alarms.create("network-tick", { periodInMinutes: 1 });
 }
-chrome.runtime.onInstalled.addListener(() => { void initialize().catch(console.error); });
-chrome.runtime.onStartup.addListener(() => { void initialize().catch(console.error); });
+chrome.runtime.onInstalled.addListener(() => { void initialize().then(() => pauseNetwork("Ready when you are. Review your LinkedIn outreach and press Start.")); });
+chrome.runtime.onStartup.addListener(() => { void initialize().then(() => networkTick()); });
 void initialize().catch(console.error);

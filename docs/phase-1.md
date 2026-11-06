@@ -1,4 +1,4 @@
-# Phase 1 checkpoint
+# Development and live verification checklist
 
 ## Build
 
@@ -14,13 +14,13 @@ the build checks confirm MV3 entry points. There is no live-site test in CI.
 ## Chrome
 
 1. Open chrome://extensions, enable Developer mode, Load unpacked, select dist/.
-2. Click the extension icon; the side panel must say Phase 1 and show Open settings.
+2. Click the extension icon; the side panel must show the profile and campaign controls.
 3. Save a complete profile with a proof point such as `P1 | Built a dashboard used
    by 20 teams`. Reload Options; values should persist. Use your own real profile
    only in Chrome settings, not in checked-in source files.
 4. Try daily cap 26, pattern cap 4, a javascript: resume URL, duplicate P1 entries,
    or an invalid holiday. Save must reject them without overwriting saved values.
-5. Confirm Dry run is fixed and no Start campaign/Send button is exposed.
+5. Confirm a new campaign starts in Dry run and no send occurs before approval.
 6. Without optional HTTPS permission, confirm the Dry run only notice. Click the
    permission button only if you want to test the browser grant flow. Denial must
    leave settings usable; granting must not switch modes.
@@ -31,9 +31,11 @@ the build checks confirm MV3 entry points. There is no live-site test in CI.
    Application > IndexedDB, cold-contact-pro should contain company, person, email,
    role, draft, send, event, and meta stores. The last health report is in meta.
 
-Health checks only cover the stated page context. Provider send/search/temporary
-controls are configuration candidates until Phase 2 tests them. Live login walls
-that redirect to an unpermitted host are reported as inaccessible tabs.
+Health checks only cover the stated page context. Provider automation uses the
+visible composer, Send button, and completed response marker. Source/search jobs
+best-effort enable Thinking and select Medium when available; missing controls
+are reported as notes and never block the job. Live login walls that redirect to
+an unpermitted host are reported as inaccessible tabs.
 
 ## Three likely issues
 
@@ -48,8 +50,8 @@ that redirect to an unpermitted host are reported as inaccessible tabs.
 - A 15-minute call is an explicit exception to proof-point-only body numbers.
 - The selected proof point must appear verbatim once, making its presence testable.
 - Follow-ups will contain no URLs; the original thread already has the resume link.
-- Steps that send, infer an address, or approve Autopilot are not available here.
-- Phase 0 live results remain pending, as requested progression is not a PASS report.
+- Live sending, inferred addresses, and Autopilot approval require the guarded
+  health checks and explicit user actions described in the README.
 
 Report: build PASS/error; Chrome load PASS/error; settings persistence PASS/error;
 invalid settings rejection PASS/error; permission behavior; and each site's health

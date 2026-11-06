@@ -30,7 +30,9 @@ export function insert(editor: HTMLElement, value: string): void {
     document.execCommand("insertText", false, value);
   }
   editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
-  if (normalize(readEditor(editor)) !== normalize(value)) throw new Error("Text insertion verification failed");
+  const actual = normalize(readEditor(editor)).replace(/\s+/g, " ");
+  const expected = normalize(value).replace(/\s+/g, " ");
+  if (actual !== expected && !actual.includes(expected)) throw new Error("Text insertion verification failed");
 }
 export const normalize = (s: string) => s.replace(/\r\n/g, "\n").replace(/\u00a0/g, " ").trim();
 export const readEditor = (e: HTMLElement) => e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement ? e.value : e.innerText;

@@ -54,7 +54,7 @@ export async function bridgeStep(signal: AbortSignal): Promise<boolean> {
       }
       job.tried.push(job.provider); job.startedAt = Date.now(); job.state = "awaiting_reply";
       await write(`result:${job.id}`, null); await write(`result:${job.id}:repair`, null);
-      job.tabId = await openPage(job.provider, job.provider === "gemini" ? "https://gemini.google.com/app" : "https://chatgpt.com/?temporary-chat=true", signal, true);
+      job.tabId = await openPage(job.provider, job.provider === "gemini" ? "https://gemini.google.com/app" : "https://chatgpt.com/", signal, true);
       await write(`job:${job.id}`, job);
       await command(job.tabId, { kind: "llm.run", jobId: job.id, prompt: job.promptText, search: job.requiresSources, first: job.timeouts.first, total: job.timeouts.total, repair: false }, signal);
       return true;
