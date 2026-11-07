@@ -1,0 +1,114 @@
+Cold Contact Pro v0.6.0 validation (6 November 2026)
+
+$ node --test spike/parsers.test.cjs tests/v2-source-contract.test.mjs
+TAP version 13
+# Subtest: LLM probe accepts exact plain/fenced JSON
+ok 1 - LLM probe accepts exact plain/fenced JSON
+  ---
+  duration_ms: 0.972261
+  type: 'test'
+  ...
+# Subtest: LLM probe rejects wrong schemas and surrounding instructions
+ok 2 - LLM probe rejects wrong schemas and surrounding instructions
+  ---
+  duration_ms: 0.366429
+  type: 'test'
+  ...
+# Subtest: company parser extracts visible fields and strips URL tracking
+ok 3 - company parser extracts visible fields and strips URL tracking
+  ---
+  duration_ms: 1.138827
+  type: 'test'
+  ...
+# Subtest: company parser rejects foreign, unsafe, and non-company URLs
+ok 4 - company parser rejects foreign, unsafe, and non-company URLs
+  ---
+  duration_ms: 0.280153
+  type: 'test'
+  ...
+# Subtest: missing company fields remain unknown; employee counts accept commas
+ok 5 - missing company fields remain unknown; employee counts accept commas
+  ---
+  duration_ms: 0.347562
+  type: 'test'
+  ...
+# Subtest: thread parser accepts opened threads, never search/list/compose pages
+ok 6 - thread parser accepts opened threads, never search/list/compose pages
+  ---
+  duration_ms: 0.321143
+  type: 'test'
+  ...
+# Subtest: Gmail body normalization preserves meaningful line boundaries
+ok 7 - Gmail body normalization preserves meaningful line boundaries
+  ---
+  duration_ms: 0.18348
+  type: 'test'
+  ...
+# Subtest: manifest and source versions are unified
+ok 8 - manifest and source versions are unified
+  ---
+  duration_ms: 2.339274
+  type: 'test'
+  ...
+# Subtest: ChatGPT DOM job stages are persistently acknowledged
+ok 9 - ChatGPT DOM job stages are persistently acknowledged
+  ---
+  duration_ms: 0.657157
+  type: 'test'
+  ...
+# Subtest: own-profile import does not call dossier generation
+ok 10 - own-profile import does not call dossier generation
+  ---
+  duration_ms: 0.248536
+  type: 'test'
+  ...
+# Subtest: CV save contract does not accept raw binary or base64
+ok 11 - CV save contract does not accept raw binary or base64
+  ---
+  duration_ms: 0.319951
+  type: 'test'
+  ...
+# Subtest: jobs and people search paths are present
+ok 12 - jobs and people search paths are present
+  ---
+  duration_ms: 0.338859
+  type: 'test'
+  ...
+# Subtest: invitation note uses visible modal, not forced no-note shortcut
+ok 13 - invitation note uses visible modal, not forced no-note shortcut
+  ---
+  duration_ms: 0.218832
+  type: 'test'
+  ...
+# Subtest: acceptance has explicit 24-hour due-time tracking
+ok 14 - acceptance has explicit 24-hour due-time tracking
+  ---
+  duration_ms: 0.241506
+  type: 'test'
+  ...
+# Subtest: default settings do not set old arbitrary caps
+ok 15 - default settings do not set old arbitrary caps
+  ---
+  duration_ms: 0.137733
+  type: 'test'
+  ...
+# Subtest: different ChatGPT invitation and follow-up prompt kinds exist
+ok 16 - different ChatGPT invitation and follow-up prompt kinds exist
+  ---
+  duration_ms: 1.092819
+  type: 'test'
+  ...
+1..16
+# tests 16
+# suites 0
+# pass 16
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 72.67437
+
+$ tsc -p temporary/stubbed tsconfig.json --noEmit (NOT the real dependency-backed typecheck)
+Exit code: 0 (using temporary dependency/Chrome type stubs)
+
+Dependency-backed pnpm install/build and live Edge tests: NOT RUN (registry inaccessible; Node 22 instead of required 24+)

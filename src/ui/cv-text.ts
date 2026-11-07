@@ -31,6 +31,5 @@ export async function completeCvText(buffer: ArrayBuffer, name: string): Promise
   else throw new Error('Use a PDF, .docx, or .txt CV. Save older .doc files as .docx first.');
   text = text.trim();
   if (!text) throw new Error('No CV text could be extracted. Use a searchable PDF or .docx file.');
-  if (text.length > 200000) throw new Error('The CV exceeds 200,000 characters. Use a shorter CV; no text was silently cut.');
   return text;
 }

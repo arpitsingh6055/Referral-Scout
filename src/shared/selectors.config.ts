@@ -60,7 +60,7 @@ export const selectors = {
   },
   chatgpt: {
     composer: ['#prompt-textarea[contenteditable="true"]', '.ProseMirror[contenteditable="true"]', 'textarea#prompt-textarea'],
-    send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label="Send"]'],
+    send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label="Send"]', 'form[data-chatgpt-composer] button[type="submit"]'],
     stop: ['button[data-testid="stop-button"]', 'button[aria-label*="Stop"]'],
     reply: ['[data-talvt-turn-state="complete"]', '[data-message-author-role="assistant"] .markdown', '[data-message-author-role="assistant"]'],
     thinking: ['button[aria-label*="Thinking" i]', 'button[aria-label*="Reasoning" i]', '[role="button"][title*="Thinking" i]', '[role="button"][title*="Reasoning" i]'],

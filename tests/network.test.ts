@@ -1,26 +1,27 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { DAY, emptyNetwork, introduction, nextContact, profileUrl, relevance, suggestedTarget, type NetworkContact, type NetworkState } from "../src/shared/network";
+import { DAY, defaultSettings, emptyNetwork, introduction, nextContact, profileUrl, relevance, suggestedTarget, type NetworkContact, type NetworkState } from "../src/shared/network";
 import { ownProfileLink, ownProfileEditLink, accountMenuProfileLink, readNetworkProfile } from "../src/parsers/network";
 import { getNetwork, updateNetwork, processContact, recoverNetwork, pauseNetwork, networkTick } from "../src/background/network";
 import { networkCommand, networkTab } from "../src/background/network-browser";
 import { clearDatabase, closeDatabase } from "../src/storage/database";
 import { registerNetworkMessages } from "../src/background/network-messages";
 import { prepareDossier } from "../src/background/network-ai";
-vi.mock("../src/background/network-ai", () => ({ prepareIntroduction: vi.fn().mockResolvedValue("Hi Alex, thanks for connecting. Could we discuss product opportunities?"), prepareDossier: vi.fn().mockResolvedValue("Saved profile") }));
+vi.mock("../src/background/network-ai", () => ({ clearAiJobs:vi.fn(), prepareInvitation:vi.fn().mockResolvedValue("Hi Alex, would love to connect."), prepareIntroduction: vi.fn().mockResolvedValue("Hi Alex, thanks for connecting. Could we discuss product opportunities?"), prepareDossier: vi.fn().mockResolvedValue("Saved profile") }));
 vi.mock("../src/background/network-browser", () => ({ networkCommand: vi.fn(), networkTab: vi.fn().mockResolvedValue(9), readyNetworkTab: vi.fn() }));
 const profile = { name: "Example Student", url: "https://www.linkedin.com/in/student/", headline: "Product analyst", location: "India", about: "" };
 function contact(patch: Partial<NetworkContact> = {}): NetworkContact {
   return { name: "Alex Example", url: "https://www.linkedin.com/in/alex/", headline: "Founder at Example", rawText: "Founder at Example", location: "India", about: "", state: "shortlisted", reason: "Founder", addedAt: 1, checkedAt: 0, requestedAt: 0, messagedAt: 0, message: "", ...patch };
 }
-async function state(p = contact()): Promise<NetworkState> { return updateNetwork(() => ({ ...emptyNetwork(), active: true, profile, contacts: [p] })); }
+async function state(p = contact()): Promise<NetworkState> { return updateNetwork(() => ({ ...emptyNetwork(), active: true, profile, dossier:'Profile dossier',settings:{...defaultSettings,roles:['Product Management'],outreachMode:'automatic',followupMode:'automatic',noteMode:'none'},contacts: [p] })); }
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(2026, 10, 9, 11, 0, 0));
   vi.clearAllMocks();
   vi.mocked(prepareDossier).mockReset().mockResolvedValue("Saved profile");
   vi.mocked(networkCommand).mockReset(); vi.mocked(networkTab).mockReset().mockResolvedValue(9);
-  vi.stubGlobal("chrome", { runtime: { id: "abc", onMessage: { addListener: vi.fn() } }, tabs: { sendMessage: vi.fn().mockResolvedValue({}) } });
+  vi.stubGlobal("chrome", { runtime: { id: "abc", onMessage: { addListener: vi.fn() } }, tabs: { sendMessage: vi.fn().mockResolvedValue({}),update:vi.fn().mockResolvedValue({}) } });
 });
-afterEach(async () => { await clearDatabase(); await closeDatabase(); vi.unstubAllGlobals(); });
+afterEach(async () => { vi.useRealTimers(); await clearDatabase(); await closeDatabase(); vi.unstubAllGlobals(); });
 it("only imports account-navigation identity, never another person's viewed profile", () => {
   const doc = new DOMParser().parseFromString('<main><section><h1>Someone Else</h1><a href="/in/other/">Profile</a></section></main>', "text/html");
   expect(ownProfileLink(doc)).toBeNull();
@@ -39,7 +40,7 @@ it("reads rendered profile facts without inventing an email or credentials", () 
   expect(relevance("Software intern", "Product Management")).toBeNull();
 });
 it("prioritizes pending checks only after 24 hours and does not retry uncertain contacts", () => {
-  const s = { ...emptyNetwork(), contacts: [contact({ state: "attention" }), contact({ url: "https://www.linkedin.com/in/pending/", state: "pending", checkedAt: 100 })] };
+  const s = { ...emptyNetwork(), contacts: [contact({ state: "attention" }), contact({ url: "https://www.linkedin.com/in/pending/", state: "pending", requestedAt:100, checkedAt: 100 })] };
   expect(nextContact(s, DAY + 99)).toBeUndefined();
   expect(nextContact(s, DAY + 100)?.state).toBe("pending");
   expect(introduction({ ...s, target: "design" }, { name: "Alex Example" })).toContain("Hi Alex");
@@ -56,10 +57,10 @@ it("records the request intent before acting and tracks a confirmed invitation",
 });
 it("sends one introduction only after a tracked invitation becomes first-degree", async () => {
   const s = await state(contact({ state: "pending", requestedAt: 1 }));
-  vi.mocked(networkCommand).mockResolvedValueOnce({ state: "connected" }).mockResolvedValueOnce({ state: "messaged" });
+  vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'connected' }).mockResolvedValueOnce(contact()).mockResolvedValueOnce({ state: 'messaged' });
   await processContact(s, s.contacts[0]!, new AbortController().signal);
   expect((await getNetwork()).contacts[0]?.state).toBe("messaged");
-  expect(vi.mocked(networkCommand).mock.calls[1]?.[1]).toMatchObject({ action: "message", url: contact().url });
+  expect(vi.mocked(networkCommand).mock.calls[2]?.[1]).toMatchObject({ action: 'message', url: contact().url });
   expect(nextContact(await getNetwork())).toBeUndefined();
 });
 it.each(["connected", "pending"])("does not adopt pre-existing %s relationships", async relation => {
@@ -69,10 +70,10 @@ it.each(["connected", "pending"])("does not adopt pre-existing %s relationships"
 });
 it("pauses on an uncertain send and never automatically retries it", async () => {
   const s = await state(contact({ state: "pending", requestedAt: 1 }));
-  vi.mocked(networkCommand).mockResolvedValueOnce({ state: "connected" }).mockRejectedValueOnce(new Error("Response lost"));
+  vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'connected' }).mockResolvedValueOnce(contact()).mockRejectedValueOnce(new Error('Response lost'));
   await processContact(s, s.contacts[0]!, new AbortController().signal);
   const stored = await getNetwork(); expect(stored.active).toBe(false); expect(stored.contacts[0]?.state).toBe("attention");
-  await networkTick(); expect(networkCommand).toHaveBeenCalledTimes(2);
+  await networkTick(); expect(networkCommand).toHaveBeenCalledTimes(3);
 });
 it("recovers interrupted actions into attention and respects a concurrent pause", async () => {
   await state(contact({ state: "messaging" })); await recoverNetwork();
@@ -81,12 +82,15 @@ it("recovers interrupted actions into attention and respects a concurrent pause"
   await expect(processContact(s, s.contacts[0]!, new AbortController().signal)).rejects.toThrow("paused");
   expect(networkCommand).toHaveBeenCalledTimes(1); expect((await getNetwork()).active).toBe(false);
 });
-it("enforces a rolling daily invitation cap before opening a profile", async () => {
-  await state(); await updateNetwork(s => ({ ...s, actions: Array.from({ length: 5 }, () => ({ kind: "connect", at: Date.now(), url: contact().url })) }));
-  await networkTick(); expect(networkTab).not.toHaveBeenCalled();
+it("does not invent a hard-coded five-per-day invitation cap", async () => {
+  await state();
+  await updateNetwork(s=>({...s,actions:Array.from({length:5},()=>({kind:'connect',at:Date.now(),url:contact().url,confirmed:true}))}));
+  vi.mocked(networkCommand).mockResolvedValueOnce({state:'unknown'});
+  await networkTick();
+  expect(networkTab).toHaveBeenCalled();
 });
 it("keeps checking pending invitations when invitation and message limits are reached", () => {
-  const s = { ...emptyNetwork(), contacts: [contact({ state: "connected" }), contact({ state: "pending", checkedAt: 0 })], actions: Array.from({ length: 5 }, () => ({ kind: "message" as const, at: Date.now(), url: contact().url })) };
+  const s = { ...emptyNetwork(), settings:{...defaultSettings,dailyMessages:5}, contacts: [contact({ state: "connected" }), contact({ state: "pending", requestedAt:1, checkedAt: 0 })], actions: Array.from({ length: 5 }, () => ({ kind: "message" as const, at: Date.now(), url: contact().url })) };
   expect(nextContact(s)?.state).toBe("pending");
   s.contacts[1]!.checkedAt = Date.now(); s.contacts.push(contact());
   expect(nextContact(s)?.state).toBe("shortlisted");
@@ -174,24 +178,24 @@ function networkUi() {
 it('saves an original CV without opening ChatGPT and invalidates old processing', async () => {
   await updateNetwork(s => ({...s,profile,dossier:'Old profile',dossierSavedAt:1}));
   const ask=networkUi();
-  const reply=await ask({action:'saveCv',name:'cv.pdf',type:'application/pdf',data:'cGRm',text:''});
+  const reply=await ask({action:'saveCv',name:'cv.pdf',type:'application/pdf',text:'CV TEXT'});
   expect(reply.ok).toBe(true);
   expect(prepareDossier).not.toHaveBeenCalled();
-  expect(await getNetwork()).toMatchObject({cv:{name:'cv.pdf',data:'cGRm'},dossier:''});
+  expect(await getNetwork()).toMatchObject({cv:{name:'cv.pdf',text:'CV TEXT'},dossier:''});
   expect((await getNetwork()).dossierSavedAt).toBe(0);
 });
 
-it.each([null,{name:'cv.docx',type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',text:'',data:'ZG9j'}])('processes on explicit click with optional CV %j and saves the answer', async cv => {
+it.each([null,{name:'cv.docx',type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',text:'Sample CV text'}])('processes on explicit click with optional CV %j and saves the answer', async cv => {
   await updateNetwork(s => ({...s,profile,cv}));
   const reply=await networkUi()({action:'analyze'});
   expect(reply.ok).toBe(true);
-  expect(prepareDossier).toHaveBeenCalledWith(expect.objectContaining({profile,cv}),expect.any(AbortSignal));
+  expect(prepareDossier).toHaveBeenCalledWith(expect.objectContaining({profile,cv:cv?expect.objectContaining(cv):null}),expect.any(AbortSignal));
   expect(await getNetwork()).toMatchObject({dossier:'Saved profile',active:false});
   expect((await getNetwork()).dossierSavedAt).toBeGreaterThan(0);
 });
 
 it('keeps outreach off until ChatGPT completes, then saves before starting', async () => {
-  await updateNetwork(s => ({...s,profile,nextActionAt:Date.now()+600000}));
+  await updateNetwork(s => ({...s,profile,settings:{...defaultSettings,aiMode:'chatgpt'},nextActionAt:Date.now()+600000}));
   let complete!: (text:string)=>void;
   vi.mocked(prepareDossier).mockImplementation(()=>new Promise(resolve=>{complete=resolve;}));
   const ask=networkUi(), pending=ask({action:'start'});
@@ -203,7 +207,7 @@ it('keeps outreach off until ChatGPT completes, then saves before starting', asy
 });
 
 it('does not start outreach when processing fails', async () => {
-  await updateNetwork(s => ({...s,profile}));
+  await updateNetwork(s => ({...s,profile,settings:{...defaultSettings,aiMode:'chatgpt'}}));
   vi.mocked(prepareDossier).mockRejectedValueOnce(new Error('ChatGPT is signed out'));
   const reply=await networkUi()({action:'start'});
   expect(reply).toMatchObject({ok:false,error:'ChatGPT is signed out'});
@@ -211,3 +215,22 @@ it('does not start outreach when processing fails', async () => {
   expect(chrome.alarms.create).not.toHaveBeenCalled();
 });
 
+
+const REAL_SHAPED_REPLY = JSON.stringify({schemaVersion:2,name:'Arpit Singh',headline:'PGDM',summary:'s',targetRoleStrengths:[{detail:'d',source:'cv'}],
+  experience:[{detail:'Oracle',source:'both'}],education:[],projects:[],skills:[],certifications:[],achievements:[],otherFacts:[],
+  missingInformation:[{detail:'No CGPA supplied.'}],conflicts:[{detail:'Start date differs.',source:'both'}]});
+
+it('saves a pasted ChatGPT reply, including the object-style conflicts ChatGPT really returns', async () => {
+  await updateNetwork(s=>({...s,profile}));
+  const reply=await networkUi()({action:'importDossier',text:REAL_SHAPED_REPLY});
+  expect(reply.ok).toBe(true);
+  const saved=await getNetwork();
+  expect(saved.dossier).toContain('Arpit Singh'); expect(saved.dossierSavedAt).toBeGreaterThan(0); expect(saved.status).toMatch(/saved/i);
+});
+
+it('rejects a pasted reply that is not the dossier JSON and saves nothing', async () => {
+  await updateNetwork(s=>({...s,profile}));
+  const reply=await networkUi()({action:'importDossier',text:'Sure! Here is a nice summary of the candidate.'});
+  expect(reply.ok).toBe(false);
+  expect((await getNetwork()).dossier??'').toBe('');
+});

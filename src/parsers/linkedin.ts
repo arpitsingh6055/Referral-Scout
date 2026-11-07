@@ -23,7 +23,10 @@ export function peopleCards(doc: ParentNode): Contact[] {
   for (const card of many(doc, s.linkedin.cards)) {
     const link = first(card, s.linkedin.peopleLink), url = linkedUrl(link?.getAttribute("href") ?? "", "in");
     const name = textOf(first(card, s.linkedin.title)) || textOf(link);
-    if (url && name) result.set(url, { name, url, title: textOf(first(card, s.linkedin.industry)), location: textOf(first(card, s.linkedin.location)), firstDegree: /\b1st\b/.test(textOf(first(card, s.linkedin.firstDegree)) || textOf(card)) });
+    if (url && name) {
+      const degreeText = textOf(first(card, s.linkedin.firstDegree)) || textOf(card), degree = /\b(1st|2nd|3rd)\b/.exec(degreeText)?.[1];
+      result.set(url, { name, url, title: textOf(first(card, s.linkedin.industry)), location: textOf(first(card, s.linkedin.location)), firstDegree: degree === "1st", ...(degree ? { degree: Number(degree[0]) } : {}) });
+    }
   } return [...result.values()];
 }
 export function jobCards(doc: ParentNode): FoundRole[] {

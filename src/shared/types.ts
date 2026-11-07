@@ -11,5 +11,6 @@ export interface Draft extends Base { personId: string; subjectA: string; subjec
 export interface Send extends Base { personId: string; companyId: string; emailId: string; draftId: string; subjectVariant: "a" | "b"; sentAt: number | null; threadId: string | null }
 export interface Event { id: string; createdAt: number; level: "info" | "warning" | "error"; message: string; jobId: string | null }
 export interface Meta { id: string; value: unknown }
-export interface Records { company: Company; person: Person; email: Email; role: Role; draft: Draft; send: Send; event: Event; meta: Meta }
+export interface OutreachRecord { id:string; owner:string; createdAt:number; [key:string]:unknown }
+export interface Records { owners:OutreachRecord; searches:OutreachRecord; outreachJobs:OutreachRecord; outreachCompanies:OutreachRecord; contacts:OutreachRecord; aiJobs:OutreachRecord; actions:OutreachRecord; outreachSettings:OutreachRecord; company: Company; person: Person; email: Email; role: Role; draft: Draft; send: Send; event: Event; meta: Meta }
 export type Store = keyof Records;

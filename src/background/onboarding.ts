@@ -67,7 +67,7 @@ export function registerOnboarding(): void {
       if (extract.success) {
         void cvTick().catch(async (e: unknown) => {
           const current = await read<CvTask>("cv-task");
-          if (current?.id === extract.data.requestId && ["queued", "running"].includes(current.state)) {
+          if (current && current.id === extract.data.requestId && ["queued", "running"].includes(current.state)) {
             await write("cv-task", { ...current, state: "error", request: null, error: e instanceof Error ? e.message : String(e) });
           }
         });

@@ -19,13 +19,13 @@ it('extracts all Word paragraphs including tables, headers and decoded entities'
 it('puts full saved LinkedIn and CV text directly in the prompt without binary attachment data', () => {
   const state=emptyNetwork();
   state.profile={name:'Example',url:'https://www.linkedin.com/in/example/',headline:'Engineer',location:'India',about:'About',rawText:'Complete LinkedIn final section'};
-  state.cv={name:'CV.pdf',type:'application/pdf',text:'Experience '.repeat(4000)+'LAST CV FACT',data:'BINARY_NOT_FOR_CHATGPT'};
+  state.cv={name:'CV.pdf',type:'application/pdf',text:'Experience '.repeat(4000)+'LAST CV FACT'};
   const prompt=dossierPrompt(state);
   expect(prompt).toContain('Complete LinkedIn final section');expect(prompt).toContain('LAST CV FACT');
-  expect(prompt).not.toContain('BINARY_NOT_FOR_CHATGPT');expect(prompt).toContain('Return ONLY one JSON object');
+  expect(prompt).not.toContain('data:image');expect(prompt).toContain('Return ONLY one JSON object');
   expect(prompt).toContain('prioritize the CV');
   expect(prompt).toContain('CV value was chosen');
-  state.cv=null;expect(dossierPrompt(state)).toContain('"cv":null');
+  state.cv=null;expect(dossierPrompt(state)).toContain('[CV — extracted text (none)]');
 });
 
 it('accepts only the fixed career-profile schema', () => {

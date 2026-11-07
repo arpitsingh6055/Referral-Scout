@@ -1,105 +1,152 @@
-import { z } from "zod";
-import { networkRequest, networkProfileSchema, profileUrl, networkKey, suggestedTarget } from "../shared/network";
-import { trustedExtension, trustedSite } from "../validators/security";
-import { getNetwork, updateNetwork, pauseNetwork, networkTick } from "./network";
-import { networkCommand, networkTab, readyNetworkTab } from "./network-browser";
-import { acquire, release, renew } from "./lease";
-import { remove } from "../storage/database";
-import { prepareDossier, prepareIntroduction } from "./network-ai";
+import { z } from 'zod';
+import { networkRequest, networkProfileSchema, profileUrl, networkKey, suggestedTarget, defaultSettings, type NetworkState } from '../shared/network';
+import { trustedExtension, trustedSite } from '../validators/security';
+import { getNetwork, updateNetwork, pauseNetwork, networkTick, processContact, resetMirror } from './network';
+import { networkCommand, networkTab, readyNetworkTab } from './network-browser';
+import { acquire, release, renew } from './lease';
+import { all, remove } from '../storage/database';
+import { prepareDossier, prepareInvitation, prepareIntroduction, clearAiJobs, recoverDossier } from './network-ai';
+import { validatedDossier } from '../shared/dossier';
 
-const authorization = z.object({ kind: z.literal("network.authorize"), id: z.uuid(), claim: z.boolean() });
-async function importProfile(): Promise<void> {
-  const tabs = await chrome.tabs.query({ url: ["https://www.linkedin.com/*", "https://linkedin.com/*"] });
-  const focused = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  const tab = tabs.find(t => t.id === focused[0]?.id) ?? tabs.find(t => t.active) ?? (tabs.length === 1 ? tabs[0] : undefined);
-  if (tab?.id === undefined) throw new Error("Open LinkedIn and sign in, then choose Read my LinkedIn profile.");
-  const signal = new AbortController().signal;
-  await readyNetworkTab(tab.id, signal);
-  const identity = z.object({ url: z.string().refine(v => profileUrl(v) === v) }).parse(await networkCommand(tab.id, { action: "identity" }, signal));
-  const current = await getNetwork();
-  if (current.profile && current.profile.url !== identity.url && current.contacts.length) throw new Error("This is a different LinkedIn account. Clear the saved outreach before switching accounts.");
-  // Stay on the verified own profile instead of redirecting a stored outreach tab.
-  const profileTab = profileUrl(tab.url ?? "") === identity.url ? tab.id : await networkTab(identity.url, signal);
-  const profile = networkProfileSchema.parse(await networkCommand(profileTab, { action: "profile", url: identity.url, owner: identity.url }, signal));
-  await updateNetwork(s => ({ ...s, profile, dossier: "", dossierSavedAt: 0, contacts: s.contacts.map(p => p.messagedAt ? p : {...p, message: ""}), target: s.profile ? s.target : suggestedTarget(profile.headline), location: s.profile ? s.location : profile.location || "India", status: "LinkedIn profile saved. Add an optional CV, then choose Process with ChatGPT." }));
+const authorization=z.object({kind:z.literal('network.authorize'),id:z.uuid(),claim:z.boolean()});
+async function importProfile():Promise<void>{
+  const tabs=await chrome.tabs.query({url:['https://www.linkedin.com/*','https://linkedin.com/*']});
+  const focused=await chrome.tabs.query({active:true,lastFocusedWindow:true});
+  const tab=tabs.find(t=>t.id===focused[0]?.id)??tabs.find(t=>t.active)??(tabs.length===1?tabs[0]:undefined);
+  if(tab?.id===undefined)throw new Error('Open LinkedIn in a signed-in tab, then choose Read my LinkedIn profile.');
+  const signal=new AbortController().signal;
+  await readyNetworkTab(tab.id,signal);
+  const {url:identity}=z.object({url:z.string().refine(v=>profileUrl(v)===v)}).parse(await networkCommand(tab.id,{action:'identity'},signal));
+  const current=await getNetwork();
+  if(current.profile&&current.profile.url!==identity&&(current.cv||current.contacts.length||current.dossier))throw new Error('Different LinkedIn account detected. Export or clear this account’s saved outreach before switching; CVs are owner-scoped.');
+  const profileTab=profileUrl(tab.url??'')===identity?tab.id:await networkTab(identity,signal);
+  const profile=networkProfileSchema.parse(await networkCommand(profileTab,{action:'profile',url:identity,owner:identity},signal));
+  await updateNetwork(s=>({...s,profile,profileCapturedAt:Date.now(),dossier:'',dossierSavedAt:0,
+    contacts:s.contacts.map(p=>{if(p.messagedAt)return p; const {invitationNote:oldNote,...rest}=p;void oldNote;return {...rest,message:''};}),
+    target:s.profile?s.target:suggestedTarget(profile.headline,profile.rawText??''),location:s.profile?s.location:(profile.location.split(',').pop()?.trim()||'India'),
+    status:'Your LinkedIn profile is saved. Check your target and introduction below, then press Start outreach.'}));
 }
-export function registerNetworkMessages(): void {
-  chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
-    const auth = authorization.safeParse(input);
-    if (auth.success) {
-      if (!trustedSite(sender, chrome.runtime.id) || !profileUrl(sender.url ?? "")) { respond({ allowed: false }); return false; }
-      void (async () => {
-        let allowed = false;
-        await updateNetwork(s => {
-          const i = s.intent;
-          allowed = !!i && s.active && i.revision === s.revision && i.id === auth.data.id && i.tabId === sender.tab?.id && i.url === profileUrl(sender.url ?? "") && Date.now() - i.at < 120000 && (auth.data.claim ? !i.claimed : i.claimed);
-          if (allowed && i && auth.data.claim) i.claimed = true;
+async function clearAllNetwork():Promise<void>{
+  resetMirror();
+  await remove('meta',networkKey);await clearAiJobs();
+  for(const store of ['owners','searches','outreachJobs','outreachCompanies','contacts','aiJobs','actions','outreachSettings'] as const){
+    for(const entry of await all(store))await remove(store,entry.id);
+  }
+  await remove('meta','network-tab');
+}
+function statusView(s:NetworkState):NetworkState {
+  // Polls are metadata only. Exact CV/profile text is read by the background
+  // when needed for a user-initiated ChatGPT job; never sent on each sidepanel poll.
+  return {...s,
+    ...(s.profile?{profile:(()=>{const {sections:original,...rest}=s.profile!;void original;return {...rest,rawText:''};})()}:{}),
+    ...(s.cv?{cv:{...s.cv,text:'',textVersion:2,characterCount:s.cv.characterCount??s.cv.text.length}}:{}),
+    contacts:s.contacts.map(p=>({...p,rawText:''})),jobs:(s.jobs??[]).map(j=>({...j,descriptionText:''}))};
+}
+export function registerNetworkMessages():void{
+  chrome.runtime.onMessage.addListener((input:unknown,sender,respond)=>{
+    const auth=authorization.safeParse(input);
+    if(auth.success){
+      if(!trustedSite(sender,chrome.runtime.id)||!profileUrl(sender.url??'')){respond({allowed:false});return false;}
+      void (async()=>{
+        let allowed=false;
+        await updateNetwork(s=>{
+          const i=s.intent;
+          allowed=!!i&&s.active&&i.revision===s.revision&&i.id===auth.data.id&&i.tabId===sender.tab?.id&&i.url===profileUrl(sender.url??'')&&Date.now()-i.at<120000&&(auth.data.claim?!i.claimed:i.claimed);
+          if(allowed&&i&&auth.data.claim)i.claimed=true;
           return s;
-        }); return allowed;
-      })().then(allowed => respond({ allowed })).catch(() => respond({ allowed: false })); return true;
+        });return allowed;
+      })().then(allowed=>respond({allowed})).catch(()=>respond({allowed:false}));return true;
     }
-    if (!trustedExtension(sender, chrome.runtime.id)) return false;
-    const parsed = networkRequest.safeParse(input); if (!parsed.success) return false;
-    const req = parsed.data;
-    void (async () => {
-      if (req.action === "status") return getNetwork();
-      if (req.action === "pause") { await pauseNetwork(); return getNetwork(); }
-      if (req.action === "clear") await pauseNetwork();
-      const signal = new AbortController().signal;
-      const owner = crypto.randomUUID(); if (!await acquire(owner)) throw new Error("A LinkedIn step is finishing. Try again in a moment.");
-      const timer = setInterval(() => { void renew(owner); }, 20000);
-      try {
-        const current = await getNetwork();
-        if (req.action === "import") {
-          if (current.active) throw new Error("Pause outreach before refreshing your profile.");
-          await importProfile();
+    if(!trustedExtension(sender,chrome.runtime.id))return false;
+    const parsed=networkRequest.safeParse(input);if(!parsed.success)return false;
+    const req=parsed.data;
+    void (async()=>{
+      if(req.action==='status')return statusView(await getNetwork());
+      if(req.action==='ownerData')return getNetwork();
+      if(req.action==='export'){const state=await getNetwork();return {...state,aiTaskMetadata:(await all('aiJobs')).filter(j=>j.owner===state.profile?.url)};}
+      if(req.action==='diagnostics'){const state=statusView(await getNetwork());const jobs=(await all('aiJobs')).filter(j=>j.owner===state.profile?.url).map(j=>({stage:j.stage,updatedAt:j.updatedAt,tab:j.tab,error:j.error,id:j.id}));return {...state,diagnostics:jobs};}
+      if(req.action==='pause'){await pauseNetwork();return statusView(await getNetwork());}
+      if(req.action==='clear')await pauseNetwork();
+      const signal=new AbortController().signal;
+      const owner=crypto.randomUUID();if(!await acquire(owner))throw new Error('A LinkedIn step is already finishing. Try again once it completes.');
+      const timer=setInterval(()=>{void renew(owner);},20000);
+      try{
+        const current=await getNetwork();
+        if(req.action==='import'){
+          if(current.active)throw new Error('Pause outreach before refreshing your profile.');
+          await importProfile();await clearAiJobs();
         }
-        if (req.action === "save") {
-          if (current.active) throw new Error("Pause outreach before editing your introduction or target.");
-          if (/\{(?!firstName\}|target\})[^}]*\}/.test(req.template)) throw new Error("Use only {firstName} and {target} as message placeholders.");
-          await updateNetwork(s => ({ ...s, target: req.target, location: req.location, template: req.template, nextDiscoveryAt: 0, status: "Preferences saved." }));
+        if(req.action==='save'){
+          if(current.active)throw new Error('Pause outreach before editing settings.');
+          if(/\{(?!firstName\}|target\})[^}]*\}/.test(req.template))throw new Error('Only {firstName} and {target} are supported in the optional manual template.');
+          const settings=req.settings??{...(current.settings??defaultSettings),roles:req.target.split(/[;,\n]+/).map(x=>x.trim()).filter(Boolean)};
+          await updateNetwork(s=>({...s,target:req.target,location:req.location,template:req.template,settings,
+            nextDiscoveryAt:0,status:'Target roles, mode, pacing and filters saved.'}));
         }
-        if (req.action === "saveCv") {
-          if (current.active) throw new Error("Pause outreach before changing your CV.");
-          await updateNetwork(s => ({ ...s, cv: { name: req.name, type: req.type, text: req.text, data: req.data, textVersion: 1 }, dossier: "", dossierSavedAt: 0, contacts: s.contacts.map(p => p.messagedAt ? p : { ...p, message: "" }), status: `Saved CV: ${req.name}. Choose Process with ChatGPT when ready.` }));
+        if(req.action==='saveCv'){
+          if(current.active)throw new Error('Pause outreach before changing your CV.');
+          if(!current.profile)throw new Error('Read your own LinkedIn profile before adding a CV so text is linked to the right owner.');
+          await clearAiJobs();
+          await updateNetwork(s=>({...s,cv:{name:req.name,type:req.type,text:req.text,textVersion:2,savedAt:Date.now(),characterCount:req.text.length,...(req.pages?{pages:req.pages}:{})},
+            dossier:'',dossierSavedAt:0,contacts:s.contacts.map(p=>{if(p.messagedAt)return p;const {invitationNote:oldNote,...rest}=p;void oldNote;return {...rest,message:''};}),
+            status:`Extracted ${req.text.length.toLocaleString()} readable characters locally from ${req.name}; no binary file retained.`}));
         }
-        if (req.action === "analyze" || (req.action === "start" && !current.dossier?.trim())) {
-          if(current.active) throw new Error("Pause outreach before updating your profile.");
-          await updateNetwork(s => ({ ...s, status: s.cv ? "Reading your LinkedIn profile and CV in ChatGPT. Waiting for the completed answer…" : "Reading your LinkedIn profile in ChatGPT. No CV is needed. Waiting for the completed answer…" }));
-          try {
-            const dossier = await prepareDossier(await getNetwork(), signal);
-            if (!dossier.trim()) throw new Error("ChatGPT returned an empty profile. Please try processing again.");
-            await updateNetwork(s => ({ ...s, dossier, dossierSavedAt: Date.now(), contacts: s.contacts.map(p => p.messagedAt ? p : {...p, message: ""}), status: "Your detailed career profile is saved and ready for personalized messages." }));
-          } catch (error) {
-            await updateNetwork(s => ({...s, status: `Your original LinkedIn profile and CV are saved. ChatGPT processing needs attention: ${error instanceof Error ? error.message : String(error)}`}));
+        if(req.action==='deleteCv'){
+          if(current.active)throw new Error('Pause outreach before deleting your CV.');
+          await clearAiJobs();
+          await updateNetwork(s=>({...s,cv:null,dossier:'',dossierSavedAt:0,status:'Local extracted CV text deleted. Reprocess the owner profile before outreach.'}));
+        }
+        if(req.action==='analyze'||(req.action==='start'&&current.settings?.aiMode==='chatgpt'&&!current.dossier?.trim())){
+          if(current.active)throw new Error('Pause outreach before reprocessing the owner dossier.');
+          await updateNetwork(s=>({...s,status:'Opening visible ChatGPT and waiting for a verified dossier response…'}));
+          try{
+            const dossier=await prepareDossier(await getNetwork(),signal);
+            await updateNetwork(s=>({...s,dossier,dossierSavedAt:Date.now(),status:'Validated dossier saved locally. Ready to discover jobs and people.'}));
+          }catch(error){
+            await updateNetwork(s=>({...s,status:`ChatGPT processing needs attention: ${error instanceof Error?error.message:String(error)}. Original source evidence remains saved.`}));
             throw error;
           }
         }
-        if (req.action === "prepare") {
-          const person = current.contacts.find(p => p.url === req.url);
-          if (!person || !current.profile) throw new Error("Save this LinkedIn person before preparing a message.");
-          if(current.active) throw new Error("Pause outreach before preparing a message manually.");
-          if (!current.dossier?.trim()) throw new Error("Process your profile with ChatGPT first.");
-          const message = await prepareIntroduction(current, person, signal);
-          await updateNetwork(s => ({ ...s, contacts: s.contacts.map(p => p.url === person.url ? { ...p, message } : p), status: `Prepared a ChatGPT draft for ${person.name}.` }));
+        if(req.action==='importDossier'||req.action==='recoverAi'){
+          if(current.active)throw new Error('Pause outreach before saving a dossier.');
+          if(!current.profile)throw new Error('Read your own LinkedIn profile first.');
+          const dossier=req.action==='importDossier'?validatedDossier(req.text):await recoverDossier(current.profile.url);
+          await updateNetwork(s=>({...s,dossier,dossierSavedAt:Date.now(),status:req.action==='importDossier'?'Pasted ChatGPT reply validated and saved as your dossier.':'Reply recovered from the ChatGPT conversation, validated and saved.'}));
         }
-        if (req.action === "start") {
-          if (!current.profile) throw new Error("Read your LinkedIn profile first.");
-          await updateNetwork(s => {
-            if (s.revision !== current.revision) throw new Error("Outreach was paused while processing. Your profile is saved; start again when ready.");
-            if (!s.dossier?.trim()) throw new Error("Process your profile with ChatGPT first.");
-            return { ...s, active: true, revision: s.revision + 1, status: "Outreach is running. You can pause at any time." };
+        if(req.action==='resetAi'){
+          if(current.active)throw new Error('Pause outreach before resetting ChatGPT tasks.');
+          await clearAiJobs();
+          await updateNetwork(s=>({...s,status:'Stuck ChatGPT tasks cleared. You can process again.'}));
+        }
+        if(req.action==='prepare'){
+          if(current.active)throw new Error('Pause outreach before manually preparing drafts.');
+          const person=current.contacts.find(p=>p.url===req.url);
+          if(!person||!current.profile||!current.dossier)throw new Error('Save a recipient and process your dossier first.');
+          const message=person.acceptedAt?await prepareIntroduction(current,person,signal):await prepareInvitation(current,person,200,signal);
+          await updateNetwork(s=>{const p=s.contacts.find(x=>x.url===person.url);if(p)if(p.acceptedAt)p.message=message;else p.invitationNote=message;return {...s,status:`Draft prepared for ${person.name}. No LinkedIn message was sent.`};});
+        }
+        if(req.action==='start'){
+          const after=await getNetwork();
+          if(!after.profile)throw new Error('Read your own LinkedIn profile first.');
+          await updateNetwork(s=>{
+            if(s.revision!==after.revision)throw new Error('Outreach was paused while processing; start again when ready.');
+            if(s.settings?.aiMode==='chatgpt'&&!s.dossier?.trim())throw new Error('ChatGPT personalisation needs a processed dossier. Process it, or switch to template mode.');
+            return {...s,active:true,revision:s.revision+1,status:'Outreach is active. Review and automatic modes follow the settings you selected.'};
           });
-          await chrome.alarms.create("network-tick", { periodInMinutes: 1 });
+          await chrome.alarms.create('network-tick',{periodInMinutes:1});
         }
-        if (req.action === "skip") await updateNetwork(s => { const p = s.contacts.find(p => p.url === req.url); if (p) { p.state = "skipped"; p.reason = "Removed from outreach. No more actions will be taken."; } return s; });
-        if (req.action === "clear") await remove("meta", networkKey);
-        return getNetwork();
-      } finally { clearInterval(timer); await release(owner); if (req.action === "start") void networkTick(); }
-    })().then(data => respond({ ok: true, data })).catch((error: unknown) => respond({ ok: false, error: error instanceof Error ? error.message : String(error) }));
-    return true;
+        if(req.action==='approve'){
+          const fresh=await getNetwork();
+          if(!fresh.active||!fresh.profile)throw new Error('Start or resume outreach before approving a pending draft.');
+          const person=fresh.contacts.find(p=>p.url===req.url);
+          if(!person||person.state!=='review'||!person.approvalKind)throw new Error('This recipient has no valid send awaiting review.');
+          await processContact(fresh,person,signal,true);
+        }
+        if(req.action==='removeContact'){await updateNetwork(s=>({...s,contacts:s.contacts.filter(p=>p.url!==req.url)}));if(current.profile)await remove('contacts',`${current.profile.url}|${req.url}`);}
+        if(req.action==='skip')await updateNetwork(s=>{const p=s.contacts.find(p=>p.url===req.url);if(p){p.state='skipped';p.reason='Skipped. No future action is scheduled.';}return s;});
+        if(req.action==='clear')await clearAllNetwork();
+        return statusView(await getNetwork());
+      }finally{clearInterval(timer);await release(owner);if(req.action==='start')void networkTick();}
+    })().then(data=>respond({ok:true,data})).catch((error:unknown)=>respond({ok:false,error:error instanceof Error?error.message:String(error)}));return true;
   });
 }
-
-
-

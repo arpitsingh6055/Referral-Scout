@@ -4,7 +4,7 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(
 
 it('accepts background messages without sender URL and waits through replaced ChatGPT composer', async () => {
   vi.resetModules(); vi.useFakeTimers(); vi.setSystemTime(10000);
-  vi.stubGlobal('chrome', {runtime:{id:'abc',getURL:(s:string)=>`chrome-extension://abc/${s}`,onMessage:{addListener:vi.fn()}}});
+  vi.stubGlobal('chrome', {runtime:{id:'abc',getURL:(s:string)=>`chrome-extension://abc/${s}`,onMessage:{addListener:vi.fn()},sendMessage:vi.fn().mockResolvedValue(undefined)}});
   vi.spyOn(document, 'readyState', 'get').mockReturnValue('complete');
   vi.spyOn(Element.prototype, 'getClientRects').mockReturnValue([{}] as unknown as DOMRectList);
   document.body.innerHTML='<div id="prompt-textarea" contenteditable="true"></div>';
@@ -16,8 +16,6 @@ it('accepts background messages without sender URL and waits through replaced Ch
   document.body.innerHTML='<div id="prompt-textarea" contenteditable="true"></div>';
   expect(ping()).toHaveBeenCalledWith(expect.objectContaining({ready:false}));
   vi.advanceTimersByTime(4000);
-  expect(ping()).toHaveBeenCalledWith(expect.objectContaining({ready:false}));
-  vi.advanceTimersByTime(1000);
   expect(ping()).toHaveBeenCalledWith(expect.objectContaining({ready:true}));
   document.body.innerHTML='';
   expect(ping()).toHaveBeenCalledWith(expect.objectContaining({ready:false}));

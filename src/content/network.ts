@@ -1,6 +1,6 @@
 import { networkPageCommand, profileUrl, type NetworkPageCommand } from "../shared/network";
-import { ownProfileLink, ownProfileEditLink, readNetworkProfile, networkPeople, profileHeader } from "../parsers/network";
-import { visible, wait, sleep, guard, insert, readEditor, normalize } from "./dom";
+import { ownProfileLink, ownProfileEditLink, readNetworkProfile, networkPeople, networkJobs, networkJobDetail, networkCompany, profileHeader } from "../parsers/network";
+import { visible, wait, sleep, guard, insert, readEditor, sameText } from "./dom";
 
 let controller = new AbortController();
 const claimed = new Set<string>();
@@ -63,29 +63,61 @@ async function authorize(cmd: NetworkPageCommand, claim: boolean, signal: AbortS
   guard(signal);
   if (!reply || typeof reply !== "object" || !("allowed" in reply) || reply.allowed !== true) throw new Error("Outreach is paused or this action is no longer authorized.");
 }
-async function connect(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unknown> {
-  let top = topCard(cmd.url);
-  const state = relationship(top); if (state === "connected" || state === "pending") return { state };
-  let control = button(top, /^connect$|^invite .+ to connect$/i);
-  if (!control) {
-    const more = button(top, /^more$|^more actions$/i);
-    if (more) {
-      more.click(); await sleep(400, signal);
-      const menus = [...document.querySelectorAll<HTMLElement>('[role="menu"], .artdeco-dropdown__content')].filter(visible);
-      if (menus.length === 1) control = button(menus[0]!, /^connect$|^invite .+ to connect$/i);
+async function openInvitationDialog(url: string, signal:AbortSignal):Promise<HTMLElement | null> {
+  const open = () => [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].filter(visible).find(e=>/invitation|connect/i.test(e.innerText)) || null;
+  const existing=open();if(existing)return existing;
+  const top=topCard(url);
+  let control=button(top,/^connect$|^invite .+ to connect$/i);
+  if(!control){
+    const more=button(top,/^more$|^more actions$/i);
+    if(more){more.click();await sleep(350,signal);
+      const menus=[...document.querySelectorAll<HTMLElement>('[role="menu"],.artdeco-dropdown__content')].filter(visible);
+      if(menus.length===1)control=button(menus[0]!,/^connect$|^invite .+ to connect$/i);
     }
   }
-  if (!control) throw new Error("Connect is unavailable on this profile. Open it to review the available options.");
-  await authorize(cmd, true, signal); control.click();
-  await sleep(700, signal);
-  if (relationship(topCard(cmd.url)) === "pending") return { state: "pending" };
-  const dialog = await wait(() => [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].filter(visible).find(e => /invitation|connect/i.test(e.innerText)), signal, 5000);
-  if (dialog.querySelector('input[type="email"]')) throw new Error("LinkedIn requires an email for this invitation. This contact needs your attention.");
-  const send = button(dialog, /^send without a note$/i);
-  if (!send) throw new Error("LinkedIn’s invitation screen was not recognized. No further action was taken.");
-  await authorize(cmd, false, signal); send.click();
-  await wait(() => relationship(topCard(cmd.url)) === "pending", signal, 8000);
-  top = topCard(cmd.url); return { state: relationship(top) };
+  if(!control)throw new Error('Connect is unavailable on this recipient profile.');
+  control.click();await sleep(450,signal);
+  if(relationship(topCard(url))==='pending')return null;
+  return await wait(open,signal,7000);
+}
+async function connect(cmd:NetworkPageCommand,signal:AbortSignal):Promise<unknown> {
+  const existing=relationship(topCard(cmd.url));
+  if(existing==='pending'||existing==='connected')return {state:existing};
+  // Opening the modal is not proof that an invitation was sent.
+  await authorize(cmd,true,signal);
+  const dialog=await openInvitationDialog(cmd.url,signal);
+  if(!dialog){
+    if(cmd.noteMode==='require')throw new Error('LinkedIn submitted a request without exposing a note dialog. Verify the exact invitation manually.');
+    return {state:'pending',noteSent:false};
+  }
+  if(dialog.querySelector('input[type="email"]'))throw new Error('LinkedIn requires a recipient email; no invitation was submitted.');
+  let noteSent=false;
+  if(cmd.noteMode!=='none'){
+    const add=button(dialog,/^add a note$|^personalize invitation$/i);
+    if(add){add.click();await sleep(250,signal);}
+    const editor=[...dialog.querySelectorAll<HTMLElement>('textarea, [contenteditable="true"], [role="textbox"]')].find(visible);
+    if(!editor){
+      // "Use a note when available": LinkedIn limits personalised notes on free accounts, so send without one.
+      if(cmd.noteMode==='require')throw new Error('No editable invitation note field was found. No note-free invitation was sent.');
+    }else{
+      if(!cmd.body.trim())throw new Error('The personalized invitation note is empty.');
+      const max=editor instanceof HTMLTextAreaElement ? editor.maxLength : Number(editor.getAttribute('maxlength') || editor.getAttribute('aria-valuemax'));
+      if(max>0&&cmd.body.length>max)throw new Error(`The current LinkedIn dialog permits ${max} characters; draft is ${cmd.body.length}. No invitation was sent.`);
+      if(readEditor(editor).trim())throw new Error('The note field already contains a draft. It was not overwritten.');
+      insert(editor,cmd.body);
+      if(!sameText(readEditor(editor),cmd.body))throw new Error('The note was not fully reflected in LinkedIn. No invitation was sent.');
+      noteSent=true;
+    }
+  }else if(!cmd.body){ /* explicit no-note option only */ }
+  const send=button(dialog,/^send$|^send invitation$|^send without a note$/i);
+  if(!send||send.hasAttribute('disabled')||send.getAttribute('aria-disabled')==='true')throw new Error('Invitation Send control is not available; no request was submitted.');
+  if(noteSent&&/without a note/i.test(label(send)))throw new Error('LinkedIn still shows Send without a note after insertion. No invitation was sent.');
+  if(cmd.noteMode==='require'&&!cmd.body.trim())throw new Error('This outreach requires a personal note.');
+  if(!dialog.isConnected||!visible(dialog)||profileUrl(location.href)!==cmd.url)throw new Error('Recipient or invitation dialog changed before sending.');
+  await authorize(cmd,false,signal);
+  send.click();
+  await wait(()=>relationship(topCard(cmd.url))==='pending',signal,10000).catch(()=>{throw new Error('LinkedIn did not confirm Pending after Send. The invitation may have been submitted; inspect it manually before retrying.');});
+  return {state:'pending',noteSent};
 }
 async function message(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unknown> {
   const top = topCard(cmd.url);
@@ -105,22 +137,12 @@ async function message(cmd: NetworkPageCommand, signal: AbortSignal): Promise<un
   if (history.length) throw new Error("You already have a conversation with this person. Continue it yourself in LinkedIn.");
   if (readEditor(editor).trim()) throw new Error("This conversation has an unsent draft. It has been left untouched.");
   insert(editor, cmd.body);
-  if (normalize(readEditor(editor)) !== normalize(cmd.body)) throw new Error("The introduction could not be verified.");
-  if (cmd.attachment) {
-    const input = conversation.querySelector<HTMLInputElement>('input[type="file"]');
-    if (!input) throw new Error("LinkedIn attachment control is unavailable.");
-    const bytes = Uint8Array.from(atob(cmd.attachment.data), c => c.charCodeAt(0));
-    const transfer = new DataTransfer();
-    transfer.items.add(new File([bytes], cmd.attachment.name, { type: cmd.attachment.type }));
-    Object.defineProperty(input, "files", { configurable: true, value: transfer.files });
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-    await sleep(1000, signal);
-  }
+  if (!sameText(readEditor(editor), cmd.body)) throw new Error("The introduction could not be verified.");
   const send = button(conversation, /^send$/i);
   if (!send || send.hasAttribute("disabled")) throw new Error("The message is ready, but LinkedIn’s Send button is unavailable.");
   if (!conversation.isConnected || !visible(conversation) || ![...conversation.querySelectorAll<HTMLAnchorElement>('.msg-overlay-bubble-header a[href*="/in/"], .msg-thread__link-to-profile')].some(a => profileUrl(a.href) === cmd.url)) throw new Error("The conversation changed before sending.");
   await authorize(cmd, true, signal); send.click();
-  await wait(() => !readEditor(editor).trim() && [...conversation.querySelectorAll<HTMLElement>('.msg-s-event-listitem__body')].some(e => normalize(e.innerText) === normalize(cmd.body)), signal, 10000);
+  await wait(() => !readEditor(editor).trim() && [...conversation.querySelectorAll<HTMLElement>('.msg-s-event-listitem__body')].some(e => sameText(e.innerText, cmd.body)), signal, 10000);
   return { state: "messaged" };
 }
 async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unknown> {
@@ -131,6 +153,27 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
     await wait(() => profileUrl(location.href) === cmd.owner && ownProfileEditLink(document, cmd.owner, visible), signal, 15000)
       .catch(() => { throw new Error("Could not verify your own profile. Open your LinkedIn profile with the Edit intro button visible, then try again."); });
   } else if (await identity(signal) !== cmd.owner) throw new Error("The signed-in LinkedIn account could not be matched to your saved profile. Open your own profile and refresh it in the extension.");
+  if(cmd.action==='jobs'){
+    if(!location.pathname.startsWith('/jobs/search'))throw new Error('LinkedIn Jobs search did not load.');
+    return (await wait(()=>{
+      const jobs=networkJobs(document);if(jobs.length)return {jobs};
+      if(/no jobs found|no matching jobs|no results/i.test(document.querySelector('main')?.textContent||''))return {jobs:[]};
+      return null;
+    },signal,15000)).jobs;
+  }
+  if(cmd.action==='job'){
+    if(!location.pathname.startsWith('/jobs/view/'))throw new Error('Job details did not open.');
+    return networkJobDetail(document,cmd.url);
+  }
+  if(cmd.action==='company'){
+    if(!location.pathname.startsWith('/company/'))throw new Error('Company page did not open.');
+    return networkCompany(document);
+  }
+  if(cmd.action==='invitationLimit'){
+    // Inspection only: do not click Connect pre-authorization. Actual limit is
+    // checked inside the visible modal immediately before Send.
+    return {limit:null,reason:'The current invitation dialog has not opened yet.'};
+  }
   if (cmd.action === "search") {
     if (location.pathname !== "/search/results/people/") throw new Error("LinkedIn did not open people search.");
     const result = await wait(() => {

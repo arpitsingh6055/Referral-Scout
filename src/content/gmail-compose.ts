@@ -1,5 +1,5 @@
 import { selectors as s } from "../shared/selectors.config";
-import { find, wait, insert, normalize, readEditor, guard, sleep } from "./dom";
+import { find, wait, insert, readEditor, guard, sleep, sameText } from "./dom";
 import type { Command } from "../shared/commands";
 type Compose = Extract<Command, { kind: "gmail.fill" | "gmail.send" }>;
 async function compose(cmd: Compose, signal: AbortSignal, fill: boolean): Promise<HTMLElement> {
@@ -17,8 +17,8 @@ async function compose(cmd: Compose, signal: AbortSignal, fill: boolean): Promis
   if (!recipients.length || recipients.some(v => v.trim().toLowerCase() !== cmd.to.toLowerCase())) throw new Error("HALT: Recipient mismatch or unreadable recipient chips");
   const subject = find(s.gmail.subject, root);
   if (!cmd.reply && (!subject || readEditor(subject) !== cmd.subject)) throw new Error("HALT: Subject mismatch");
-  if (fill && normalize(readEditor(editor)) !== normalize(cmd.body)) insert(editor, cmd.body);
-  if (normalize(readEditor(editor)) !== normalize(cmd.body)) throw new Error("HALT: Body verification failed");
+  if (fill && !sameText(readEditor(editor), cmd.body)) insert(editor, cmd.body);
+  if (!sameText(readEditor(editor), cmd.body)) throw new Error("HALT: Body verification failed");
   return root;
 }
 export async function fillCompose(cmd: Compose, signal: AbortSignal): Promise<unknown> {

@@ -41,6 +41,7 @@ export async function openPage(key: string, url: string, signal: AbortSignal, fr
   if (tabId === undefined) {
     const tab = await chrome.tabs.create({ windowId, url, active: true }); if (tab.id === undefined) throw new Error("No tab ID"); tabId = tab.id; await write(`tab:${key}`, tabId);
   } else { const tab = await chrome.tabs.get(tabId); if (tab.url !== url) await chrome.tabs.update(tabId, { url, active: true }); else await chrome.tabs.update(tabId, { active: true }); }
+  if(tabId === undefined) throw new Error("No automation tab ID");
   const end = Date.now() + 30000;
   let injected = false;
   while (Date.now() < end) {
