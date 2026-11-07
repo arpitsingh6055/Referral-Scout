@@ -1,32 +1,19 @@
-# Cold Contact privacy information
+# Cold Contact Pro privacy and data handling — v0.7.0 source candidate
 
-**Last updated: 2026-11-05 · LinkedIn workflow, version 0.4**
+**Updated:** 6 November 2026. This describes the patched source under review and is **not** a verified store-release privacy policy.
 
-Cold Contact stores your name, LinkedIn profile URL, headline, location and rendered
-About section locally in the extension's IndexedDB database. It also stores your
-chosen target, introduction template, shortlisted public profiles, invitation and
-message status, action attempts and recovery state.
+### Stored locally
 
-The extension reads LinkedIn pages using your existing signed-in browser session.
-It does not extract passwords, cookies or authentication tokens. Starting outreach
-authorizes connection requests and one introduction to each tracked contact after
-acceptance. These actions send information to LinkedIn through its page interface.
-LinkedIn's own policies and retention apply to that service-side information.
+Cold Contact Pro can store the owner's verified LinkedIn profile URL, visible profile sections and capture times; extracted PDF/DOCX/TXT CV text and file metadata; the ChatGPT-generated career dossier; target roles, company preferences and settings; observed LinkedIn job cards/descriptions, company and recipient evidence; invitation notes; connection/acceptance status; thank-you messages; and timestamps/action ledgers. The data is saved to extension-owned IndexedDB. The former `network-v1` state remains as a compatibility source while v2 normalized owner-keyed records are mirrored. Legacy raw CV-file/base64 fields are stripped on state update. Full text is not included in routine side-panel status polling.
 
-The current workflow does not submit CVs or profiles to ChatGPT or Gemini, access
-Gmail, use an AI API, or contact an extension-owned server. There is no analytics or
-advertising SDK. New outreach data is not written to Chrome Sync.
+### Sent to LinkedIn and ChatGPT
 
-**Clear saved outreach** deletes the current LinkedIn workflow's local profile,
-preferences, contacts and action history. It does not delete LinkedIn messages,
-withdraw invitations or remove legacy version 0.3 campaign records. Old records
-remain unused by this build; uninstalling the extension removes its browser-owned
-local storage. Previously synced profile data and information already submitted
-to external services remain subject to those services' storage and deletion controls.
+The extension uses ordinary visible LinkedIn controls for account verification, search, invitations and messages. These actions use the existing user's LinkedIn session and are subject to the service's storage and policies. When you choose **Process with ChatGPT**, or Start requires an unprocessed dossier, the complete available LinkedIn profile text and **extracted CV text** appear in a visible ChatGPT prompt. For each recipient, validated dossier excerpts, public recipient/company/job observations and proposed text appear in ChatGPT prompts. No CV binary is attached or uploaded by the extension, although entered prompt text is transmitted to ChatGPT by that website. ChatGPT may retain conversations under your own account settings; clearing extension data does not delete ChatGPT web conversations.
 
-The current build has no automatic age-based retention for saved profiles. The
-shortlist is bounded to 500 contacts, with manual clearing available in the dashboard.
-Action-attempt history is trimmed to seven days when a new action is recorded.
+There is no extension-owned analytics backend, cookie reading or stored authentication tokens. It does not send profile or CV bytes to an external AI API. Source text and LLM results are untrusted and should be reviewed before automatic sending.
 
-Before public distribution, the publisher must supply a public privacy URL and
-support contact and verify that these statements match the released build.
+### Controls and retention
+
+The default mode requests approval before each LinkedIn send; an optional user-selected automatic mode can send while Edge is running. You can pause, export local data, delete extracted CV text, remove individual contacts or **clear all outreach** locally. The clear-all action removes network caches and owner/contact/job/action/AI-task records, but it does not undo invitations, messages or ChatGPT prompts already sent through websites, or necessarily remove all unrelated legacy campaign records. Extracted CV text and outreach history have no automatic expiration policy in this source candidate. Reinstalling/uninstalling an extension may alter browser-owned storage retention.
+
+Do not ship publicly until the published privacy statement, accessibility, consent and platform policy review match a verified production build.

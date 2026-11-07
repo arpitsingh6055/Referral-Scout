@@ -1,73 +1,142 @@
-import { z } from "zod";
-
+import { z } from 'zod';
+import { classify, suggestTarget } from './targeting';
 export const DAY = 86400000;
-export const networkKey = "network-v1";
-export function profileUrl(value: string): string | null {
+export const networkKey = 'network-v1'; // Retain old state for lossless migration; mirror entities in v2 stores.
+export function profileUrl(value:string):string|null {
   try {
-    const u = new URL(value, "https://www.linkedin.com");
-    if (u.protocol !== "https:" || u.username || u.password || u.port || !["www.linkedin.com", "linkedin.com"].includes(u.hostname)) return null;
-    const match = /^\/in\/([^/]+)\/?$/.exec(u.pathname);
-    return match ? `https://www.linkedin.com/in/${match[1]}/` : null;
-  } catch { return null; }
+    const u=new URL(value,'https://www.linkedin.com');
+    if(u.protocol!=='https:'||u.username||u.password||u.port||!['www.linkedin.com','linkedin.com'].includes(u.hostname))return null;
+    const match=/^\/in\/([^/]+)\/?$/.exec(u.pathname);
+    return match ? `https://www.linkedin.com/in/${match[1]}/`:null;
+  } catch{return null;}
 }
-export const networkProfileSchema = z.object({ name: z.string().min(1).max(150), url: z.string().refine(v => profileUrl(v) === v), headline: z.string().max(500), location: z.string().max(200), about: z.string().max(3000), rawText: z.string().max(60000).optional() });
-export type NetworkProfile = z.infer<typeof networkProfileSchema>;
-export type ContactState = "shortlisted" | "requesting" | "pending" | "connected" | "messaging" | "messaged" | "attention" | "skipped";
-export interface NetworkContact extends NetworkProfile {
-  state: ContactState; reason: string; addedAt: number; requestedAt: number; checkedAt: number; messagedAt: number; message: string;
-}
-export interface NetworkState {
-  profile: NetworkProfile | null; target: string; location: string; template: string;
-  cv: { name: string; type: string; text: string; data: string; textVersion?: number } | null;
-  dossier?: string;
-  dossierSavedAt?: number;
-  active: boolean; revision: number; status: string; contacts: NetworkContact[];
-  searchCursor: number; nextDiscoveryAt: number; nextActionAt: number;
-  actions: { at: number; kind: "connect" | "message"; url: string }[];
-  intent: { id: string; tabId: number; url: string; kind: "connect" | "message"; at: number; body: string; revision: number; claimed: boolean } | null;
-}
-export const defaultTemplate = "Hi {firstName}, thanks for connecting! I’m exploring {target} opportunities and would love to learn whether there might be a fit on your team. Would you be open to a quick conversation?";
-export function suggestedTarget(headline: string): string {
-  for (const [pattern, target] of [[/product/i, "Product Management"], [/software|developer|programmer/i, "Software Engineering"], [/data|analytics/i, "Data Analytics"], [/design|\bUX\b|\bUI\b/i, "Product Design"], [/marketing|growth/i, "Marketing and Growth"], [/finance/i, "Finance"]] as const) if (pattern.test(headline)) return target;
-  return "internship";
-}
-export function emptyNetwork(): NetworkState {
-  return { profile: null, target: "Product Management internship", location: "India", template: defaultTemplate, cv: null, active: false, revision: 0, status: "", contacts: [], searchCursor: 0, nextDiscoveryAt: 0, nextActionAt: 0, actions: [], intent: null };
-}
-export function introduction(s: Pick<NetworkState, "template" | "target">, person: Pick<NetworkProfile, "name">): string {
-  return s.template.replace(/\{firstName\}/g, person.name.split(/\s+/)[0] || person.name).replace(/\{target\}/g, s.target);
-}
-export function relevance(headline: string, target: string): string | null {
-  if (/\brecruit(er|ing|ment)\b|talent acquisition|\bHR\b|people (?:partner|operations|lead|head)/i.test(headline)) return "Recruiting / people team";
-  if (/\bfounder\b|co-founder|\bCEO\b/i.test(headline)) return "Founder / company leader";
-  const words = target.toLowerCase().match(/[a-z]{3,}/g)?.filter(w => !["internship", "intern", "opportunities", "management", "role"].includes(w)) ?? [];
-  if (/\b(head|lead|director|manager|VP)\b/i.test(headline) && words.some(w => headline.toLowerCase().includes(w))) return "Relevant team leader";
-  return null;
-}
-export function nextContact(s: NetworkState, now = Date.now()): NetworkContact | undefined {
-  const available = (kind: "connect" | "message") => s.actions.filter(a => a.kind === kind && now - a.at < DAY).length < 5;
-  return s.contacts.find(p => p.state === "pending" && now - p.checkedAt >= DAY)
-    ?? (available("message") ? s.contacts.find(p => p.state === "connected") : undefined)
-    ?? (available("connect") && s.contacts.filter(p => p.state === "pending").length < 50 ? s.contacts.find(p => p.state === "shortlisted") : undefined);
-}
-export const networkRequest = z.discriminatedUnion("action", [
-  z.object({ kind: z.literal("network"), action: z.literal("analyze") }),
-  z.object({ kind: z.literal("network"), action: z.literal("status") }),
-  z.object({ kind: z.literal("network"), action: z.literal("import") }),
-  z.object({ kind: z.literal("network"), action: z.literal("start") }),
-  z.object({ kind: z.literal("network"), action: z.literal("pause") }),
-  z.object({ kind: z.literal("network"), action: z.literal("clear"), confirm: z.literal(true) }),
-  z.object({ kind: z.literal("network"), action: z.literal("save"), target: z.string().trim().min(3).max(150), location: z.string().trim().max(150), template: z.string().trim().min(20).max(1500) }),
-  z.object({ kind: z.literal("network"), action: z.literal("saveCv"), name: z.string().trim().min(1).max(200), type: z.string().max(120), text: z.string().max(200000), data: z.string().max(3000000) }),
-  z.object({ kind: z.literal("network"), action: z.literal("prepare"), url: z.string() }),
-  z.object({ kind: z.literal("network"), action: z.literal("skip"), url: z.string() })
-]);
-export type NetworkRequest = z.infer<typeof networkRequest>;
-export const networkPageCommand = z.object({
-  kind: z.literal("network.page"), requestId: z.uuid(), deadline: z.number(),
-  action: z.enum(["identity", "profile", "search", "relationship", "connect", "message"]),
-  url: z.string().default(""),   owner: z.string().default(""), intentId: z.string().default(""), body: z.string().max(2000).default(""), attachment: z.object({ name: z.string().max(200), type: z.string().max(120), data: z.string().max(3000000) }).nullable().default(null)
+export const networkProfileSchema=z.object({
+  name:z.string().min(1).max(150),url:z.string().refine(v=>profileUrl(v)===v),headline:z.string().max(500),
+  location:z.string().max(200),about:z.string(),degree:z.number().int().min(1).max(3).optional(),rawText:z.string().optional(),
+  sections:z.record(z.string(),z.string()).optional(),sourceCapturedAt:z.number().optional(),
+  completeness:z.record(z.string(),z.boolean()).optional()
 });
-export type NetworkPageCommand = z.infer<typeof networkPageCommand>;
-export const networkReplySchema = z.object({ requestId: z.uuid(), ok: z.boolean(), data: z.unknown().optional(), error: z.string().max(2000).optional() });
-
+export type NetworkProfile=z.infer<typeof networkProfileSchema>;
+export interface NetworkJob {
+  id:string;url:string;title:string;companyName:string;companyUrl?:string;location:string;
+  workMode?:string;employmentType?:string;postedAt?:string;descriptionText?:string;seniority?:string;
+  sourceCapturedAt:number;captureStatus:'list'|'detail'|'unknown';matchingReasons:string[];peopleSearches?:number;
+}
+export type ContactState='shortlisted'|'requesting'|'pending'|'connected'|'messaging'|'messaged'|'attention'|'skipped'|'review';
+export interface NetworkContact extends NetworkProfile {
+  state:ContactState;reason:string;addedAt:number;requestedAt:number;checkedAt:number;messagedAt:number;message:string;
+  nextCheckAt?:number;acceptedAt?:number;invitationNote?:string;invitationLimit?:number;jobIds?:string[];
+  companyName?:string;companyUrl?:string;approvalKind?:'connect'|'message';lastError?:string;score?:number;category?:string;
+}
+export const defaultNoteTemplate='Hi {firstName}, I’m {myFirstName}, exploring {target} opportunities. Would love to connect and learn about your work at {company}.';
+export const outreachSettingsSchema=z.object({
+  roles:z.array(z.string().trim().min(2).max(140)).min(1).max(30),
+  searchMode:z.enum(['both','jobs','people']),
+  outreachMode:z.enum(['automatic','review']),
+  noteMode:z.enum(['require','preferred','none']),
+  followupMode:z.enum(['automatic','review']),
+  paceMinutes:z.number().int().min(1).max(1440),
+  dailyInvites:z.number().int().positive().nullable(),dailyMessages:z.number().int().positive().nullable(),maxPending:z.number().int().positive().nullable(),
+  companyAllowlist:z.array(z.string()).default([]),companyExclusions:z.array(z.string()).default([]),
+  workMode:z.enum(['any','remote','hybrid','onsite']).default('any'),
+  employmentType:z.enum(['any','internship','full-time']).default('any'),
+  aiMode:z.enum(['template','chatgpt']).default('template'),
+  noteTemplate:z.string().trim().min(10).max(300).default(defaultNoteTemplate),
+  weeklyInvites:z.number().int().positive().nullable().default(80),
+  activeHours:z.object({from:z.number().int().min(0).max(23),to:z.number().int().min(1).max(24)}).nullable().default({from:8,to:22})
+});
+export type OutreachSettings=z.infer<typeof outreachSettingsSchema>;
+export const defaultSettings:OutreachSettings={
+  roles:['Product Management internship'],searchMode:'both',outreachMode:'review',noteMode:'preferred',followupMode:'review',
+  paceMinutes:3,dailyInvites:15,dailyMessages:20,maxPending:100,companyAllowlist:[],companyExclusions:[],workMode:'any',employmentType:'any',
+  aiMode:'template',noteTemplate:defaultNoteTemplate,weeklyInvites:80,activeHours:{from:8,to:22}
+};
+export interface NetworkState {
+  profile:NetworkProfile|null;target:string;location:string;template:string;
+  cv:{name:string;type:string;text:string;textVersion?:number;pages?:number;warnings?:string[];savedAt?:number;characterCount?:number}|null;
+  dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
+  active:boolean;revision:number;status:string;contacts:NetworkContact[];jobs?:NetworkJob[];
+  settings?:OutreachSettings;searchCursor:number;nextDiscoveryAt:number;nextActionAt:number;
+  actions:{at:number;kind:'connect'|'message'|'check';url:string;confirmed?:boolean;idempotencyKey?:string}[];
+  intent:{id:string;tabId:number;url:string;kind:'connect'|'message';at:number;body:string;revision:number;claimed:boolean}|null;
+}
+export const defaultTemplate='Hi {firstName}, thanks for connecting! I’m exploring {target} opportunities and would love to hear about your team. Would you be open to a brief chat?';
+export function suggestedTarget(headline:string,experienceText=''):string {return suggestTarget(headline,experienceText);}
+export function emptyNetwork():NetworkState {
+  return {profile:null,target:'Product Management internship',location:'India',template:defaultTemplate,cv:null,active:false,revision:0,status:'',contacts:[],jobs:[],settings:{...defaultSettings,roles:[...defaultSettings.roles]},searchCursor:0,nextDiscoveryAt:0,nextActionAt:0,actions:[],intent:null};
+}
+export function introduction(s:Pick<NetworkState,'template'|'target'>,person:Pick<NetworkProfile,'name'>&{companyName?:string},me?:string):string {
+  return s.template.replace(/\{firstName\}/g,person.name.split(/\s+/)[0]||person.name).replace(/\{target\}/g,s.target)
+    .replace(/\{myFirstName\}/g,me?.split(/\s+/)[0]??'').replace(/\s+at\s+\{company\}/g,person.companyName?` at ${person.companyName}`:'').replace(/\{company\}/g,person.companyName??'').replace(/\s{2,}/g,' ').trim();
+}
+/** Connection notes are limited to 200 characters. Shorten at a sentence or word boundary, never mid-word. */
+export function fitNote(text:string,limit=200):string {
+  let note=text.replace(/\s+/g,' ').trim();
+  while(note.length>limit){
+    const cut=note.slice(0,note.lastIndexOf('. ',note.length-2)+1);
+    if(cut.length>=40){note=cut;continue;}
+    note=note.slice(0,limit-1).replace(/\s+\S*$/,'')+'…';break;
+  }
+  return note;
+}
+export function renderNote(settings:Pick<OutreachSettings,'noteTemplate'>,target:string,person:Pick<NetworkProfile,'name'>&{companyName?:string},me:string):string {
+  return fitNote(introduction({template:settings.noteTemplate,target},person,me));
+}
+export function relevance(headline:string,target:string):string|null {
+  return classify({headline},{roles:[target]})?.reason??null;
+}
+/** Local-time quiet hours. Acting at 3 a.m. is both unnatural and a common automation signal. */
+export function withinActiveHours(settings:Pick<OutreachSettings,'activeHours'>,now=Date.now()):boolean {
+  const hours=settings.activeHours;if(!hours)return true;
+  const h=new Date(now).getHours();return hours.from<hours.to?h>=hours.from&&h<hours.to:h>=hours.from||h<hours.to;
+}
+export const MAX_REVIEW_QUEUE=5;
+export const SHORTLIST_BACKLOG=15;
+export function nextContact(s:NetworkState,now=Date.now()):NetworkContact|undefined {
+  const settings=s.settings??defaultSettings;
+  const within=(kind:'connect'|'message',span=DAY)=>s.actions.filter(a=>a.kind===kind&&a.confirmed!==false&&now-a.at<span).length;
+  const permit=(kind:'connect'|'message')=> {
+    const cap=kind==='connect'?settings.dailyInvites:settings.dailyMessages;
+    if(cap!==null&&within(kind)>=cap)return false;
+    return kind==='message'||settings.weeklyInvites===null||within('connect',7*DAY)<settings.weeklyInvites;
+  };
+  const due=s.contacts.find(p=>p.state==='pending'&&p.requestedAt>0&&now>=(p.nextCheckAt??((p.checkedAt||p.requestedAt)+DAY)));
+  if(due)return due;
+  // Never draft more than a handful of messages the user has not looked at yet.
+  if(s.contacts.filter(p=>p.state==='review').length>=MAX_REVIEW_QUEUE)return undefined;
+  if(permit('message')){const accepted=s.contacts.find(p=>p.state==='connected'&&!p.messagedAt);if(accepted)return accepted;}
+  const pending=s.contacts.filter(p=>p.state==='pending').length;
+  if(!permit('connect')||(settings.maxPending!==null&&pending>=settings.maxPending))return undefined;
+  // Best candidates first: recruiters and 2nd-degree connections outrank everything else.
+  return s.contacts.filter(p=>p.state==='shortlisted').sort((a,b)=>(b.score??0)-(a.score??0)||a.addedAt-b.addedAt)[0];
+}
+export const networkRequest=z.discriminatedUnion('action',[
+  z.object({kind:z.literal('network'),action:z.literal('analyze')}),
+  z.object({kind:z.literal('network'),action:z.literal('importDossier'),text:z.string().trim().min(20).max(200000)}),
+  z.object({kind:z.literal('network'),action:z.literal('recoverAi')}),
+  z.object({kind:z.literal('network'),action:z.literal('resetAi')}),
+  z.object({kind:z.literal('network'),action:z.literal('status')}),
+  z.object({kind:z.literal('network'),action:z.literal('ownerData')}),
+  z.object({kind:z.literal('network'),action:z.literal('export')}),
+  z.object({kind:z.literal('network'),action:z.literal('diagnostics')}),
+  z.object({kind:z.literal('network'),action:z.literal('import')}),
+  z.object({kind:z.literal('network'),action:z.literal('start')}),
+  z.object({kind:z.literal('network'),action:z.literal('pause')}),
+  z.object({kind:z.literal('network'),action:z.literal('clear'),confirm:z.literal(true)}),
+  z.object({kind:z.literal('network'),action:z.literal('deleteCv')}),
+  z.object({kind:z.literal('network'),action:z.literal('approve'),url:z.string()}),
+  z.object({kind:z.literal('network'),action:z.literal('save'),target:z.string().trim().min(2).max(160),location:z.string().trim().max(160),template:z.string().trim().min(10).max(1500),settings:outreachSettingsSchema.optional()}),
+  z.object({kind:z.literal('network'),action:z.literal('saveCv'),name:z.string().trim().min(1).max(200),type:z.string().max(120),text:z.string().min(1),pages:z.number().int().optional()}),
+  z.object({kind:z.literal('network'),action:z.literal('prepare'),url:z.string()}),
+  z.object({kind:z.literal('network'),action:z.literal('skip'),url:z.string()}),
+  z.object({kind:z.literal('network'),action:z.literal('removeContact'),url:z.string()})
+]);
+export type NetworkRequest=z.infer<typeof networkRequest>;
+export const networkPageCommand=z.object({
+  kind:z.literal('network.page'),requestId:z.uuid(),deadline:z.number(),
+  action:z.enum(['identity','profile','search','jobs','job','company','invitationLimit','relationship','connect','message']),
+  url:z.string().default(''),owner:z.string().default(''),intentId:z.string().default(''),
+  body:z.string().default(''),noteMode:z.enum(['require','preferred','none']).default('preferred')
+});
+export type NetworkPageCommand=z.infer<typeof networkPageCommand>;
+export const networkReplySchema=z.object({requestId:z.uuid(),ok:z.boolean(),data:z.unknown().optional(),error:z.string().max(2000).optional()});

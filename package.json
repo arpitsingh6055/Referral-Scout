@@ -1,9 +1,9 @@
 {
   "name": "cold-contact-pro",
-  "version": "0.4.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
-  "description": "LinkedIn profiles, connection tracking and introductions after acceptance",
+  "description": "Visible LinkedIn Jobs and People discovery, ChatGPT-assisted invitations and accepted-connection follow-ups",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=24.0.0"
@@ -15,7 +15,8 @@
     "test:spike": "node --test spike/parsers.test.cjs",
     "build": "tsc --noEmit && vite build && vite build --mode content && node scripts/check-build.mjs",
     "package": "pnpm build && node scripts/package-extension.mjs",
-    "check": "node --test spike/parsers.test.cjs && vitest run && tsc --noEmit && vite build && vite build --mode content && node scripts/check-build.mjs"
+    "check": "node --test spike/parsers.test.cjs && vitest run && tsc --noEmit && vite build && vite build --mode content && node scripts/check-build.mjs",
+    "test:source": "node --test tests/v2-source-contract.test.mjs"
   },
   "devDependencies": {
     "@types/chrome": "0.3.7",

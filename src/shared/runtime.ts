@@ -7,7 +7,7 @@ export interface Campaign {
   discoveryCursor: number; lastMonitor: number; bothFailed: number; mock: boolean;
   approvedAt: number; profile: Profile; settings: CampaignSettings;
 }
-export interface Contact { name: string; title: string; url: string; location: string; firstDegree: boolean }
+export interface Contact { name: string; title: string; url: string; location: string; degree?:number;firstDegree: boolean }
 export interface CompanyCard { name: string; url: string; industry: string; location: string; description: string; employees: number | null }
 export interface FoundRole { title: string; source_url: string }
 export interface Lead extends CompanyCard {

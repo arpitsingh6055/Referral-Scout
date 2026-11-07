@@ -78,12 +78,42 @@ export function readNetworkProfile(doc: ParentNode, url: string): NetworkProfile
     const next = heads[i + 1]; if (next) range.setEndBefore(next); else range.setEnd(main, main.childNodes.length);
     sections.push((range.cloneContents().textContent ?? ""));
   }
-  return networkProfileSchema.parse({ name: textOf(nameNode).slice(0, 150), url: canonical, headline: headline.slice(0, 500), location: location.slice(0, 200), about: textOf(about?.querySelector('.inline-show-more-text') ?? null).slice(0, 3000), rawText: sections.join('\n\n').slice(0, 60000) });
+  return networkProfileSchema.parse({ name: textOf(nameNode).slice(0, 150), url: canonical, headline: headline.slice(0, 500), location: location.slice(0, 200), about: textOf(about?.querySelector('.inline-show-more-text') ?? null), rawText: sections.join('\n\n') });
 }
 export function networkPeople(doc: ParentNode): NetworkProfile[] {
   return peopleCards(doc).flatMap(p => {
-    const parsed = networkProfileSchema.safeParse({ name: p.name.replace(/\s*[•·]\s*(1st|2nd|3rd\+?).*$/, "").slice(0, 150), url: p.url, headline: p.title.slice(0, 500), location: p.location.slice(0, 200), about: "" });
+    const parsed = networkProfileSchema.safeParse({ name: p.name.replace(/\s*[•·]\s*(1st|2nd|3rd\+?).*$/, "").slice(0, 150), url: p.url, headline: p.title.slice(0, 500), location: p.location.slice(0, 200), about: "", ...(p.degree ? { degree: p.degree } : {}) });
     return parsed.success && parsed.data.headline ? [parsed.data] : [];
   });
 }
 
+
+/** Only facts actually present on rendered LinkedIn Jobs cards. */
+export function networkJobs(doc: ParentNode, capturedAt = Date.now()): import('../shared/network').NetworkJob[] {
+  const items = [...doc.querySelectorAll<HTMLElement>('[data-job-id], .job-card-container, .jobs-search-results__list-item, li.scaffold-layout__list-item')];
+  const seen = new Set<string>();
+  return items.flatMap(card => {
+    const a = card.querySelector<HTMLAnchorElement>('a[href*="/jobs/view/"]');
+    const raw = card.getAttribute('data-job-id') || card.querySelector('[data-job-id]')?.getAttribute('data-job-id') || a?.href.match(/\/jobs\/view\/(\d+)/)?.[1];
+    if (!raw || !/^\d+$/.test(raw) || seen.has(raw)) return [];
+    const url = `https://www.linkedin.com/jobs/view/${raw}/`;
+    const title = textOf(card.querySelector<HTMLElement>('.job-card-list__title, .job-card-container__link, .job-card-job-posting-card-wrapper__title, a[href*="/jobs/view/"]'));
+    const company = textOf(card.querySelector<HTMLElement>('.job-card-container__primary-description, .artdeco-entity-lockup__subtitle, [data-test-job-card-company], .job-card-container__company-name'));
+    if (!title || !company) return [];
+    const companyLink = card.querySelector<HTMLAnchorElement>('a[href*="/company/"]')?.href;
+    const location = textOf(card.querySelector<HTMLElement>('.job-card-container__metadata-item, .job-card-container__metadata-wrapper, [data-test-job-location]'));
+    seen.add(raw);
+    return [{id:raw,url,title,companyName:company, ...(companyLink?{companyUrl:companyLink.split('?')[0]}:{}),location,sourceCapturedAt:capturedAt,captureStatus:'list' as const,matchingReasons:[]}];
+  });
+}
+export function networkJobDetail(doc: ParentNode, url: string): Partial<import('../shared/network').NetworkJob> {
+  const main = doc.querySelector<HTMLElement>('main, [role="main"]');
+  const heading = main?.querySelector<HTMLElement>('h1, .jobs-unified-top-card__job-title');
+  const company = main?.querySelector<HTMLAnchorElement>('a[href*="/company/"]');
+  const description = main?.querySelector<HTMLElement>('.jobs-description-content__text, #job-details, .jobs-box__html-content, [data-test-job-description]');
+  return {url,title:textOf(heading ?? null),companyName:textOf(company ?? null),...(company?.href ? {companyUrl:company.href.split('?')[0]}:{}),descriptionText:description?.innerText || description?.textContent || '',sourceCapturedAt:Date.now(),captureStatus:description ? 'detail' : 'unknown'};
+}
+export function networkCompany(doc: ParentNode): { name:string; description:string; url:string; capturedAt:number } {
+  const main = doc.querySelector<HTMLElement>('main, [role="main"]');
+  return {name:textOf(main?.querySelector<HTMLElement>('h1') ?? null),description:(main?.querySelector<HTMLElement>('.org-about-us-organization-description')?.innerText || main?.textContent || '').slice(0,16000),url:location.href,capturedAt:Date.now()};
+}

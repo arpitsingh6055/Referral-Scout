@@ -1,7 +1,9 @@
 import { openDatabase } from "../storage/database";
+import { registerAiMessages } from "./network-ai";
 import { registerNetworkMessages } from "./network-messages";
 import { networkTick, pauseNetwork } from "./network";
 registerNetworkMessages();
+registerAiMessages();
 chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "network-tick") void networkTick(); });
 async function initialize(): Promise<void> {
   await chrome.storage.sync.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });

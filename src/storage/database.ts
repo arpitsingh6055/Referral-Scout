@@ -1,18 +1,20 @@
 import type { Records, Store } from "../shared/types";
-const stores: Store[] = ["company", "person", "email", "role", "draft", "send", "event", "meta"];
+const stores: Store[] = ["company", "person", "email", "role", "draft", "send", "event", "meta", "owners", "searches", "outreachJobs", "outreachCompanies", "contacts", "aiJobs", "actions", "outreachSettings"];
 export const DB_NAME = "cold-contact-pro";
 let pending: Promise<IDBDatabase> | undefined;
 
 export function openDatabase(): Promise<IDBDatabase> {
   if (pending) return pending;
   pending = new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
+    const request = indexedDB.open(DB_NAME, 2);
     request.onupgradeneeded = () => {
       for (const name of stores) {
+        if (request.result.objectStoreNames.contains(name)) continue;
         const store = request.result.createObjectStore(name, { keyPath: "id" });
         if (name !== "meta") store.createIndex("createdAt", "createdAt");
         if (!["meta", "event"].includes(name)) store.createIndex("stage", "stage");
         if (["person", "role", "send"].includes(name)) store.createIndex("companyId", "companyId");
+        if (["owners", "searches", "outreachJobs", "outreachCompanies", "contacts", "aiJobs", "actions", "outreachSettings"].includes(name)) store.createIndex("owner", "owner");
         if (["email", "draft", "send"].includes(name)) store.createIndex("personId", "personId");
       }
     };

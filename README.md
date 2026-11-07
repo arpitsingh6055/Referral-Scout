@@ -1,102 +1,50 @@
-# Cold Contact — LinkedIn Outreach
+# Cold Contact Pro — v0.7.0 source candidate
 
-A Chrome / Edge extension for building professional connections directly on LinkedIn.
+Chromium/Edge Manifest V3 extension for **visible** LinkedIn Jobs/People discovery, ChatGPT-written personalized invitation notes, 24-hour acceptance checking, and contextual follow-up messages. It is intended for use with a signed-in LinkedIn tab and a signed-in ChatGPT tab, not an AI API. The extension controls the ordinary rendered web interfaces; it does not promise reliable operation when those interfaces change.
+
+> **Status:** 170 automated tests pass, including simulated LinkedIn profile pages and a simulated ChatGPT composer. It has **not** been verified against a live signed-in LinkedIn account in this environment. LinkedIn changes its page layout often, so expect to tune selectors in `src/shared/selectors.config.ts` and `src/parsers`. **LinkedIn restricts automated activity; use is at your own risk.** The defaults (15 invitations a day, 80 a week, quiet hours, review before every send) are deliberately conservative.
+
+## Build and install
+
+Use **Node.js 24 or later**, Corepack and **pnpm 11.25.0** (as declared in `package.json`), with a working npm registry. From the repository root:
+
+```bash
+corepack enable
+corepack pnpm install --frozen-lockfile
+corepack pnpm test
+corepack pnpm typecheck
+corepack pnpm build
+corepack pnpm package
+```
+
+`build` compiles the background, UI and content runtime and verifies the Manifest V3 files. `package` also builds a distributable archive. Do **not** mistake the source ZIP for the compiled archive. If any check fails, resolve it before loading the extension. On Edge, visit `edge://extensions`, turn on **Developer mode**, select **Load unpacked**, and choose the **generated `dist/` directory**. Reload the extension after rebuilding and refresh already open LinkedIn and ChatGPT tabs so new scripts run in those pages.
 
 ## The experience
 
-1. Open your LinkedIn home or profile page while signed in.
-2. Open the extension and choose **Read my LinkedIn profile**.
-3. Check the suggested target and the introduction, then choose **Start outreach**.
+1. Open LinkedIn while signed in, open the side panel, and choose **Read my LinkedIn profile**.
+2. Check **Who to contact** (target roles and place) and **Your introduction** (the invitation note and the one message sent after someone accepts). Both come from templates you can edit; no ChatGPT is needed.
+3. Choose **Start outreach**.
 
-The extension saves relevant recruiters, founders and team leaders, sends connection
-requests gradually, and checks pending invitations every 24 hours. After a tracked
-invitation is confirmed as a first-degree connection, it sends one introduction.
-The conversation is yours from that point onward.
+The extension searches LinkedIn for 2nd and 3rd degree recruiters and talent partners, team leaders in your field, and founders. It skips students, open-to-work profiles, former roles, assistants, and anyone you are already connected to. Candidates are ranked (recruiters first, then leaders, then founders, 2nd degree before 3rd) and at most three people per company are kept. Invitations go out slowly with randomised gaps, only in your active hours, within daily and weekly limits. Pending invitations are checked every 24 hours. When a tracked invitation is confirmed as a first-degree connection, one introduction is sent. After that the conversation is yours.
 
-Keep your LinkedIn profile up to date. There is no CV form, email lookup, Gmail
-configuration, ChatGPT prompt, Gemini account, API key or paid AI call in this build.
+In **Review before every send** mode (the default) every note is drafted and waits for your approval; at most five drafts queue up at a time. Status messages and notifications always say what happened and what to do next.
 
-## What changed in 0.4
+**Optional ChatGPT personalisation.** Under *Optional: personalise with ChatGPT*, add a CV and process a dossier, then choose *Personalise with ChatGPT* in Advanced settings. If ChatGPT fails for any reason the extension falls back to your templates instead of stopping.
 
-The primary workflow is now LinkedIn-only. The three extension entry pages open the
-same dashboard. The installed background worker and content script no longer load
-or run the old AI/Gmail campaign. Old campaign alarms are cleared on initialization.
-Previous email-campaign source and tests remain in the repository as legacy code;
-they are not part of the installed workflow. Existing legacy records are preserved.
+**Search and filtering.** Search combinations are every target role crossed with recruiters, campus recruiters (for internships), leaders and founders, paged up to five pages deep, then stopped. Jobs mode finds job postings that fit your roles and then looks for recruiters and leaders at those companies. Rules live in `src/shared/targeting.ts` and are covered by tests.
 
-## Current behavior and limits
+**Safety behaviour.** A problem with one profile (no Connect button, existing conversation, email required) skips that person and continues. LinkedIn's weekly limit pauses outreach and puts the person back in the queue. Anything uncertain after a click pauses everything and is never retried automatically.
 
-- Reads name, headline, location and the rendered About section from your own profile.
-  Account navigation identifies the signed-in user; viewing someone else's profile
-  never makes that person the account owner.
-- Suggests a target from the headline. You can edit the target, search location and
-  introduction before starting. This is a simple suggestion, not AI interpretation.
-- Searches LinkedIn people results using the target, location and alternating
-  recruiter/founder/team-lead searches. Saves matching visible profiles, with a
-  reason and their profile link. It does not verify vacancies or employment claims.
-- Sends invitations without a note, up to five attempts per rolling 24 hours.
-- Checks each pending invitation after 24 hours. Sends at most five introductions
-  per rolling 24 hours, and only after a tracked invitation becomes first-degree.
-- Does not adopt existing first-degree connections or already-pending invitations.
-  Existing conversations and unsent message drafts are left for the user.
-- Uses a normal LinkedIn work tab without bringing up multiple automation windows.
-  Chrome must be open and the computer awake. Checks missed during sleep/closure
-  resume after the browser returns; this is not a cloud scheduler.
-- Pause stops future work. A click already completed cannot be recalled. Persisted
-  action intent, account/recipient checks and uncertain-action recovery prevent
-  blind retries after interruption. Uncertain contacts stay in Needs attention.
-- Stops for unrecognized pages, signed-out sessions and account challenges.
-  The current selectors expect English LinkedIn pages.
-- The shortlist is bounded to 500 saved profiles and 50 pending invitations.
-  Search is bounded, cycles through five result pages per category and backs off
-  after empty results. Search quality is heuristic and needs real-session review.
+**Pause/Resume:** Pausing persists across restarts. Saved data can be exported; you can delete extracted CV text, remove individual contacts or clear all outreach. Deleting extension records does **not** retract sent LinkedIn requests or erase chats on ChatGPT's servers.
 
-**Status: implemented preview, not live-verified.** Automated tests exercise the
-workflow with synthetic data. No real invitation or LinkedIn message was sent while
-building this version. LinkedIn selectors and account-specific dialogs still need
-verification in a signed-in session. Do not interpret a successful build as proof
-of reliable live automation.
+## Troubleshooting
 
-## Build and load
+- **ChatGPT tab opens but no prompt:** Confirm you're signed in and no existing unsent draft, authentication page, challenge or usage cap is visible. Open **Automation diagnostics** in the side panel. Check the current document/composer and the job's last recorded stage. Refresh the ChatGPT tab and use the same action again only after checking the visible conversation; never resend an uncertain job blindly.
+- **LinkedIn account or action blocked:** Verify the signed-in owner matches the imported profile. Check the exact recipient profile. LinkedIn may modify its selectors, require email confirmation or impose account-level restrictions. The extension does not bypass restrictions.
+- **No results or slow discovery:** Check target titles, visible LinkedIn Jobs/People result pages and location filters. Jobs may be removed or expire; old captures are not a guarantee that a listing is still open.
+- **No 24-hour check while Edge closed:** MV3 alarms cannot run when Edge is completely closed. After restarting, overdue records are eligible on the next worker tick.
+- **A send is uncertain:** Inspect LinkedIn and the per-contact activity record. An uncertain invitation or follow-up must not be auto-retried.
 
-Use the pinned Node/pnpm versions in `package.json`:
+## Privacy and limitations
 
-```sh
-pnpm install --frozen-lockfile --ignore-scripts
-pnpm check
-pnpm package
-```
-
-Load the generated `dist` directory in your browser's extension developer settings,
-or reload the existing unpacked extension after rebuilding. Refresh LinkedIn tabs
-after updating so they receive the new content script. The distributable ZIP is
-`cold-contact-pro.zip`.
-
-## Data and permissions
-
-New profile, shortlist, message and progress records stay in local IndexedDB.
-Rendered profiles are read through the user's signed-in LinkedIn pages. Invitations
-and messages go to LinkedIn through its normal interface. No AI service or
-extension-owned server receives the new workflow's data.
-
-**Clear saved outreach** removes the new workflow's local profile and contacts.
-It does not withdraw invitations, delete LinkedIn messages or erase legacy email
-campaign records. LinkedIn remains responsible for its service-side copies.
-
-The build requests access only to LinkedIn, plus extension storage, tab control,
-script injection, side panel, alarms and power permission (to release an old
-version's keep-awake request). It does not inspect passwords, cookies or tokens.
-LinkedIn can change its interface or restrict automated activity; the extension
-does not bypass those restrictions.
-
-## Code map
-
-- `src/ui/sidepanel.ts`, `network.css`: the shared dashboard.
-- `src/shared/network.ts`: profiles, contact states, validation and matching rules.
-- `src/parsers/network.ts`: own-profile identification and rendered profile data.
-- `src/content/network.ts`: LinkedIn reads, invitations and introductions.
-- `src/background/network*.ts`: scheduling, account/action authorization and storage.
-- `tests/network.test.ts`: identity, acceptance, 24-hour timing, caps, pause races,
-  authorization and interrupted-action recovery.
-
-See [implementation status](docs/implementation-status.md) for verification notes.
+LinkedIn profile, job, company and CV-derived text are stored locally in the extension database; the extracted text (not original binary file) is inserted in a **visible** ChatGPT web prompt when processing is selected. The rendered recipient/company/job data is likewise supplied to ChatGPT for individual outreach text. These are intentional external transmissions via the user's signed-in sessions. No OpenAI API key, private LinkedIn endpoint, credential extraction, or extension-owned telemetry server is used. Read [`docs/privacy.md`](docs/privacy.md) for details. Live-browser validation is mandatory before reliance on automatic sending.
