@@ -1,4 +1,4 @@
-# Cold Contact Pro privacy and data handling — v0.7.0 source candidate
+# Cold Contact Pro privacy and data handling — v0.8.0 source candidate
 
 **Updated:** 6 November 2026. This describes the patched source under review and is **not** a verified store-release privacy policy.
 

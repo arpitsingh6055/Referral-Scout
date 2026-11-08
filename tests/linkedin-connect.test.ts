@@ -65,3 +65,11 @@ it('stops with a clear reason when LinkedIn shows its weekly invitation limit', 
   expect(reply.error).toMatch(/weekly invitation limit/i);
   expect(sendClicks).toBe(0);
 });
+
+it('self-test reads a profile page and reports the relationship, name and headline', async () => {
+  page('<button>Send</button>');
+  const reply = await new Promise<{ ok: boolean; data?: { page: string; problems: string[]; sample: { relationship: string; name: string }[] } }>(resolve =>
+    listener({ kind: 'network.page', requestId: crypto.randomUUID(), deadline: Date.now() + 60000, action: 'selftest' }, { id: 'abc', url: 'chrome-extension://abc/service-worker.js', origin: 'chrome-extension://abc' }, resolve as never));
+  expect(reply.ok).toBe(true);
+  expect(reply.data).toMatchObject({ page: 'Profile', problems: [], sample: [{ relationship: 'not-connected', name: 'Alex Example' }] });
+});

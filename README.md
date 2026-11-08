@@ -1,4 +1,4 @@
-# Cold Contact Pro — v0.7.0 source candidate
+# Cold Contact Pro — v0.8.0 source candidate
 
 Chromium/Edge Manifest V3 extension for **visible** LinkedIn Jobs/People discovery, ChatGPT-written personalized invitation notes, 24-hour acceptance checking, and contextual follow-up messages. It is intended for use with a signed-in LinkedIn tab and a signed-in ChatGPT tab, not an AI API. The extension controls the ordinary rendered web interfaces; it does not promise reliable operation when those interfaces change.
 
@@ -48,3 +48,7 @@ In **Review before every send** mode (the default) every note is drafted and wai
 ## Privacy and limitations
 
 LinkedIn profile, job, company and CV-derived text are stored locally in the extension database; the extracted text (not original binary file) is inserted in a **visible** ChatGPT web prompt when processing is selected. The rendered recipient/company/job data is likewise supplied to ChatGPT for individual outreach text. These are intentional external transmissions via the user's signed-in sessions. No OpenAI API key, private LinkedIn endpoint, credential extraction, or extension-owned telemetry server is used. Read [`docs/privacy.md`](docs/privacy.md) for details. Live-browser validation is mandatory before reliance on automatic sending.
+
+## Look and feel
+
+The side panel has a status card that always says what the extension is doing (running, waiting for active hours, paused, needs you), three tabs (Setup, People, Activity), a notification for every action, an activity log, and light and dark themes. Screenshots are in `docs/screenshots`. To preview every screen with sample data and no LinkedIn access: `npm run build`, then `node scripts/preview-network.mjs` and open `http://127.0.0.1:4173/?screen=active` (also `welcome`, `ready`, `review`, `attention`, `quiet`).

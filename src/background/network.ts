@@ -20,9 +20,14 @@ export async function getNetwork(): Promise<NetworkState> {
 export async function updateNetwork(fn:(s:NetworkState)=>NetworkState):Promise<NetworkState> {
   const state=await mutate<NetworkState>(networkKey,old=>{
     const base=old??emptyNetwork();
+    base.actions=(base.actions??[]).filter(a=>Date.now()-a.at<35*DAY); // limits only look back 7 days
     const cv=base.cv?{...base.cv,name:base.cv.name,type:base.cv.type,text:base.cv.text||'',characterCount:base.cv.characterCount??base.cv.text?.length??0}:null;
     if(cv && 'data' in cv)delete (cv as typeof cv & {data?:unknown}).data;
-    return fn({...base,cv,jobs:base.jobs??[],settings:{...defaultSettings,...base.settings,roles:base.settings?.roles?.length?base.settings.roles:[base.target]}});
+    const before=base.status;
+    const next=fn({...base,cv,jobs:base.jobs??[],settings:{...defaultSettings,...base.settings,roles:base.settings?.roles?.length?base.settings.roles:[base.target]}});
+    // Every new status line is also kept in a short activity log the side panel can show.
+    if(next.status&&next.status!==before)next.log=[...(next.log??[]),{at:Date.now(),text:next.status,kind:/attention|could not|paused|limit reached|failed|interrupted|quiet hours|waiting/i.test(next.status)?'warn' as const:/saved|sent|started|confirmed|accepted|recovered|validated/i.test(next.status)?'ok' as const:'info' as const}].slice(-60);
+    return next;
   });
   // V2 normalized mirrors, account keyed. network-v1 remains the safe migration source.
   if(state.profile){
@@ -112,17 +117,20 @@ async function peopleSearch(s:NetworkState,signal:AbortSignal,job?:NetworkJob):P
         state:'shortlisted',addedAt:Date.now(),requestedAt:0,checkedAt:0,messagedAt:0,message:'',
         ...(company?{companyName:company}:{}),...(job?{jobIds:[job.id],companyUrl:job.companyUrl}:{})});added++;
     }
-    current.searchCursor++;
+    if(!job)current.searchCursor++;
+    current.discoveryTurn=(current.discoveryTurn??0)+1;
     current.nextDiscoveryAt=Date.now()+(people.length?60000:120000)+Math.floor(Math.random()*30000);
     current.status=`Searched ${label}: saved ${added} new ${added===1?'person':'people'}, skipped ${rejected} that did not fit (students, former roles, wrong function, already connected).`;
     return current;
   });
 }
+const JOB_PAGES=4;
 async function jobsSearch(s:NetworkState,signal:AbortSignal):Promise<void>{
-  const roles=s.settings?.roles??[s.target];const role=roles[Math.floor(s.searchCursor/2)%roles.length]??s.target;
+  const roles=s.settings?.roles??[s.target];const cursor=s.jobCursor??0;const role=roles[cursor%roles.length]??s.target;
+  if(Math.floor(cursor/roles.length)>=JOB_PAGES){await updateNetwork(c=>({...c,discoveryTurn:(c.discoveryTurn??0)+1,nextDiscoveryAt:Date.now()+6*3600000,status:'Every job page for your roles has been checked. New searches resume in 6 hours.'}));return;}
   const u=new URL('https://www.linkedin.com/jobs/search/');
   u.searchParams.set('keywords',role);u.searchParams.set('location',s.location);
-  u.searchParams.set('start',String(Math.floor(s.searchCursor/(2*roles.length))*25));
+  u.searchParams.set('start',String(Math.floor(cursor/roles.length)*25));
   const tab=await networkTab(u.href,signal);
   const found=z.array(jobSchema).parse(await networkCommand(tab,{action:'jobs',owner:s.profile!.url},signal));
   await currentRun(s.revision,signal);
@@ -135,7 +143,7 @@ async function jobsSearch(s:NetworkState,signal:AbortSignal):Promise<void>{
       const sameCompany=[...merged.values()].some(j=>j.id!==job.id&&normalizeCompany(j.companyName)===normalizeCompany(job.companyName));
       merged.set(job.id,{...prior,...job,matchingReasons:[`Job title matches ${role}`],peopleSearches:prior?.peopleSearches??(sameCompany?COMPANY_KINDS.length:0)} as NetworkJob);
     }
-    current.jobs=[...merged.values()];current.searchCursor++;current.nextDiscoveryAt=Date.now()+60000;
+    current.jobs=[...merged.values()].map(j=>j.descriptionText&&j.descriptionText.length>4000?{...j,descriptionText:j.descriptionText.slice(0,4000)}:j);current.jobCursor=(current.jobCursor??0)+1;current.discoveryTurn=(current.discoveryTurn??0)+1;current.nextDiscoveryAt=Date.now()+60000;
     current.status=`Found ${found.length} jobs for ${role}; ${fresh.length} fit your roles and allowed companies. Looking for recruiters and leaders at those companies next.`;
     return current;
   });
@@ -164,11 +172,18 @@ async function discover(s:NetworkState,signal:AbortSignal):Promise<void>{
     const linked=s.jobs?.find(j=>(j.peopleSearches??0)<COMPANY_KINDS.length);
     if(linked){await peopleSearch(s,signal,linked);return;}
   }
-  if(mode==='jobs'||(mode==='both'&&s.searchCursor%2===0)){await jobsSearch(s,signal);return;}
+  const roleCount=s.settings?.roles.length??1,jobsDone=(s.jobCursor??0)>=roleCount*JOB_PAGES;
+  if(mode==='jobs'||(mode==='both'&&!jobsDone&&(s.discoveryTurn??0)%2===0)){await jobsSearch(s,signal);return;}
   await peopleSearch(s,signal);
 }
+const PENDING_EXPIRY=30*DAY;
+/** Checks are spaced out too, so a laptop waking up never fires a burst of page loads. */
+async function pace(minMs:number,maxMs:number):Promise<void>{await updateNetwork(c=>({...c,nextActionAt:Math.max(c.nextActionAt,Date.now()+minMs+Math.floor(Math.random()*(maxMs-minMs)))}));}
+/** Account-level signals pause everything. Anything else is about one contact. */
+const ACCOUNT_LEVEL=/HALT:|sign in to linkedin|signed out|signed-in linkedin account|different linkedin account|checkpoint|outreach (?:was|is|has been) paused|no longer authorized|did not finish loading/i;
+const MAX_ATTEMPTS=2,STREAK_LIMIT=3;
 /** Errors raised before anything is submitted that are about this recipient only. */
-const RECIPIENT_ONLY=/Connect is unavailable on this recipient|requires a recipient email|Message button is unavailable|already have a conversation|unsent draft|already contains a draft|permits \d+ characters/i;
+const RECIPIENT_ONLY=/Connect is unavailable on this recipient|requires a recipient email|Message button is unavailable|already have a conversation|unsent draft|already contains a draft|permits \d+ characters|open profile changed/i;
 export async function processContact(s:NetworkState,p:NetworkContact,signal:AbortSignal,approved=false):Promise<void>{
   const tab=await networkTab(p.url,signal);
   const relation=z.object({state:z.enum(['connected','pending','not-connected','unknown'])}).parse(await networkCommand(tab,{action:'relationship',url:p.url,owner:s.profile!.url},signal));
@@ -176,8 +191,9 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
   const now=Date.now();p.checkedAt=now;
   if(relation.state==='pending'){
     if(!p.requestedAt){p.state='skipped';p.reason='A request existed before this campaign; it was not adopted as an extension send.';}
+    else if(now-p.requestedAt>PENDING_EXPIRY){p.state='skipped';p.reason='No response after 30 days. LinkedIn may still show it as pending: consider withdrawing it under My Network, Manage, Sent, which also frees your pending count.';}
     else{p.state='pending';p.nextCheckAt=now+DAY;p.reason='Still pending. Next acceptance check scheduled for 24 hours later.';}
-    await saveContact(p);return;
+    await saveContact(p);await pace(40000,90000);return;
   }
   if(relation.state==='connected'&&!p.requestedAt){p.state='skipped';p.reason='Already connected before this campaign. No artificial acceptance event was created.';await saveContact(p);return;}
   if(p.requestedAt&&relation.state!=='connected'){
@@ -280,7 +296,24 @@ async function run():Promise<void>{
     const settings=s.settings??defaultSettings;
     if(!withinActiveHours(settings)){await note(s,`Quiet hours: outreach resumes at ${String(settings.activeHours!.from).padStart(2,'0')}:00 local time. Nothing is wrong.`);return;}
     const person=nextContact(s);
-    if(person){if(person.state==='pending'||Date.now()>=s.nextActionAt)await processContact(s,person,abort.signal);return;}
+    if(person){
+      if(Date.now()<s.nextActionAt)return;
+      try{await processContact(s,person,abort.signal);if(s.failureStreak)await updateNetwork(c=>({...c,failureStreak:0}));}
+      catch(error){
+        const message=error instanceof Error?error.message:String(error);
+        if(abort.signal.aborted||ACCOUNT_LEVEL.test(message))throw error;
+        // One unreadable or unusable profile must not stop the campaign, and must not be retried forever.
+        let streak=0;
+        await updateNetwork(c=>{
+          const p=c.contacts.find(x=>x.url===person.url);streak=(c.failureStreak??0)+1;c.failureStreak=streak;c.intent=null;
+          if(p){p.failures=(p.failures??0)+1;p.lastError=message;
+            if(p.failures>=MAX_ATTEMPTS){p.state='attention';p.reason=`Could not be processed twice: ${message} Open the profile in LinkedIn to check it.`;}
+            else p.retryAfter=Date.now()+30*60000;}
+          c.status=`Could not process ${person.name}: ${message} Moving on.`;return c;});
+        if(streak>=STREAK_LIMIT)throw new Error(`${STREAK_LIMIT} LinkedIn pages in a row could not be handled (${message}). LinkedIn may have changed its layout or shown a notice. Check LinkedIn, then resume.`);
+      }
+      return;
+    }
     const queued=s.contacts.filter(p=>p.state==='shortlisted').length;
     const why=idleReason(s);
     if(why){await note(s,why);return;}

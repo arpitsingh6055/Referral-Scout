@@ -168,3 +168,15 @@ describe('who goes next', () => {
     expect(defaultSettings.paceMinutes).toBeGreaterThanOrEqual(3);
   });
 });
+
+describe('message variants', () => {
+  const variants = 'Hi {firstName}, version one for {target}.\n---\nHello {firstName}, version two about {target}.\n---\n{firstName}, version three on {target}.';
+  it('gives different people different versions, and the same person the same one every time', async () => {
+    const { renderNote, pickVariant } = await import('../src/shared/network');
+    const names = ['Priya Sharma', 'Rahul Verma', 'Ananya Iyer', 'Karan Mehta', 'Sneha Rao', 'Vikram Shah'];
+    const notes = names.map(n => renderNote({ noteTemplate: variants }, 'product', { name: n }, 'Arpit'));
+    expect(new Set(notes.map(n => n.match(/version \w+/)![0])).size).toBeGreaterThan(1);
+    expect(pickVariant(variants, 'Priya Sharma')).toBe(pickVariant(variants, 'Priya Sharma'));
+    notes.forEach(n => expect(n).not.toContain('---'));
+  });
+});

@@ -163,7 +163,10 @@ export async function askChatGpt(prompt: string, signal: AbortSignal, kind: AiJo
       try {
         const state = await chrome.tabs.sendMessage(job.tab,{kind:'network.ai',action:'status',id});
         if (state?.state === 'response_extracted' && typeof state.text === 'string' && state.text.trim()) {
-          job.result = state.text; await save(job,'response_extracted',state.documentId); return state.text;
+          job.result = state.text; await save(job,'response_extracted',state.documentId);
+          // Per-contact drafts would otherwise leave hundreds of tabs open. Keep the dossier chat for inspection.
+          if (job.kind !== 'BUILD_DOSSIER' && job.tab !== undefined) await chrome.tabs.remove(job.tab).catch(() => undefined);
+          return state.text;
         }
       } catch { /* Tab may be navigating; no duplicate submission */ }
     }
@@ -195,8 +198,10 @@ export async function prepareDossier(s:NetworkState, signal:AbortSignal):Promise
 
 const note = z.object({text:z.string().trim().min(1).max(1200), evidenceUsed:z.array(z.string()), recipientRole:z.string(), jobId:z.string().nullable()});
 const followup = z.object({text:z.string().trim().min(1).max(2000), evidenceUsed:z.array(z.string()),purpose:z.string()});
-function verifyMessage(message:string, person:NetworkContact, limit:number):string {
+export function verifyMessage(message:string, person:NetworkContact, limit:number):string {
   if (message.length>limit || /\{[^}]+\}|\[[^\]]*placeholder[^\]]*\]|attached (?:my |the )?(?:CV|resume)/i.test(message)) throw new Error('The proposed text contains placeholders, an attachment claim or exceeds the actual LinkedIn limit.');
+  // Model output goes to a real person: no links, email addresses or phone numbers, ever.
+  if (/https?:\/\/|www\.|[\w.+-]+@[\w-]+\.[\w.]+|\+?\d[\d\s().-]{8,}\d/i.test(message)) throw new Error('The proposed text contains a link, email address or phone number.');
   if (!person.name || !person.url) throw new Error('The recipient identity is incomplete.');
   return message;
 }

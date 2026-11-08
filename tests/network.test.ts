@@ -234,3 +234,12 @@ it('rejects a pasted reply that is not the dossier JSON and saves nothing', asyn
   expect(reply.ok).toBe(false);
   expect((await getNetwork()).dossier??'').toBe('');
 });
+
+it('starts in template mode for a user whose saved settings pre-date aiMode, without touching ChatGPT', async () => {
+  const legacy = { roles: ['Product Management internship'], searchMode: 'both', outreachMode: 'review', noteMode: 'preferred', followupMode: 'review', paceMinutes: 2, dailyInvites: null, dailyMessages: null, maxPending: null, companyAllowlist: [], companyExclusions: [], workMode: 'any', employmentType: 'any' };
+  await updateNetwork(s => ({ ...s, profile, dossier: '', settings: legacy as never }));
+  const reply = await networkUi()({ action: 'start' });
+  expect(reply.ok).toBe(true);
+  expect(prepareDossier).not.toHaveBeenCalled();
+  expect((await getNetwork()).active).toBe(true);
+});
