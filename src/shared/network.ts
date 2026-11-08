@@ -26,7 +26,7 @@ export type ContactState='shortlisted'|'requesting'|'pending'|'connected'|'messa
 export interface NetworkContact extends NetworkProfile {
   state:ContactState;reason:string;addedAt:number;requestedAt:number;checkedAt:number;messagedAt:number;message:string;
   nextCheckAt?:number;acceptedAt?:number;invitationNote?:string;invitationLimit?:number;jobIds?:string[];
-  companyName?:string;companyUrl?:string;approvalKind?:'connect'|'message';lastError?:string;score?:number;category?:string;
+  companyName?:string;companyUrl?:string;approvalKind?:'connect'|'message';lastError?:string;score?:number;category?:string;failures?:number;retryAfter?:number;
 }
 export const defaultNoteTemplate='Hi {firstName}, I’m {myFirstName}, exploring {target} opportunities. Would love to connect and learn about your work at {company}.';
 export const outreachSettingsSchema=z.object({
@@ -41,7 +41,7 @@ export const outreachSettingsSchema=z.object({
   workMode:z.enum(['any','remote','hybrid','onsite']).default('any'),
   employmentType:z.enum(['any','internship','full-time']).default('any'),
   aiMode:z.enum(['template','chatgpt']).default('template'),
-  noteTemplate:z.string().trim().min(10).max(300).default(defaultNoteTemplate),
+  noteTemplate:z.string().trim().min(10).max(1200).default(defaultNoteTemplate),
   weeklyInvites:z.number().int().positive().nullable().default(80),
   activeHours:z.object({from:z.number().int().min(0).max(23),to:z.number().int().min(1).max(24)}).nullable().default({from:8,to:22})
 });
@@ -56,7 +56,7 @@ export interface NetworkState {
   cv:{name:string;type:string;text:string;textVersion?:number;pages?:number;warnings?:string[];savedAt?:number;characterCount?:number}|null;
   dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
   active:boolean;revision:number;status:string;contacts:NetworkContact[];jobs?:NetworkJob[];
-  settings?:OutreachSettings;searchCursor:number;nextDiscoveryAt:number;nextActionAt:number;
+  settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;jobCursor?:number;discoveryTurn?:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;
   actions:{at:number;kind:'connect'|'message'|'check';url:string;confirmed?:boolean;idempotencyKey?:string}[];
   intent:{id:string;tabId:number;url:string;kind:'connect'|'message';at:number;body:string;revision:number;claimed:boolean}|null;
 }
@@ -65,8 +65,15 @@ export function suggestedTarget(headline:string,experienceText=''):string {retur
 export function emptyNetwork():NetworkState {
   return {profile:null,target:'Product Management internship',location:'India',template:defaultTemplate,cv:null,active:false,revision:0,status:'',contacts:[],jobs:[],settings:{...defaultSettings,roles:[...defaultSettings.roles]},searchCursor:0,nextDiscoveryAt:0,nextActionAt:0,actions:[],intent:null};
 }
+/** Several versions can be written, separated by a line containing only ---. Each person gets one, so messages are not identical. */
+export function pickVariant(text:string,seed:string):string {
+  const variants=text.split(/\n\s*-{3,}\s*\n/).map(v=>v.trim()).filter(Boolean);
+  if(variants.length<2)return text;
+  let h=0;for(const c of seed)h=(h*31+c.charCodeAt(0))>>>0;
+  return variants[h%variants.length]!;
+}
 export function introduction(s:Pick<NetworkState,'template'|'target'>,person:Pick<NetworkProfile,'name'>&{companyName?:string},me?:string):string {
-  return s.template.replace(/\{firstName\}/g,person.name.split(/\s+/)[0]||person.name).replace(/\{target\}/g,s.target)
+  return pickVariant(s.template,person.name).replace(/\{firstName\}/g,person.name.split(/\s+/)[0]||person.name).replace(/\{target\}/g,s.target)
     .replace(/\{myFirstName\}/g,me?.split(/\s+/)[0]??'').replace(/\s+at\s+\{company\}/g,person.companyName?` at ${person.companyName}`:'').replace(/\{company\}/g,person.companyName??'').replace(/\s{2,}/g,' ').trim();
 }
 /** Connection notes are limited to 200 characters. Shorten at a sentence or word boundary, never mid-word. */
@@ -100,15 +107,16 @@ export function nextContact(s:NetworkState,now=Date.now()):NetworkContact|undefi
     if(cap!==null&&within(kind)>=cap)return false;
     return kind==='message'||settings.weeklyInvites===null||within('connect',7*DAY)<settings.weeklyInvites;
   };
-  const due=s.contacts.find(p=>p.state==='pending'&&p.requestedAt>0&&now>=(p.nextCheckAt??((p.checkedAt||p.requestedAt)+DAY)));
+  const ready=(p:NetworkContact)=>(p.retryAfter??0)<=now;
+  const due=s.contacts.find(p=>ready(p)&&p.state==='pending'&&p.requestedAt>0&&now>=(p.nextCheckAt??((p.checkedAt||p.requestedAt)+DAY)));
   if(due)return due;
   // Never draft more than a handful of messages the user has not looked at yet.
   if(s.contacts.filter(p=>p.state==='review').length>=MAX_REVIEW_QUEUE)return undefined;
-  if(permit('message')){const accepted=s.contacts.find(p=>p.state==='connected'&&!p.messagedAt);if(accepted)return accepted;}
+  if(permit('message')){const accepted=s.contacts.find(p=>ready(p)&&p.state==='connected'&&!p.messagedAt);if(accepted)return accepted;}
   const pending=s.contacts.filter(p=>p.state==='pending').length;
   if(!permit('connect')||(settings.maxPending!==null&&pending>=settings.maxPending))return undefined;
   // Best candidates first: recruiters and 2nd-degree connections outrank everything else.
-  return s.contacts.filter(p=>p.state==='shortlisted').sort((a,b)=>(b.score??0)-(a.score??0)||a.addedAt-b.addedAt)[0];
+  return s.contacts.filter(p=>ready(p)&&p.state==='shortlisted').sort((a,b)=>(b.score??0)-(a.score??0)||a.addedAt-b.addedAt)[0];
 }
 export const networkRequest=z.discriminatedUnion('action',[
   z.object({kind:z.literal('network'),action:z.literal('analyze')}),
@@ -119,6 +127,7 @@ export const networkRequest=z.discriminatedUnion('action',[
   z.object({kind:z.literal('network'),action:z.literal('ownerData')}),
   z.object({kind:z.literal('network'),action:z.literal('export')}),
   z.object({kind:z.literal('network'),action:z.literal('diagnostics')}),
+  z.object({kind:z.literal('network'),action:z.literal('selfTest')}),
   z.object({kind:z.literal('network'),action:z.literal('import')}),
   z.object({kind:z.literal('network'),action:z.literal('start')}),
   z.object({kind:z.literal('network'),action:z.literal('pause')}),
@@ -134,7 +143,7 @@ export const networkRequest=z.discriminatedUnion('action',[
 export type NetworkRequest=z.infer<typeof networkRequest>;
 export const networkPageCommand=z.object({
   kind:z.literal('network.page'),requestId:z.uuid(),deadline:z.number(),
-  action:z.enum(['identity','profile','search','jobs','job','company','invitationLimit','relationship','connect','message']),
+  action:z.enum(['identity','profile','search','jobs','job','company','invitationLimit','relationship','connect','message','selftest']),
   url:z.string().default(''),owner:z.string().default(''),intentId:z.string().default(''),
   body:z.string().default(''),noteMode:z.enum(['require','preferred','none']).default('preferred')
 });

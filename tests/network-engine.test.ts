@@ -128,3 +128,83 @@ it('pauses, without losing the person, when LinkedIn reports the weekly invitati
   expect(saved.status).toMatch(/weekly invitation limit/i);
   expect(saved.contacts[0]).toMatchObject({ state: 'shortlisted' });
 });
+
+// ---- audit follow-ups: cursors, failure isolation, pacing, expiry
+const at = (minutes: number) => vi.setSystemTime(new Date(2026, 10, 9, 11, 0, 0).getTime() + minutes * 60000);
+
+it('Jobs + People mode uses every kind of people search, not just every other one (cursor parity bug)', async () => {
+  await seed({}, { searchMode: 'both' });
+  vi.mocked(networkCommand).mockResolvedValue([]);
+  for (let i = 0; i < 8; i++) { at(i * 10); await networkTick(); }
+  const searches = urls();
+  const people = searches.filter(u => u.pathname.startsWith('/search/results/people'));
+  const jobs = searches.filter(u => u.pathname.startsWith('/jobs/search'));
+  expect(jobs.length).toBe(4); expect(people.length).toBe(4);
+  const kinds = people.map(u => u.searchParams.get('keywords')!);
+  expect(new Set(kinds).size).toBe(4);                                  // recruiter, campus, leader, founder
+  expect(kinds.some(k => k.includes('campus'))).toBe(true);
+  expect(kinds.some(k => k.includes('founder'))).toBe(true);
+  expect(jobs.map(u => u.searchParams.get('start'))).toEqual(['0', '25', '50', '75']);
+});
+
+it('a page that cannot be read does not stop the campaign; the person is retried later, then set aside', async () => {
+  await seed({ contacts: [person('flaky', { score: 100 }), person('fine', { score: 50 })] });
+  vi.mocked(networkCommand).mockRejectedValue(new Error('LinkedIn took too long to respond. Open the contact to check what happened.'));
+  await networkTick();
+  let saved = await getNetwork();
+  expect(saved.active).toBe(true);
+  expect(saved.contacts.find(c => c.name === 'flaky')).toMatchObject({ failures: 1, state: 'shortlisted' });
+  expect(saved.status).toMatch(/Could not process flaky.*Moving on/);
+  // the retry delay moves the next attempt to the other person instead of looping on the same one
+  vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'not-connected' });
+  at(5); await networkTick();
+  expect(vi.mocked(networkCommand).mock.calls.at(-1)![1]).toMatchObject({ url: 'https://www.linkedin.com/in/fine/' });
+});
+
+it('sets a person aside after two failed attempts', async () => {
+  await seed({ contacts: [person('stubborn')] });
+  vi.mocked(networkCommand).mockRejectedValue(new Error('The profile header is not available yet.'));
+  await networkTick(); at(31); await networkTick();
+  const p = (await getNetwork()).contacts[0]!;
+  expect(p.state).toBe('attention'); expect(p.reason).toMatch(/Could not be processed twice/);
+});
+
+it('stops and says why when several pages in a row fail, since LinkedIn probably changed', async () => {
+  await seed({ contacts: ['a', 'b', 'c', 'd'].map((n, i) => person(n, { score: 100 - i })) });
+  vi.mocked(networkCommand).mockRejectedValue(new Error('The profile header is not available yet.'));
+  for (let i = 0; i < 4; i++) { at(i); await networkTick(); }
+  const saved = await getNetwork();
+  expect(saved.active).toBe(false);
+  expect(saved.status).toMatch(/3 LinkedIn pages in a row could not be handled/);
+});
+
+it('pauses straight away for account-level signals such as a checkpoint', async () => {
+  await seed({ contacts: [person('x')] });
+  vi.mocked(networkCommand).mockRejectedValue(new Error('HALT: CAPTCHA or checkpoint detected'));
+  await networkTick();
+  expect((await getNetwork()).active).toBe(false);
+});
+
+it('stops tracking an invitation after 30 days and tells the user how to withdraw it', async () => {
+  const old = Date.now() - 31 * 86400000;
+  await seed({ contacts: [person('silent', { state: 'pending', requestedAt: old, nextCheckAt: old })] });
+  vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'pending' });
+  await networkTick();
+  expect((await getNetwork()).contacts[0]).toMatchObject({ state: 'skipped', reason: expect.stringMatching(/No response after 30 days.*withdrawing/) });
+});
+
+it('spaces out acceptance checks instead of firing them back to back', async () => {
+  const requested = Date.now() - 2 * 86400000;
+  await seed({ contacts: [person('p1', { state: 'pending', requestedAt: requested, nextCheckAt: requested }), person('p2', { state: 'pending', requestedAt: requested, nextCheckAt: requested })] });
+  vi.mocked(networkCommand).mockResolvedValue({ state: 'pending' });
+  await networkTick(); await networkTick();           // the second tick comes straight after
+  expect(vi.mocked(networkCommand)).toHaveBeenCalledTimes(1);
+  expect((await getNetwork()).nextActionAt).toBeGreaterThan(Date.now() + 30000);
+});
+
+it('prunes action history older than 35 days', async () => {
+  await seed({ actions: [{ at: Date.now() - 40 * 86400000, kind: 'connect', url: 'https://www.linkedin.com/in/old/', confirmed: true }, { at: Date.now() - 86400000, kind: 'connect', url: 'https://www.linkedin.com/in/new/', confirmed: true }] });
+  expect((await getNetwork()).actions).toHaveLength(2);        // reading does not prune
+  await updateNetwork(s => ({ ...s, status: 'x' }));
+  expect((await getNetwork()).actions.map(a => a.url)).toEqual(['https://www.linkedin.com/in/new/']);
+});

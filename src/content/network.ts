@@ -145,8 +145,33 @@ async function message(cmd: NetworkPageCommand, signal: AbortSignal): Promise<un
   await wait(() => !readEditor(editor).trim() && [...conversation.querySelectorAll<HTMLElement>('.msg-s-event-listitem__body')].some(e => sameText(e.innerText, cmd.body)), signal, 10000);
   return { state: "messaged" };
 }
+/** Read-only check of what this page exposes, so a layout change shows up as a clear message instead of a mystery failure. */
+function selfTest(): { page: string; found?: number; sample?: unknown[]; problems: string[] } {
+  const path = location.pathname, problems: string[] = [];
+  if (path.startsWith("/search/results/people")) {
+    const people = networkPeople(document);
+    if (!people.length) problems.push("No people could be read from this search page. LinkedIn may have changed its layout, or the results have not loaded yet.");
+    if (people.length && !people.some(p => p.degree)) problems.push("People were found but their connection degree (1st/2nd/3rd) could not be read.");
+    return { page: "People search", found: people.length, sample: people.slice(0, 3).map(p => ({ name: p.name, headline: p.headline.slice(0, 80), degree: p.degree ?? null })), problems };
+  }
+  if (path.startsWith("/jobs/")) {
+    const jobs = networkJobs(document);
+    if (!jobs.length) problems.push("No job cards could be read from this page.");
+    return { page: "Jobs", found: jobs.length, sample: jobs.slice(0, 3).map(j => ({ title: j.title, company: j.companyName })), problems };
+  }
+  const url = profileUrl(location.href);
+  if (url) {
+    let relation = "unknown", name = "", headline = "";
+    try { relation = relationship(topCard(url)); } catch (e) { problems.push(e instanceof Error ? e.message : String(e)); }
+    try { const p = readNetworkProfile(document, url); name = p.name; headline = p.headline; } catch (e) { problems.push(e instanceof Error ? e.message : String(e)); }
+    if (relation === "unknown") problems.push("Could not tell whether you are connected: no Connect, Pending or 1st-degree marker was found.");
+    return { page: "Profile", sample: [{ name, headline: headline.slice(0, 80), relationship: relation }], problems };
+  }
+  return { page: "Other", problems: ["Open a LinkedIn people search, a jobs search, or a profile, then run this check again."] };
+}
 async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unknown> {
   guard(signal);
+  if (cmd.action === "selftest") return selfTest();
   if (cmd.action === "identity") return { url: await identity(signal) };
   if (cmd.action === "profile" && cmd.url === cmd.owner) {
     // Import only an editable own profile, never a recommendation or visited profile.

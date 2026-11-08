@@ -35,6 +35,6 @@ export async function networkTab(url: string, signal: AbortSignal): Promise<numb
     const tab = await chrome.tabs.create({ url, active: true }); id = tab.id;
     if (id === undefined) throw new Error("Could not open LinkedIn.");
     await write("network-tab", id);
-  } else { const existing = await chrome.tabs.get(id); await chrome.tabs.update(id, { url, active: true }); await chrome.windows.update(existing.windowId, { focused: true }); }
+  } else { await chrome.tabs.update(id, { url, active: true }); } // visible in its own window, but never pulls that window in front of your work
   await readyNetworkTab(id, signal); return id;
 }

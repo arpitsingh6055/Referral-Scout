@@ -139,3 +139,15 @@ Found and fixed (each has a regression test):
 10. Suggested target uses the profile's work history and tags students as internships; default location is the country, not "Pune Division, Maharashtra, India".
 
 Not verified: live LinkedIn page layout, the `network` search filter parameter and boolean queries against real LinkedIn, and the real ChatGPT conversation markup.
+
+## v0.7.1: follow-ups from an independent audit
+
+Done: the search cursor is split (jobs and people have separate counters, so Jobs + People no longer skips half of the people searches); a failing page now only affects that person (retry after 30 minutes, set aside after two failures, and a stop with an explanation after three failures in a row); acceptance checks are spaced 40 to 90 seconds apart; invitations still pending after 30 days stop being tracked with advice to withdraw them; an extension update no longer pauses a running campaign; the LinkedIn window is no longer pulled to the front; model-written text containing links, email addresses or phone numbers is refused (and replaced by the template); finished per-contact ChatGPT tabs are closed; re-reading your own profile keeps your dossier; old action history is pruned; template variants (separated by `---`) so messages are not identical; and a read-only "Check this LinkedIn page" button that reports what the page exposes.
+
+Known gaps: batch acceptance detection from LinkedIn's sent-invitations list (still one profile visit per pending contact per day); automatic reconciliation of an interrupted send; a bulk-approve draft queue; per-entity storage instead of the single state record (stale-copy writes remain possible); removal of the retired Gmail and campaign code (it still ships in health.js); sending less recipient text to ChatGPT; geography as a real filter; and proof against live LinkedIn.
+
+## v0.8.0: side panel redesign
+
+The old panel was functional but poor: unstyled form controls with labels crammed beside boxes, headings numbered out of order, wrapping statistics, no hierarchy, and no visible account of what the extension was doing. It was rebuilt and checked visually in a real browser (screenshots in `docs/screenshots`). A status card now states what is happening in plain words, including quiet hours (previously a likely cause of "Start did nothing"). Setup, People and Activity are tabs; people needing approval or attention sort first; an activity log records every status change; edits are never discarded by the periodic refresh; light and dark themes follow the browser. A 7-test UI suite loads the real panel and clicks through it.
+
+Still unverified: live LinkedIn and ChatGPT pages.

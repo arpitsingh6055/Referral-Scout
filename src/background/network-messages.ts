@@ -21,7 +21,7 @@ async function importProfile():Promise<void>{
   if(current.profile&&current.profile.url!==identity&&(current.cv||current.contacts.length||current.dossier))throw new Error('Different LinkedIn account detected. Export or clear this account’s saved outreach before switching; CVs are owner-scoped.');
   const profileTab=profileUrl(tab.url??'')===identity?tab.id:await networkTab(identity,signal);
   const profile=networkProfileSchema.parse(await networkCommand(profileTab,{action:'profile',url:identity,owner:identity},signal));
-  await updateNetwork(s=>({...s,profile,profileCapturedAt:Date.now(),dossier:'',dossierSavedAt:0,
+  await updateNetwork(s=>({...s,profile,profileCapturedAt:Date.now(),...(s.profile?.url===profile.url?{}:{dossier:'',dossierSavedAt:0}),
     contacts:s.contacts.map(p=>{if(p.messagedAt)return p; const {invitationNote:oldNote,...rest}=p;void oldNote;return {...rest,message:''};}),
     target:s.profile?s.target:suggestedTarget(profile.headline,profile.rawText??''),location:s.profile?s.location:(profile.location.split(',').pop()?.trim()||'India'),
     status:'Your LinkedIn profile is saved. Check your target and introduction below, then press Start outreach.'}));
@@ -65,6 +65,13 @@ export function registerNetworkMessages():void{
       if(req.action==='ownerData')return getNetwork();
       if(req.action==='export'){const state=await getNetwork();return {...state,aiTaskMetadata:(await all('aiJobs')).filter(j=>j.owner===state.profile?.url)};}
       if(req.action==='diagnostics'){const state=statusView(await getNetwork());const jobs=(await all('aiJobs')).filter(j=>j.owner===state.profile?.url).map(j=>({stage:j.stage,updatedAt:j.updatedAt,tab:j.tab,error:j.error,id:j.id}));return {...state,diagnostics:jobs};}
+      if(req.action==='selfTest'){
+        const tabs=await chrome.tabs.query({url:['https://www.linkedin.com/*','https://linkedin.com/*']});
+        const tab=tabs.find(t=>t.active)??tabs[0];
+        if(!tab?.id)throw new Error('Open a LinkedIn people search, jobs search or profile in a tab first.');
+        const result=await networkCommand(tab.id,{action:'selftest'},new AbortController().signal);
+        return {...statusView(await getNetwork()),selfTest:result};
+      }
       if(req.action==='pause'){await pauseNetwork();return statusView(await getNetwork());}
       if(req.action==='clear')await pauseNetwork();
       const signal=new AbortController().signal;
