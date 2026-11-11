@@ -6,7 +6,7 @@ export const selectors = {
     challenge: ['iframe[src*="captcha"]', '#captcha-internal', 'form[action*="checkpoint/challenge"]']
   },
   chatgpt: {
-    composer: ['#prompt-textarea[contenteditable="true"]', '.ProseMirror[contenteditable="true"]', 'textarea#prompt-textarea'],
+    composer: ['#prompt-textarea[contenteditable="true"]', '.ProseMirror[contenteditable="true"]', 'textarea#prompt-textarea', 'textarea[name="prompt"]', '[aria-label="Chat with ChatGPT"]'],
     send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label="Send"]', 'form[data-chatgpt-composer] button[type="submit"]'],
     stop: ['button[data-testid="stop-button"]', 'button[aria-label*="Stop"]'],
     reply: ['[data-talvt-turn-state="complete"]', '[data-message-author-role="assistant"] .markdown', '[data-message-author-role="assistant"]'],
@@ -14,7 +14,7 @@ export const selectors = {
     thinkingMedium: ['[role="menuitem"][aria-label*="Medium" i]', '[role="option"][aria-label*="Medium" i]', 'button[aria-label*="Medium" i]'],
     temporary: ['button[aria-label*="Temporary"]', 'button[data-testid="temporary-chat-button"]'],
     newChat: ['a[data-testid="create-new-chat-button"]', 'a[aria-label="New chat"]'],
-    login: ['button[data-testid="login-button"]', 'a[href="/auth/login"]'],
+    login: ['form[data-logged-out]', 'button[data-testid="login-button"]', 'a[href="/auth/login"]'],
     challenge: ['iframe[src*="challenges.cloudflare.com"]', '#challenge-running', '#challenge-stage']
   }
 } as const;
