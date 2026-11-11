@@ -41,7 +41,9 @@ export type ContactState='shortlisted'|'requesting'|'pending'|'connected'|'messa
 export interface NetworkContact extends NetworkProfile {
   state:ContactState;reason:string;addedAt:number;requestedAt:number;checkedAt:number;messagedAt:number;message:string;
   nextCheckAt?:number;acceptedAt?:number;invitationNote?:string;invitationLimit?:number;
-  companyName?:string;companyUrl?:string;approvalKind?:'connect'|'message';approved?:boolean;attemptedAt?:number;lastError?:string;score?:number;category?:string;failures?:number;retryAfter?:number;
+  companyName?:string;companyUrl?:string;approvalKind?:'connect'|'message';approved?:boolean;attemptedAt?:number;
+  /** Already a 1st-degree connection when found: no invitation is needed, only a message. */
+  direct?:boolean;lastError?:string;score?:number;category?:string;failures?:number;retryAfter?:number;
 }
 /** The note before v0.11.1. It asked a recruiter about "your work", which is the wrong thing to say to someone who hires. */
 export const legacyNoteTemplate='Hi {firstName}, I’m {myFirstName}, exploring {target} opportunities. Would love to connect and learn about your work at {company}.';
@@ -79,7 +81,7 @@ export interface NetworkState {
   profile:NetworkProfile|null;target:string;location:string;template:string;
   cv:{name:string;type:string;text:string;textVersion?:number;pages?:number;warnings?:string[];savedAt?:number;characterCount?:number}|null;
   dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
-  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;
+  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;nextSweepAt?:number;saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;
   settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;
   actions:{at:number;kind:'connect'|'message'|'check';url:string;confirmed?:boolean;idempotencyKey?:string}[];
   intent:{id:string;tabId:number;url:string;kind:'connect'|'message';at:number;body:string;revision:number;claimed:boolean}|null;
@@ -100,6 +102,16 @@ export function introduction(s:Pick<NetworkState,'template'|'target'>,person:Pic
   return pickVariant(s.template,person.name).replace(/\{ask\}/g,askFor(person.category,person.companyName)).replace(/\{firstName\}/g,person.name.split(/\s+/)[0]||person.name).replace(/\{target\}/g,s.target)
     .replace(/\{myFirstName\}/g,me?.split(/\s+/)[0]??'').replace(/\s+at\s+\{company\}/g,person.companyName?` at ${person.companyName}`:'').replace(/\{company\}/g,person.companyName??'').replace(/\s{2,}/g,' ').trim();
 }
+/** First message to someone who is ALREADY a connection: no "thanks for connecting", and an ask that fits who they are. */
+export function directMessage(s:Pick<NetworkState,'target'>,person:Pick<NetworkProfile,'name'>&{companyName?:string;category?:string},me?:string):string {
+  const first=person.name.split(/\s+/)[0]||person.name,at=person.companyName?` at ${person.companyName}`:'';
+  const ask=person.category==='leader'?`Would you be open to a short chat about your team${at}?`
+    :person.category==='founder'?`Would you be open to a short chat about what you’re building${at}?`
+    :`Are there any relevant openings${at} I could apply for, or someone I should speak to?`;
+  return `Hi ${first}, hope you’re doing well. I’m ${me?.split(/\s+/)[0]??''}, currently exploring ${s.target} opportunities. ${ask}`.replace(/I’m , /,'I’m ').replace(/\s{2,}/g,' ');
+}
+/** How often the connections list is read to see who accepted. One page load covers every pending invitation. */
+export const ACCEPTANCE_SWEEP=2*3600000;
 /** Connection notes are limited to 200 characters. Shorten at a sentence or word boundary, never mid-word. */
 export function fitNote(text:string,limit=200):string {
   let note=text.replace(/\s+/g,' ').trim();
@@ -175,7 +187,7 @@ export const networkRequest=z.discriminatedUnion('action',[
 export type NetworkRequest=z.infer<typeof networkRequest>;
 export const networkPageCommand=z.object({
   kind:z.literal('network.page'),requestId:z.uuid(),deadline:z.number(),
-  action:z.enum(['identity','profile','search','relationship','connect','message','selftest']),
+  action:z.enum(['identity','profile','search','connections','relationship','connect','message','selftest']),
   url:z.string().default(''),intentId:z.string().default(''),
   body:z.string().default(''),noteMode:z.enum(['require','preferred','none']).default('preferred')
 });

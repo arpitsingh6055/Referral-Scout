@@ -24,7 +24,7 @@ beforeEach(() => {
 });
 afterEach(async () => { vi.useRealTimers(); await clearDatabase(); await closeDatabase(); vi.unstubAllGlobals(); });
 
-it('searches with a boolean query and the 2nd/3rd-degree filter, then saves only people worth contacting', async () => {
+it('searches with a boolean query and LinkedIn’s degree filter, queues 2nd/3rd-degree people for an invitation and 1st-degree people for a direct message', async () => {
   await seed({}, {});
   vi.mocked(networkCommand).mockResolvedValueOnce([
     card('good-recruiter', 'Talent Acquisition at Razorpay'),
@@ -39,11 +39,12 @@ it('searches with a boolean query and the 2nd/3rd-degree filter, then saves only
   const url = urls()[0]!;
   expect(url.pathname).toBe('/search/results/people/');
   expect(url.searchParams.get('keywords')).toContain('recruiter OR "talent acquisition"');
-  expect(JSON.parse(url.searchParams.get('network')!)).toEqual(['S', 'O']);
+  expect(JSON.parse(url.searchParams.get('network')!)).toEqual(['F', 'S', 'O']);
   const saved = await getNetwork();
-  expect(saved.contacts.map(c => c.name).sort()).toEqual(['Co Founder'.length ? 'founder' : '', 'good recruiter'].sort());
+  expect(saved.contacts.map(c => c.name).sort()).toEqual(['already connected', 'founder', 'good recruiter']);
+  expect(saved.contacts.find(c => c.name === 'already connected')).toMatchObject({ state: 'connected', direct: true });
   expect(saved.contacts.find(c => c.name === 'good recruiter')).toMatchObject({ state: 'shortlisted', category: 'recruiter', companyName: 'Razorpay' });
-  expect(saved.status).toMatch(/saved 2 new people, skipped 5/);
+  expect(saved.status).toMatch(/saved 3 new people, skipped 4/);
 });
 
 it('never piles more than three people from one company onto the shortlist', async () => {
@@ -162,7 +163,7 @@ it('pauses straight away for account-level signals such as a checkpoint', async 
 
 it('stops tracking an invitation after 30 days and tells the user how to withdraw it', async () => {
   const old = Date.now() - 31 * 86400000;
-  await seed({ contacts: [person('silent', { state: 'pending', requestedAt: old, nextCheckAt: old })] });
+  await seed({ nextSweepAt: Date.now() + 3600000, contacts: [person('silent', { state: 'pending', requestedAt: old, nextCheckAt: old })] });
   vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'pending' });
   await networkTick();
   expect((await getNetwork()).contacts[0]).toMatchObject({ state: 'skipped', reason: expect.stringMatching(/No response after 30 days.*withdrawing/) });
@@ -170,7 +171,7 @@ it('stops tracking an invitation after 30 days and tells the user how to withdra
 
 it('spaces out acceptance checks instead of firing them back to back', async () => {
   const requested = Date.now() - 2 * 86400000;
-  await seed({ contacts: [person('p1', { state: 'pending', requestedAt: requested, nextCheckAt: requested }), person('p2', { state: 'pending', requestedAt: requested, nextCheckAt: requested })] });
+  await seed({ nextSweepAt: Date.now() + 3600000, contacts: [person('p1', { state: 'pending', requestedAt: requested, nextCheckAt: requested }), person('p2', { state: 'pending', requestedAt: requested, nextCheckAt: requested })] });
   vi.mocked(networkCommand).mockResolvedValue({ state: 'pending' });
   await networkTick(); await networkTick();           // the second tick comes straight after
   expect(vi.mocked(networkCommand)).toHaveBeenCalledTimes(1);
@@ -250,4 +251,28 @@ it('when LinkedIn is slow to confirm, looks again instead of asking the person: 
   expect(p).toMatchObject({ state: 'pending' });
   expect(p.requestedAt).toBeGreaterThan(0);
   expect(vi.mocked(networkCommand).mock.calls.filter(c => (c[1] as { action: string }).action === 'connect')).toHaveLength(1);
+});
+
+it('every 2 hours reads the connections list once and marks everyone who accepted, without visiting each profile', async () => {
+  await seed({ contacts: [person('alex', { state: 'pending', requestedAt: Date.now() - 3 * 3600000 }), person('bea', { state: 'pending', requestedAt: Date.now() - 3 * 3600000 })],
+    saved: [{ type: 'person', url: 'https://www.linkedin.com/in/manual/', title: 'Manual Request', subtitle: '', note: 'message once accepted', relation: 'pending', savedAt: 1 }] });
+  vi.mocked(networkCommand).mockResolvedValueOnce(['https://www.linkedin.com/in/alex/', 'https://www.linkedin.com/in/manual/', 'https://www.linkedin.com/in/someone-else/']);
+  await networkTick();
+  expect(String(vi.mocked(networkTab).mock.calls[0]![0])).toBe('https://www.linkedin.com/mynetwork/invite-connect/connections/');
+  expect(vi.mocked(networkCommand)).toHaveBeenCalledTimes(1);
+  const saved = await getNetwork();
+  expect(saved.contacts.map(c => [c.name, c.state])).toEqual([['alex', 'connected'], ['bea', 'pending']]);
+  expect(saved.contacts[0]!.acceptedAt).toBe(Date.now());
+  expect(saved.saved![0]).toMatchObject({ relation: 'connected', acceptedAt: Date.now() });
+  expect(saved.status).toMatch(/alex, Manual Request accepted your invitation/);
+  expect(saved.nextSweepAt! - Date.now()).toBeGreaterThanOrEqual(2 * 3600000);
+});
+
+it('messages an existing 1st-degree connection directly, with wording that does not thank them for connecting', async () => {
+  await seed({ contacts: [person('alex', { state: 'connected', direct: true, companyName: 'Acme', category: 'recruiter' })] }, { aiMode: 'chatgpt' });
+  vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'connected' }).mockResolvedValueOnce(card('alex', 'Recruiter at Acme', 1));
+  await networkTick();
+  const p = (await getNetwork()).contacts[0]!;
+  expect(p).toMatchObject({ state: 'review', approvalKind: 'message' });
+  expect(p.message).toBe('Hi alex, hope you’re doing well. I’m Arpit, currently exploring Product Management internship opportunities. Are there any relevant openings at Acme I could apply for, or someone I should speak to?');
 });

@@ -54,3 +54,9 @@ Still not run live: the invitation dialog and its note field, the Pending marker
 - v0.13.0 kept looking at the step 1 element after it had been replaced, found no box and no Send, set the person aside and paused everything. The dialog is now looked up again at every step.
 - When the free notes run out, the extension backs out and uses Send without a note. This path is covered by a simulated page only; the real upgrade offer has not been seen.
 - Not yet seen live: the Pending marker after a real send.
+
+## 11 November 2026, v0.15.0
+
+- `linkedin.com/mynetwork/invite-connect/connections/` checked live (read-only): newest connections first, each row a profile link with "Connected on <date>", 10 rows before scrolling. Used for the 2-hour acceptance check.
+- Owner's screenshots confirm: some profiles show Connect on the top card, others show Follow and keep Connect under More. Both paths exist in the code; the More path has run against a simulated page only.
+- Not yet seen live: a real send through either path, the 1st-degree filter value `F` in a search address, and a direct message to an existing connection.

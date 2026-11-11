@@ -11,14 +11,22 @@ let sent: { note: string | null }[] = [];
  *   step 2  a NEW dialog with a 200-character box, [Cancel] and a [Send] that is disabled until text is typed
  *   when the monthly free notes are used up, step 2 is an upgrade offer with no box.
  */
-function page(options: { notesLeft?: boolean; limitNotice?: boolean } = {}): void {
-  const { notesLeft = true, limitNotice = false } = options;
+function page(options: { notesLeft?: boolean; limitNotice?: boolean; connectUnderMore?: boolean } = {}): void {
+  const { notesLeft = true, limitNotice = false, connectUnderMore = false } = options;
+  // Some profiles show Follow first and keep Connect inside the More menu, which LinkedIn draws outside the top card.
+  const actions = connectUnderMore ? '<button aria-label="Follow Alex Example">Follow</button><a href="/messaging/compose/">Message</a><button id="more">More</button>'
+    : `<a id="connect" href="${URL_}" aria-label="Invite Alex Example to connect">Connect</a><button>More</button>`;
   sent = [];
-  document.body.innerHTML = `<main><section><div componentkey="com.linkedin.sdui.profile.card.refXYZTopcard" class="i87k8o"><h2>Alex Example</h2><p hidden>· 1st</p><p>· 2nd</p><p>Recruiter at Acme</p><p>Pune, India</p><p>·</p><p><a href="/in/alex/overlay/contact-info/">Contact info</a></p><div id="actions"><a id="connect" href="${URL_}" aria-label="Invite Alex Example to connect">Connect</a><button>More</button></div></div><h2>People you may know</h2><a href="/in/other/" aria-label="Invite Other Person to connect">Connect</a></section></main>`;
+  document.body.innerHTML = `<main><section><div componentkey="com.linkedin.sdui.profile.card.refXYZTopcard" class="i87k8o"><h2>Alex Example</h2><p hidden>· 1st</p><p>· ${connectUnderMore ? '3rd' : '2nd'}</p><p>Recruiter at Acme</p><p>Pune, India</p><p>·</p><p><a href="/in/alex/overlay/contact-info/">Contact info</a></p><div id="actions">${actions}</div></div><h2>People you may know</h2><a href="/in/other/" aria-label="Invite Other Person to connect">Connect</a></section></main>`;
+  if (connectUnderMore) {
+    document.body.insertAdjacentHTML('beforeend', '<div role="menu" hidden><a role="menuitem">Send profile in a message</a><div role="menuitem" id="connect">Connect</div><a role="menuitem">Report Alex</a></div>');
+    const menu = document.querySelector('[role="menu"]')!;
+    document.getElementById('more')!.addEventListener('click', () => menu.toggleAttribute('hidden'));
+  }
   const dialog = (html: string): HTMLElement => { const d = document.createElement('div'); d.setAttribute('role', 'dialog'); d.innerHTML = html; document.body.append(d); return d; };
   const finish = (d: HTMLElement, note: string | null): void => { sent.push({ note }); d.remove(); document.getElementById('actions')!.innerHTML = '<button aria-label="Pending, click to withdraw invitation sent to Alex Example">Pending</button>'; };
   document.getElementById('connect')!.addEventListener('click', event => {
-    event.preventDefault();
+    event.preventDefault(); document.querySelector('[role="menu"]')?.setAttribute('hidden', '');
     const first = dialog(`<h2>Add a note to your invitation?</h2><p>${limitNotice ? 'You’ve reached the weekly invitation limit' : 'Personalize your invitation to Alex Example by adding a note.'}</p><button id="add">Add a note</button><button id="plain">Send without a note</button>`);
     first.querySelector('#plain')!.addEventListener('click', () => finish(first, null));
     first.querySelector('#add')!.addEventListener('click', () => {
@@ -88,4 +96,11 @@ it('does not read the hidden "1st" label as already connected (the bug that skip
   const reply = await new Promise<{ ok: boolean; data?: { page: string; problems: string[]; sample: { relationship: string; name: string }[] } }>(resolve =>
     listener({ kind: 'network.page', requestId: crypto.randomUUID(), deadline: Date.now() + 60000, action: 'selftest' }, { id: 'abc', url: 'chrome-extension://abc/service-worker.js', origin: 'chrome-extension://abc' }, resolve as never));
   expect(reply.data).toMatchObject({ page: 'Profile', problems: [], sample: [{ relationship: 'not-connected', name: 'Alex Example' }] });
+});
+
+it('finds Connect under More when the profile shows Follow first, and sends from there', async () => {
+  page({ connectUnderMore: true });
+  const reply = await run('preferred', 'Hi Alex, would love to connect.');
+  expect(reply).toMatchObject({ ok: true, data: { state: 'pending', noteSent: true } });
+  expect(sent).toEqual([{ note: 'Hi Alex, would love to connect.' }]);
 });
