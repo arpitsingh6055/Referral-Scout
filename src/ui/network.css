@@ -151,3 +151,14 @@ pre.source-preview{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;
 
 .preview{margin:2px 0 18px}
 .gap{height:10px}
+
+/* drafts you can edit, saved items, reminders */
+textarea.draft{width:100%;font:inherit;font-size:13px;line-height:1.45;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;resize:vertical;margin:6px 0}
+textarea.draft:focus{outline:2px solid var(--primary);outline-offset:1px}
+.draft-tools{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}.draft-tools .field-help{margin-right:auto}.field-help.over{color:var(--bad);font-weight:700}
+.section-title{font-size:13px;font-weight:700;margin:14px 2px 4px}.section-help{margin:0 2px 8px}
+.person.due{border-color:var(--warn)}
+.saved-controls{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.mini{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--muted);flex:1;min-width:120px}
+.mini select{font:inherit;font-size:13px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px 8px}
+.stale-row{display:flex;justify-content:space-between;gap:10px;align-items:baseline;margin:0 0 6px}

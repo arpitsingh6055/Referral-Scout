@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { rememberMessage, type SavedItem, networkRequest, networkProfileSchema, profileUrl, networkKey, suggestedTarget, defaultSettings, type NetworkState } from '../shared/network';
+import { rememberMessage, type SavedItem, networkRequest, networkProfileSchema, profileUrl, networkKey, suggestedTarget, defaultSettings, type NetworkState, DAY, introduction, renderNote } from '../shared/network';
 import { trustedExtension, trustedSite } from '../validators/security';
 import { getNetwork, updateNetwork, pauseNetwork, networkTick, processContact } from './network';
 import { networkCommand, networkTab } from './network-browser';
@@ -144,7 +144,6 @@ export function registerNetworkMessages():void{
           await updateNetwork(s=>({...s,status:'Stuck ChatGPT tasks cleared. You can process again.'}));
         }
         if(req.action==='prepare'){
-          if(current.active)throw new Error('Pause outreach before manually preparing drafts.');
           const person=current.contacts.find(p=>p.url===req.url);
           if(!person||!current.profile)throw new Error('Read your LinkedIn profile first.');
           const message=person.acceptedAt?await prepareIntroduction(current,person,signal):await prepareInvitation(current,person,200,signal);
@@ -169,6 +168,26 @@ export function registerNetworkMessages():void{
           await processContact(fresh,person,signal,true);
         }
         if(req.action==='removeContact'){await updateNetwork(s=>({...s,contacts:s.contacts.filter(p=>p.url!==req.url)}));}
+        if(req.action==='updateSaved')await updateNetwork(s=>{
+          const item=s.saved?.find(x=>x.url===req.url);if(!item)throw new Error('This saved item no longer exists.');
+          if(req.status&&req.status!==item.status){item.status=req.status;item.statusAt=Date.now();}
+          if(req.note!==undefined)item.note=req.note.trim();
+          if(req.remindDays===null)delete item.remindAt;
+          else if(req.remindDays!==undefined){
+            // "In 5 days" means the morning of that day, so it is waiting when the person starts work, not at the same minute.
+            const due=new Date(Date.now()+req.remindDays*DAY);if(req.remindDays>0)due.setHours(8,0,0,0);item.remindAt=due.getTime();
+          }
+          return s;
+        });
+        if(req.action==='editDraft'||req.action==='templateDraft')await updateNetwork(s=>{
+          const p=s.contacts.find(x=>x.url===req.url);
+          if(!p||!s.profile||['pending','messaged','requesting','messaging'].includes(p.state))throw new Error('This message can no longer be changed.');
+          const forMessage=!!p.acceptedAt;
+          const text=req.action==='editDraft'?req.text:forMessage?introduction(s,p,s.profile.name):renderNote(s.settings??defaultSettings,s.target,p,s.profile.name);
+          if(!forMessage&&text.length>200)throw new Error(`LinkedIn allows 200 characters in an invitation note; this is ${text.length}.`);
+          if(forMessage)p.message=text;else p.invitationNote=text;
+          return s;
+        });
         if(req.action==='forget')await updateNetwork(s=>({...s,saved:(s.saved??[]).filter(x=>x.url!==req.url)}));
         if(req.action==='skip')await updateNetwork(s=>{const p=s.contacts.find(p=>p.url===req.url);if(p){p.state='skipped';p.reason='Skipped. No future action is scheduled.';}return s;});
         if(req.action==='clear')await clearAllNetwork();
