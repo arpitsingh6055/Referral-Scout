@@ -76,7 +76,14 @@ export function registerNetworkMessages():void{
       })().then(saved=>respond({saved})).catch(()=>respond({saved:null}));return true;
     }
     if(!trustedExtension(sender,chrome.runtime.id))return false;
-    const parsed=networkRequest.safeParse(input);if(!parsed.success)return false;
+    const parsed=networkRequest.safeParse(input);
+    if(!parsed.success){
+      // Never go silent on the side panel: say which value was not accepted, in plain words.
+      if(!input||typeof input!=='object'||!('kind' in input)||input.kind!=='network')return false;
+      const issue=parsed.error.issues[0],field=String(issue?.path.at(-1)??'');
+      const names:Record<string,string>={paceMinutes:'Seconds between sends (5 or more)',dailyInvites:'Invitations per day',dailyMessages:'Messages per day',weeklyInvites:'Invitations per week',maxPending:'Pending invitations limit',roles:'Target roles (at least one, 2 letters or more)',noteTemplate:'Invitation note (10 characters or more)',template:'Follow-up message (10 characters or more)',target:'Target role',from:'Active hours',to:'Active hours'};
+      respond({ok:false,error:`Not saved. Please check: ${names[field]??(field||'one of the values')}.`});return false;
+    }
     const req=parsed.data;
     void (async()=>{
       if(req.action==='status')return statusView(await getNetwork());

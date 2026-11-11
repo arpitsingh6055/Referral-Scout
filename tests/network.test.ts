@@ -252,3 +252,12 @@ it('sends an approved invitation on the next turn and clears the approval', asyn
   expect(done.approved).toBeUndefined();
   expect(vi.mocked(networkCommand).mock.calls[1]![1]).toMatchObject({ action: 'connect', body: 'Hi Alex' });
 });
+
+it('saves a short gap between sends, and explains a rejected setting instead of going silent', async () => {
+  const send = networkUi();
+  await updateNetwork(s => ({ ...s, profile }));
+  const base = { action: 'save', target: 'Product Management', location: 'India', template: 'Hi {firstName}, thanks for connecting!' };
+  expect((await send({ ...base, settings: { ...defaultSettings, paceMinutes: 10 / 60 } })).ok).toBe(true);
+  expect((await getNetwork()).settings!.paceMinutes).toBeCloseTo(10 / 60);
+  expect(await send({ ...base, settings: { ...defaultSettings, paceMinutes: 0 } })).toEqual({ ok: false, error: 'Not saved. Please check: Seconds between sends (5 or more).' });
+});
