@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Referral Scout: jobs and referrals on LinkedIn",
-  "version": "0.24.0",
+  "version": "0.25.0",
   "description": "Find jobs on LinkedIn, choose the companies, and ask the right people at each one for a referral. Slow, safe and under your control.",
   "minimum_chrome_version": "120",
   "permissions": [

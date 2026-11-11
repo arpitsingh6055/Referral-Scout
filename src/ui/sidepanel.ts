@@ -249,12 +249,18 @@ function jobChooser(search: JobSearch): HTMLElement {
     box.addEventListener('change', () => { chosen.set(job.id, box.checked); dirty = true; count(); });
     text.append(link(job.title, job.url, 'job-title'), node('span', `${job.company} · ${job.location}`, 'muted small'));
     if (job.insight) text.append(node('span', job.insight, 'badge connected'));
+    if (job.promoted) text.append(node('span', 'Promoted by the employer', 'badge'));
     row.append(box, text, link('View job ↗', job.url, 'job-open')); list.append(row);
   }
   const per = node('label', '', 'mini'), select = node('select'); per.append(node('span', 'Invitations per company'), select);
   for (const n of [3, 4, 5]) { const o = node('option', `${n} people`); o.value = String(n); select.append(o); }
   select.value = String(perCompanyChoice); select.addEventListener('change', () => { perCompanyChoice = Number(select.value); });
   count();
+  if (search.dropped?.length) {
+    const d = node('details', '', 'inline'); d.append(node('summary', `ChatGPT removed ${search.dropped.length} ${search.dropped.length === 1 ? 'listing' : 'listings'} (adverts or poor matches)`));
+    for (const x of search.dropped) d.append(node('p', `${x.title} · ${x.company}: ${x.why}`, 'field-help'));
+    card.append(d);
+  }
   card.append(list, per, node('p', 'People you already know at a company are messaged on top of this number. LinkedIn allows roughly 100 invitations a week, so fewer, better-chosen people go further.', 'field-help'), go,
     button('Close this list', () => act({ kind: 'network', action: 'cancelJobSearch' }, 'List closed.'), 'btn sm ghost'));
   return card;
@@ -530,7 +536,7 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
   const outreachMode = choice('Before sending an invitation', settings.outreachMode, [['review', 'Ask me to approve each one'], ['automatic', 'Send automatically']]);
   const followupMode = choice('Before sending the follow-up', settings.followupMode, [['review', 'Ask me to approve each one'], ['automatic', 'Send automatically after acceptance']]);
   const noteMode = choice('Connection note', settings.noteMode, [['preferred', 'Add a note when LinkedIn allows'], ['require', 'Always add a note (skip if not possible)'], ['none', 'Never add a note']]);
-  const hours = choice('When to act', settings.activeHours ? 'on' : 'off', [['on', `Only ${pad(settings.activeHours?.from ?? 8)}:00 to ${pad(settings.activeHours?.to ?? 22)}:00 (recommended)`], ['off', 'Any time of day']]);
+  const hours = choice('When to act', settings.activeHours ? 'on' : 'off', [['off', 'Any time of day (default)'], ['on', `Only ${pad(settings.activeHours?.from ?? 8)}:00 to ${pad(settings.activeHours?.to ?? 22)}:00`]], 'With set hours, Home shows a “Run now anyway” button whenever work is waiting for them.');
   const num = (label: string, value: number | null) => field({ label, value: value?.toString() ?? '', type: 'number', min: '1' });
   const pace = field({ label: 'Seconds between sends', value: String(Math.round(settings.paceMinutes * 60)), type: 'number', min: '5', max: '86400' });
   const invites = num('Invitations per day', settings.dailyInvites), weekly = num('Invitations per week', settings.weeklyInvites), messages = num('Follow-ups per day', settings.dailyMessages), pendingCap = num('Max pending invitations', settings.maxPending);

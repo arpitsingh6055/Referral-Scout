@@ -73,7 +73,7 @@ it('stops searching while plenty of people are already queued', async () => {
 
 it('waits quietly outside the active hours and says so', async () => {
   vi.setSystemTime(new Date(2026, 10, 9, 3, 0, 0));
-  await seed({ contacts: [person('night')] });
+  await seed({ contacts: [person('night')] }, { activeHours: { from: 8, to: 22 } });
   await networkTick();
   expect(networkTab).not.toHaveBeenCalled();
   expect((await getNetwork()).status).toMatch(/Quiet hours: outreach resumes at 08:00/);
@@ -366,7 +366,7 @@ it('plans once, searches each planned title, then offers one job per company wit
   saved = await getNetwork();
   expect(saved.jobSearch!.status).toBe('choosing');
   expect(saved.jobSearch!.found.map(j => [j.company, j.id, j.picked])).toEqual([['Stripe', '11', true], ['Lane', '14', true], ['Acme', '12', false]]);
-  expect(vi.mocked(askChatGpt)).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(askChatGpt)).toHaveBeenCalledTimes(2);
 });
 
 it('falls back to built-in titles when ChatGPT is not available, and says so', async () => {
@@ -465,4 +465,21 @@ it('a company whose search page cannot be read does not stop anything: it is clo
   await networkTick();
   saved = await getNetwork();
   expect(saved.referralJobs![1]!.cursor).toBe(4);
+});
+
+it('runs the shortlist past ChatGPT once and takes out the listings it rejects, keeping the reasons to show', async () => {
+  const { askChatGpt } = await import('../src/background/network-ai');
+  const found = (id: string, title: string, company: string, promoted = false) => ({ id, url: `https://www.linkedin.com/jobs/view/${id}/`, title, company, location: 'India', insight: '', term: 'pm intern', score: 50, picked: false, ...(promoted ? { promoted } : {}) });
+  await seed({ plan: { forRoles: 'Product Management internship', terms: ['pm intern'], titles: { large: [], mid: [], small: [] }, source: 'rules', at: 1 },
+    jobSearch: { status: 'finding', cursor: 1, startedAt: 1, found: [found('111111', 'Product Intern', 'Acme'), found('222222', 'Sales Intern', 'Sellco'), found('333333', 'Product Management Course with Placement', 'SkillMill', true)] } });
+  vi.mocked(askChatGpt).mockClear();
+  vi.mocked(askChatGpt).mockResolvedValueOnce(JSON.stringify({ remove: [{ id: '333333', why: 'Paid course, not a job' }, { id: '999', why: 'unknown id is ignored' }] }));
+  await networkTick();
+  const saved = await getNetwork();
+  expect(vi.mocked(askChatGpt)).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(askChatGpt).mock.calls[0]![0]).toContain('"promoted":true');
+  expect(saved.jobSearch!.status).toBe('choosing');
+  expect(saved.jobSearch!.found.map(j => j.company).sort()).toEqual(['Acme', 'Sellco']);
+  expect(saved.jobSearch!.dropped).toEqual([{ title: 'Product Management Course with Placement', company: 'SkillMill', why: 'Paid course, not a job' }]);
+  expect(saved.status).toMatch(/ChatGPT removed 1 advert or poor match/);
 });

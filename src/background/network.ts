@@ -5,14 +5,14 @@ import { companyFromCurrent } from '../parsers/network';
 import { read, mutate } from '../storage/state';
 import { acquire, release, renew } from './lease';
 import { referralAsk, referralNote, referralPlan, referralSearchUrl, rankReferral, type ReferralJob } from '../shared/referral';
-import { companyPlanPrompt, fallbackTitles, fill, jobsSearchUrl, planFromReply, planPrompt, rulesPlan, scoreJob, shortlist, sizeForType, sizeOf, strategiesFromReply, withRecruiters, type CompanyStrategy } from '../shared/jobsearch';
+import { reviewFromReply, reviewPrompt, companyPlanPrompt, fallbackTitles, fill, jobsSearchUrl, planFromReply, planPrompt, rulesPlan, scoreJob, shortlist, sizeForType, sizeOf, strategiesFromReply, withRecruiters, type CompanyStrategy } from '../shared/jobsearch';
 import { extractJson } from '../parsers/json';
 import { networkCommand, networkTab, showWorkTab } from './network-browser';
 import { prepareIntroduction, prepareInvitation, askChatGpt } from './network-ai';
 
 /** Saved settings with defaults filled in. Templates are the default for the first note; v0.10.0 briefly defaulted to ChatGPT, so existing installs are moved back once. A later choice is kept. */
 function settingsOf(s:NetworkState):NonNullable<NetworkState['settings']>{
-  return {...defaultSettings,...s.settings,roles:s.settings?.roles?.length?s.settings.roles:[s.target],...(s.aiDefaultV3?{}:{aiMode:'template' as const}),...(s.paceV2?{}:{paceMinutes:defaultSettings.paceMinutes}),...(!s.noteV2&&s.settings?.noteTemplate===legacyNoteTemplate?{noteTemplate:defaultSettings.noteTemplate}:{})};
+  return {...defaultSettings,...s.settings,roles:s.settings?.roles?.length?s.settings.roles:[s.target],...(s.aiDefaultV3?{}:{aiMode:'template' as const}),...(s.paceV2?{}:{paceMinutes:defaultSettings.paceMinutes}),...(!s.noteV2&&s.settings?.noteTemplate===legacyNoteTemplate?{noteTemplate:defaultSettings.noteTemplate}:{}),...(s.hoursV2?{}:{activeHours:null})};
 }
 export async function getNetwork(): Promise<NetworkState> {
   const old=await read<NetworkState>(networkKey);
@@ -32,7 +32,7 @@ export async function updateNetwork(fn:(s:NetworkState)=>NetworkState):Promise<N
     const settings=settingsOf(base);
     // One-time: drafts still waiting for approval were written with the old closing line; write them again.
     if(!base.noteV2&&base.profile)for(const p of base.contacts??[])if(p.state==='review'&&p.approvalKind==='connect'&&settings.aiMode==='template')p.invitationNote=renderNote(settings,base.target,p,base.profile.name);
-    const next=fn({...base,cv,settings});next.noteV2=true;next.aiDefaultV3=true;next.paceV2=true;
+    const next=fn({...base,cv,settings});next.noteV2=true;next.aiDefaultV3=true;next.paceV2=true;next.hoursV2=true;
     // Every new status line is also kept in a short activity log the side panel can show.
     if(next.status&&next.status!==before)next.log=[...(next.log??[]),{at:Date.now(),text:next.status,kind:/attention|could not|not signed in|usage limit|paused|limit reached|failed|interrupted|different linkedin account/i.test(next.status)?'warn' as const:/saved|sent|started|confirmed|accepted|recovered|validated/i.test(next.status)?'ok' as const:'info' as const}].slice(-60);
     return next;
@@ -129,7 +129,7 @@ export function queueBest(current:NetworkState,job:ReferralJob):void{
     if(take){p.state=p.direct?'connected':'shortlisted';p.auto=true;}else{p.state='found';delete p.auto;}
   }
 }
-const jobRowSchema=z.object({id:z.string().regex(/^\d+$/),title:z.string(),company:z.string(),location:z.string(),insight:z.string()});
+const jobRowSchema=z.object({id:z.string().regex(/^\d+$/),title:z.string(),company:z.string(),location:z.string(),insight:z.string(),promoted:z.boolean().optional()});
 /** One step of a job search per turn: first the plan (once per set of target roles), then one LinkedIn job search per planned title. */
 /* Planning prompts wait at most 40 s for ChatGPT to accept the question and 2 minutes in all; each stage is shown as it happens. */
 const AI_STAGES:Record<string,string>={queued:'opening ChatGPT',tab_opened:'ChatGPT page is loading',send_clicked:'question sent',user_turn_verified:'question received',assistant_streaming:'ChatGPT is writing its answer',completion_verified:'answer finished, reading it',response_extracted:'answer read'};
@@ -146,10 +146,19 @@ async function findJobsStep(s:NetworkState,signal:AbortSignal):Promise<void>{
   }
   const term=s.plan.terms[search.cursor];
   if(term===undefined){
+    // Before the person sees the list, ChatGPT takes out adverts and poor matches. If it cannot, the list is shown as it is.
+    const list=shortlist(search.found,(s.referralJobs??[]).map(r=>r.company));
+    let drop=new Map<string,string>(),why='';
+    if(list.length>1){
+      await note(s,`Checking ${list.length} jobs with ChatGPT to remove adverts and poor matches (up to 2 minutes)…`);
+      try{drop=reviewFromReply(extractJson(await askChatGpt(reviewPrompt(list,roles,s.location),signal,'LEGACY',s.profile!.url,'',planLimits('Checking the job list'))),list.map(j=>j.id));}
+      catch(error){why=error instanceof Error?error.message:String(error);if(signal.aborted)throw error;}
+    }
     await updateNetwork(c=>{
-      const j=c.jobSearch;if(!j)return c;
-      j.found=shortlist(j.found,(c.referralJobs??[]).map(r=>r.company));j.status='choosing';
-      c.status=j.found.length?`Jobs found at ${j.found.length} companies. Open the Jobs tab and confirm which ones to pursue.`:'No matching jobs were found. Try other target roles or a wider location in Setup.';
+      const j=c.jobSearch;if(!j||j.status!=='finding')return c;
+      j.found=list.filter(x=>!drop.has(x.id));j.dropped=list.filter(x=>drop.has(x.id)).map(x=>({title:x.title,company:x.company,why:drop.get(x.id)!}));j.status='choosing';
+      const checked=drop.size?` ChatGPT removed ${drop.size} ${drop.size===1?'advert or poor match':'adverts or poor matches'}.`:why?' ChatGPT could not check the list, so it is unfiltered.':'';
+      c.status=j.found.length?`Jobs found at ${j.found.length} companies.${checked} Open Jobs and confirm which ones to pursue.`:'No matching jobs were found. Try other target roles or a wider location in Settings.';
       return c;
     });
     return;

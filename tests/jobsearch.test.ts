@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { companyPlanPrompt, strategiesFromReply, withRecruiters, fallbackTerms, fallbackTitles, fill, jobsSearchUrl, planFromReply, scoreJob, shortlist, sizeOf, type FoundJob } from '../src/shared/jobsearch';
+import { reviewFromReply, scoreJob as scoreOf, companyPlanPrompt, strategiesFromReply, withRecruiters, fallbackTerms, fallbackTitles, fill, jobsSearchUrl, planFromReply, scoreJob, shortlist, sizeOf, type FoundJob } from '../src/shared/jobsearch';
 import { jobRows } from '../src/parsers/network';
 import { rankReferral, referralPlan } from '../src/shared/referral';
 
@@ -96,5 +96,16 @@ describe('the per-company plan', () => {
     expect(rankReferral({ headline: 'Director of Sales at Microsoft', degree: 2 } as never, job, true, [], avoid)).toBeNull();
     expect(rankReferral({ headline: 'Director of Talent Acquisition at Microsoft', degree: 2 } as never, job, true, [], avoid)).not.toBeNull();
     expect(rankReferral({ headline: 'Director of Sales at Microsoft', degree: 1 } as never, job, true, [], avoid)).not.toBeNull();
+  });
+});
+
+describe('the shortlist check', () => {
+  it('does not trust a reply that removes most of the list', () => {
+    expect(reviewFromReply({ remove: [{ id: '1', why: 'a' }, { id: '2', why: 'b' }, { id: '3', why: 'c' }] }, ['1', '2', '3', '4']).size).toBe(0);
+    expect([...reviewFromReply({ remove: [{ id: 2, why: '' }] }, ['1', '2', '3', '4'])]).toEqual([['2', 'Not a good match']]);
+  });
+  it('ranks a paid advert below the same job found organically', () => {
+    const job = { title: 'Product Intern', insight: '' };
+    expect(scoreOf({ ...job, promoted: true }, ['Product internship'], [])).toBeLessThan(scoreOf(job, ['Product internship'], []));
   });
 });

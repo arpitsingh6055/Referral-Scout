@@ -15,6 +15,12 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.25.0: no quiet hours by default; ChatGPT checks the job list
+- **Set hours are off by default** and were switched off once for existing installs. You can still choose "Only 08:00 to 22:00" under Settings, Pace, limits and safety; when work is waiting for those hours, Home shows **Run now anyway**.
+- **The shortlist is checked by ChatGPT before you see it.** One prompt removes paid courses and placement schemes, vague agency listings, the wrong function and the wrong level. Removed listings are listed with the reason under the shortlist, never dropped silently. A reply that removes most of the list is ignored, and if ChatGPT is unavailable the list is shown unfiltered and says so.
+- LinkedIn's "Promoted" listings are detected, ranked below organic matches and labelled in the shortlist. The "Promoted" label has not been checked against the live page yet.
+- A run now uses at most three ChatGPT prompts: search titles, the job list check, who to ask at each company.
+
 ## 0.24.0: Pause really pauses; nothing opens by itself
 - **Pause everything now stops everything**: job searches, company planning and people searches as well as sending. Before, it only stopped sending and searches kept running. It is offered whenever anything is running, not only while sending.
 - **Resume** is the main button while paused and continues from the exact step that was interrupted. Starting something new (a job search, choosing companies, a referral from a job page) also lifts the pause.

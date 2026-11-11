@@ -110,7 +110,7 @@ export function recentConnections(doc: ParentNode): string[] {
   for (const a of main.querySelectorAll<HTMLAnchorElement>('a[href*="/in/"]')) { const url = profileUrl(a.getAttribute("href") ?? ""); if (url) found.add(url); }
   return [...found];
 }
-export interface JobRow { id: string; title: string; company: string; location: string; insight: string }
+export interface JobRow { id: string; title: string; company: string; location: string; insight: string; promoted?: boolean }
 /**
  * Rows of the LinkedIn job search list (checked live, November 2026). A row is not a link: it is found by its
  * "Dismiss <title> job" button, its number is in the `job-card-component-ref-<id>` marker, and its lines read
@@ -128,7 +128,9 @@ export function jobRows(doc: ParentNode): JobRow[] {
     const company = lines[1] ?? "", location = lines[2] ?? "";
     if (!title || !company) continue;
     const insight = lines.slice(3).find(l => /work here|alumni|connection/i.test(l)) ?? "";
-    seen.add(id); rows.push({ id, title: title.slice(0, 200), company: company.slice(0, 200), location: location.slice(0, 200), insight: insight.slice(0, 120) });
+    // LinkedIn labels paid adverts with the single word "Promoted" in the card footer.
+    const promoted = [...row.querySelectorAll("p, span, li")].some(e => /^promoted$/i.test(textOf(e)));
+    seen.add(id); rows.push({ id, title: title.slice(0, 200), company: company.slice(0, 200), location: location.slice(0, 200), insight: insight.slice(0, 120), ...(promoted ? { promoted } : {}) });
   }
   return rows;
 }

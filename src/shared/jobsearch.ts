@@ -12,8 +12,10 @@ import { functionWords, geoFor, normalizeCompany } from './targeting';
  *   4. REFER    per company: company page (number and size) -> people the person knows -> who else can refer.
  *   5. REACH    people already known get a message, the strongest few others an invitation.
  */
-export interface FoundJob { id: string; url: string; title: string; company: string; location: string; insight: string; term: string; score: number; picked: boolean }
-export interface JobSearch { status: 'finding' | 'choosing' | 'working'; cursor: number; found: FoundJob[]; startedAt: number }
+export interface FoundJob { id: string; url: string; title: string; company: string; location: string; insight: string; term: string; score: number; picked: boolean; promoted?: boolean | undefined }
+export interface JobSearch { status: 'finding' | 'choosing' | 'working'; cursor: number; found: FoundJob[]; startedAt: number;
+  /** Listings ChatGPT took out of the shortlist as adverts or poor matches, with its reason. Shown, never hidden silently. */
+  dropped?: { title: string; company: string; why: string }[] }
 export type CompanySize = 'small' | 'mid' | 'large';
 export interface SearchPlan {
   forRoles: string; terms: string[]; titles: Record<CompanySize, string[]>;
@@ -118,9 +120,10 @@ export function jobsSearchUrl(term: string, location: string): string {
   return url.href;
 }
 /** How well a job fits the target roles, plus LinkedIn's own hint that the person has a way in ("3 connections work here"). */
-export function scoreJob(job: Pick<FoundJob, 'title' | 'insight'>, roles: string[], terms: string[]): number {
+export const PROMOTED_PENALTY = 15;
+export function scoreJob(job: Pick<FoundJob, 'title' | 'insight'> & { promoted?: boolean | undefined }, roles: string[], terms: string[]): number {
   const title = job.title.toLowerCase(), words = functionWords([...roles, ...terms]);
-  let score = words.filter(w => title.includes(w.toLowerCase())).length * 10;
+  let score = words.filter(w => title.includes(w.toLowerCase())).length * 10 - (job.promoted ? PROMOTED_PENALTY : 0); // paid adverts rank below organic matches
   if (terms.some(t => title.includes(t.toLowerCase().replace(/ intern$| graduate$/, '')))) score += 20;
   const wantsIntern = roles.some(r => /intern/i.test(r)), isIntern = /intern|trainee|apprentice/i.test(title);
   score += wantsIntern === isIntern ? 25 : -25;
@@ -202,4 +205,30 @@ export function strategiesFromReply(json: unknown): Map<string, CompanyStrategy>
     out.set(normalizeCompany(c.company), { type: c.type, why: c.why.trim().slice(0, 300), titles, avoid, source: 'chatgpt', ...(note ? { note } : {}), ...(ask ? { ask } : {}), ...(followUp ? { followUp } : {}) });
   }
   return out;
+}
+
+/* ---------- the shortlist check: ChatGPT removes adverts and poor matches before the person sees the list ---------- */
+export function reviewPrompt(jobs: FoundJob[], roles: string[], location: string): string {
+  return [
+    'You are a careful career coach checking a list of LinkedIn job listings for a job seeker before they see it. Remove only the listings that would waste their time. When unsure, KEEP the listing.',
+    '',
+    'Remove a listing when it is:',
+    '- Not a real opening at a real employer: a training institute or course that charges fees, a "pay after placement" programme, a "campus ambassador" or "earn from home" scheme, or a staffing agency posting a vague mass listing with no named client.',
+    '- The wrong function. Example: the seeker wants "Product Management internship"; "Sales Intern", "Telecaller" and "HR Intern" are wrong, while "Associate Product Manager Intern", "Product Analyst Intern", "Program Management Intern" and "Product Operations Intern" are close enough to keep.',
+    '- The wrong level. Example: the seeker wants an internship; "Senior Product Manager" or "Director of Product" is wrong. A full-time entry-level role in the same function is fine to keep.',
+    '- Marked "promoted": true (a paid advert) AND not a clearly good match for the roles. A promoted listing that fits well stays.',
+    'Never remove more than half the list. Do not judge companies by fame or size.',
+    '',
+    `THE SEEKER wants: ${JSON.stringify(roles)}${location ? `, location: ${JSON.stringify(location)}` : ''}`,
+    `LISTINGS: ${JSON.stringify(jobs.map(j => ({ id: j.id, title: j.title, company: j.company, location: j.location, ...(j.promoted ? { promoted: true } : {}) })))}`,
+    '',
+    'Reply with ONLY one JSON object: {"remove":[{"id": the id exactly as given, "why": the reason in at most 12 plain words}]}. Use an empty list if nothing should be removed.',
+  ].join('\n');
+}
+const reviewReply = z.object({ remove: z.array(z.object({ id: z.union([z.string(), z.number()]).transform(String), why: z.string().max(200).default('') })).max(60) });
+/** Which listings to remove, by id. A reply that removes most of the list is not trusted and removes nothing. */
+export function reviewFromReply(json: unknown, ids: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const r of reviewReply.parse(json).remove) if (ids.includes(r.id)) out.set(r.id, r.why.trim() || 'Not a good match');
+  return out.size > ids.length * 0.6 ? new Map() : out;
 }

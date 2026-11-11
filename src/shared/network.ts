@@ -76,13 +76,13 @@ export const outreachSettingsSchema=z.object({
   aiMode:z.enum(['template','chatgpt']).default('template'),
   noteTemplate:z.string().trim().min(10).max(1200).default(defaultNoteTemplate),
   weeklyInvites:z.number().int().positive().nullable().default(80),
-  activeHours:z.object({from:z.number().int().min(0).max(23),to:z.number().int().min(1).max(24)}).nullable().default({from:8,to:22})
+  activeHours:z.object({from:z.number().int().min(0).max(23),to:z.number().int().min(1).max(24)}).nullable().default(null)
 });
 export type OutreachSettings=z.infer<typeof outreachSettingsSchema>;
 export const defaultSettings:OutreachSettings={
   roles:['Product Management internship'],outreachMode:'review',noteMode:'preferred',followupMode:'review',
   paceMinutes:0.5,dailyInvites:15,dailyMessages:20,maxPending:100,companyAllowlist:[],companyExclusions:[],workMode:'any',employmentType:'any',
-  aiMode:'template',noteTemplate:defaultNoteTemplate,weeklyInvites:80,activeHours:{from:8,to:22}
+  aiMode:'template',noteTemplate:defaultNoteTemplate,weeklyInvites:80,activeHours:null
 };
 export interface NetworkState {
   profile:NetworkProfile|null;target:string;location:string;template:string;
@@ -90,7 +90,7 @@ export interface NetworkState {
   dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
   active:boolean;/** Everything is stopped (by the person or by an account-level problem) until something is started or resumed. */paused?:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;nextSweepAt?:number;jobSearch?:JobSearch;plan?:SearchPlan;
   /** 'referrals' = only people from Referrals jobs are contacted; general searching and outreach stay off. */
-  scope?:'all'|'referrals';referralJobs?:ReferralJob[];saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;
+  scope?:'all'|'referrals';referralJobs?:ReferralJob[];saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;hoursV2?:boolean;
   settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;
   actions:{at:number;kind:'connect'|'message'|'check';url:string;confirmed?:boolean;idempotencyKey?:string}[];
   intent:{id:string;tabId:number;url:string;kind:'connect'|'message';at:number;body:string;revision:number;claimed:boolean}|null;
