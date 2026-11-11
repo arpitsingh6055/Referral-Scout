@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { legacyNoteTemplate, fitNote, ACCEPTANCE_SWEEP, directMessage, DAY, MAX_REVIEW_QUEUE, SHORTLIST_BACKLOG, defaultSettings, emptyNetwork, networkKey, networkProfileSchema, nextContact, renderNote, introduction, withinActiveHours, type NetworkState, type NetworkContact } from '../shared/network';
-import { classify, normalizeCompany, planSearch, companyOf } from '../shared/targeting';
+import { classify, geoFor, normalizeCompany, planSearch, companyOf } from '../shared/targeting';
 import { companyFromCurrent } from '../parsers/network';
 import { read, mutate } from '../storage/state';
 import { acquire, release, renew } from './lease';
@@ -79,6 +79,7 @@ async function discover(s:NetworkState,signal:AbortSignal):Promise<void>{
   url.searchParams.set('keywords',plan.combo.keywords);url.searchParams.set('page',String(plan.page));
   // LinkedIn's own degree filter: 2nd and 3rd+ can be invited; 1st-degree people are already connections and can be messaged straight away.
   url.searchParams.set('network',JSON.stringify(['F','S','O']));url.searchParams.set('origin','FACETED_SEARCH');
+  const geo=geoFor(s.location);if(geo)url.searchParams.set('geoUrn',JSON.stringify([geo])); // LinkedIn's Locations filter
   const label=`${KIND_LABEL[plan.combo.kind]} for ${plan.combo.role} (page ${plan.page})`;
   await note(s,`Searching LinkedIn for ${label}…`);
   const tab=await networkTab(url.href,signal);

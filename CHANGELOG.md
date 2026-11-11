@@ -15,6 +15,10 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.17.1
+- General outreach now uses LinkedIn's **Locations** filter for the target country instead of typing the place as a keyword (checked live for India). The country is no longer repeated in the keywords, which had been hiding everyone who does not spell it out in their profile.
+- LinkedIn's title filter was tried and is ignored for this account, so role terms stay in the keywords.
+
 ## 0.17.0
 - Referral searches now use LinkedIn's **Current company** filter. The company's number is read once from its company page (the employee-count link), then every search is limited to people who work there now. Checked live on DeHaat: 10 results per page, all at the company, including the person LinkedIn itself suggested.
 - Fixed: a headline containing "Ex Tata Group" ruled the person out even though they now work at the target company. Only "ex-<this company>" does.

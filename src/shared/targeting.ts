@@ -109,8 +109,23 @@ export interface SearchCombo { role: string; kind: 'recruiter' | 'campus' | 'lea
 export const MAX_SEARCH_PAGES = 5;
 const primaryFunction = (role: string): string => functionWords([role]).find(w => w.length > 2) ?? role;
 /** The full grid of searches for the user's roles: every role is combined with every kind of contact. */
+/**
+ * LinkedIn's own numbers for places, used with its Locations filter (`geoUrn`). A filter is exact; the place
+ * typed as a keyword only matches people who happen to write it in their profile. India was checked live
+ * (November 2026); a place not listed here falls back to the keyword.
+ */
+const GEO: Record<string, string> = {
+  india: '102713980', 'united states': '103644278', usa: '103644278', us: '103644278', 'united kingdom': '101165590', uk: '101165590',
+  canada: '101174742', australia: '101452733', germany: '101282230', singapore: '102454443', 'united arab emirates': '104305776', uae: '104305776',
+  france: '105015875', netherlands: '102890719', ireland: '104738515', spain: '105646813',
+};
+export function geoFor(location: string): string | undefined {
+  const text = location.trim().toLowerCase().replace(/\./g, '');
+  return GEO[text] ?? GEO[text.split(',').pop()!.trim()];
+}
 export function searchCombos(roles: string[], location: string): SearchCombo[] {
-  const place = location.trim() && !/^(any|anywhere|worldwide|global)$/i.test(location.trim()) ? ` ${location.trim()}` : '';
+  // With a Locations filter the place is not repeated as a keyword: it would only narrow results to profiles that spell it out.
+  const place = location.trim() && !/^(any|anywhere|worldwide|global)$/i.test(location.trim()) && !geoFor(location) ? ` ${location.trim()}` : '';
   return roles.flatMap(role => {
     const fn = primaryFunction(role), early = /intern|trainee|fresher|graduate|entry|campus/i.test(role);
     return [

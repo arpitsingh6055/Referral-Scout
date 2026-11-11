@@ -1,6 +1,6 @@
 {
   "name": "cold-contact-pro",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "private": true,
   "type": "module",
   "description": "Visible LinkedIn Jobs and People discovery, ChatGPT-assisted invitations and accepted-connection follow-ups",

@@ -40,6 +40,8 @@ it('searches with a boolean query and LinkedIn’s degree filter, queues 2nd/3rd
   expect(url.pathname).toBe('/search/results/people/');
   expect(url.searchParams.get('keywords')).toContain('recruiter OR "talent acquisition"');
   expect(JSON.parse(url.searchParams.get('network')!)).toEqual(['F', 'S', 'O']);
+  expect(url.searchParams.get('geoUrn')).toBe('["102713980"]'); // India, as LinkedIn's Locations filter
+  expect(url.searchParams.get('keywords')).not.toContain('India');
   const saved = await getNetwork();
   expect(saved.contacts.map(c => c.name).sort()).toEqual(['already connected', 'founder', 'good recruiter']);
   expect(saved.contacts.find(c => c.name === 'already connected')).toMatchObject({ state: 'connected', direct: true });

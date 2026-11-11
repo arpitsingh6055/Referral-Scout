@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classify, companyMatches, companyOf, functionWords, locationFits, normalizeCompany, planSearch, searchCombos, MAX_SEARCH_PAGES, suggestTarget } from '../src/shared/targeting';
+import { geoFor, classify, companyMatches, companyOf, functionWords, locationFits, normalizeCompany, planSearch, searchCombos, MAX_SEARCH_PAGES, suggestTarget } from '../src/shared/targeting';
 import { rankReferral, referralAsk, referralNote, referralPlan, referralSearchUrl } from '../src/shared/referral';
 import { DAY, defaultNoteTemplate, defaultSettings, emptyNetwork, fitNote, nextContact, renderNote, withinActiveHours, type NetworkContact } from '../src/shared/network';
 
@@ -110,7 +110,8 @@ describe('search planning', () => {
     const [recruiter] = searchCombos(['Product Management internship'], 'India');
     expect(recruiter!.keywords).toContain('recruiter OR "talent acquisition"');
     expect(recruiter!.keywords).toContain('product');
-    expect(recruiter!.keywords).toContain('India');
+    expect(recruiter!.keywords).not.toContain('India'); // India is applied as LinkedIn's Locations filter, not as a keyword
+    expect(searchCombos(['Product Management internship'], 'Pune')[0]!.keywords).toContain('Pune'); // a place without a known filter stays a keyword
   });
 });
 
@@ -269,5 +270,15 @@ describe('referrals with LinkedIn’s Current company filter (checked live on De
     expect([kind('Co-Founder at DeHaat'), kind('Product Manager@Dehaat | IIT Ropar'), kind('Product @DeHaat | IIT Delhi'), kind('Team Lead at DeHaat'), kind('SDE-1 @ DeHaat | Backend Engineer | Python')])
       .toEqual(['founder', 'leader', 'peer', 'senior', null]);
     expect(rankReferral({ headline: 'Ex-DeHaat | Product Manager', degree: 2 }, job, true)).toBeNull();
+  });
+});
+
+describe('location in general outreach searches', () => {
+  it('turns a known place into LinkedIn’s Locations filter, including "City, Country" forms', () => {
+    expect(geoFor('India')).toBe('102713980');
+    expect(geoFor('Pune, Maharashtra, India')).toBe('102713980');
+    expect(geoFor('U.K.')).toBe('101165590');
+    expect(geoFor('Pune')).toBeUndefined();
+    expect(geoFor('Anywhere')).toBeUndefined();
   });
 });
