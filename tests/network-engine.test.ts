@@ -77,7 +77,7 @@ it('waits quietly outside the active hours and says so', async () => {
 });
 
 it('uses the invitation template without ChatGPT when the person chose templates, and queues it for review', async () => {
-  await seed({ contacts: [person('review-me', { companyName: 'Acme' })], target: 'Product Management internship' }, { noteMode: 'preferred', aiMode: 'template' });
+  await seed({ contacts: [person('review-me', { companyName: 'Acme' })], target: 'Product Management internship' }, { noteMode: 'preferred' });
   vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'not-connected' });
   await networkTick();
   const p = (await getNetwork()).contacts[0]!;
@@ -213,8 +213,12 @@ it('says so in the activity log when ChatGPT is signed out, and still drafts fro
   expect(saved.log?.some(e => e.kind === 'warn' && /ChatGPT is not signed in.*template was used for alex/.test(e.text))).toBe(true);
 });
 
-it('asks ChatGPT for each note by default, with no CV or dossier needed', async () => {
+it('uses the template by default, and ChatGPT only when the person chose it (no CV or dossier needed)', async () => {
   await seed({ contacts: [person('alex')] });
+  vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'not-connected' });
+  await networkTick();
+  expect(prepareInvitation).not.toHaveBeenCalled();
+  await seed({ contacts: [person('sam')] }, { aiMode: 'chatgpt' });
   vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'not-connected' });
   await networkTick();
   expect(prepareInvitation).toHaveBeenCalledTimes(1);

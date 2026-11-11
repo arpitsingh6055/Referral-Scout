@@ -7,9 +7,9 @@ import { acquire, release, renew } from './lease';
 import { networkCommand, networkTab, showWorkTab } from './network-browser';
 import { prepareIntroduction, prepareInvitation } from './network-ai';
 
-/** Saved settings with defaults filled in. Installs from before v0.10 are moved to ChatGPT-written messages once; a later choice is kept. */
+/** Saved settings with defaults filled in. Templates are the default for the first note; v0.10.0 briefly defaulted to ChatGPT, so existing installs are moved back once. A later choice is kept. */
 function settingsOf(s:NetworkState):NonNullable<NetworkState['settings']>{
-  return {...defaultSettings,...s.settings,roles:s.settings?.roles?.length?s.settings.roles:[s.target],...(s.aiDefaultV2?{}:{aiMode:'chatgpt' as const}),...(s.paceV2?{}:{paceMinutes:defaultSettings.paceMinutes})};
+  return {...defaultSettings,...s.settings,roles:s.settings?.roles?.length?s.settings.roles:[s.target],...(s.aiDefaultV3?{}:{aiMode:'template' as const}),...(s.paceV2?{}:{paceMinutes:defaultSettings.paceMinutes})};
 }
 export async function getNetwork(): Promise<NetworkState> {
   const old=await read<NetworkState>(networkKey);
@@ -26,7 +26,7 @@ export async function updateNetwork(fn:(s:NetworkState)=>NetworkState):Promise<N
     const cv=base.cv?{...base.cv,name:base.cv.name,type:base.cv.type,text:base.cv.text||'',characterCount:base.cv.characterCount??base.cv.text?.length??0}:null;
     if(cv && 'data' in cv)delete (cv as typeof cv & {data?:unknown}).data;
     const before=base.status;
-    const next=fn({...base,cv,settings:settingsOf(base)});next.aiDefaultV2=true;next.paceV2=true;
+    const next=fn({...base,cv,settings:settingsOf(base)});next.aiDefaultV3=true;next.paceV2=true;
     // Every new status line is also kept in a short activity log the side panel can show.
     if(next.status&&next.status!==before)next.log=[...(next.log??[]),{at:Date.now(),text:next.status,kind:/attention|could not|not signed in|usage limit|paused|limit reached|failed|interrupted|quiet hours|waiting/i.test(next.status)?'warn' as const:/saved|sent|started|confirmed|accepted|recovered|validated/i.test(next.status)?'ok' as const:'info' as const}].slice(-60);
     return next;
