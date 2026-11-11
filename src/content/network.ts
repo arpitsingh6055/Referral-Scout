@@ -193,6 +193,17 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
   guard(signal);
   if (cmd.action === "selftest") return selfTest();
   if (cmd.action === "identity") return { url: await identity(signal) };
+  if (cmd.action === "companyId") {
+    // A company page links its employee count to a people search filtered by that company; the number is in that link.
+    if (!location.pathname.startsWith("/company/")) throw new Error("LinkedIn did not open the company page.");
+    const read = (): string | null => {
+      for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href*="currentCompany"]')) {
+        try { const ids = JSON.parse(new URL(a.href).searchParams.get("currentCompany") ?? "[]") as unknown; if (Array.isArray(ids) && /^\d+$/.test(String(ids[0]))) return String(ids[0]); } catch { /* next link */ }
+      }
+      return null;
+    };
+    return { id: await wait(read, signal, 10000).catch(() => null) };
+  }
   if (cmd.action === "connections") {
     if (!location.pathname.startsWith("/mynetwork/invite-connect/connections")) throw new Error("LinkedIn did not open your connections list.");
     await wait(() => recentConnections(document).length || /connected on|no connections/i.test(textOf(document.querySelector("main"))), signal, 12000).catch(() => undefined);

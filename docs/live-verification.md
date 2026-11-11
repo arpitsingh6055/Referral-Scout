@@ -85,3 +85,9 @@ Still not run live: the invitation dialog and its note field, the Pending marker
 - `linkedin.com/mynetwork/invite-connect/connections/` checked live (read-only): newest connections first, each row a profile link with "Connected on <date>", 10 rows before scrolling. Used for the 2-hour acceptance check.
 - Owner's screenshots confirm: some profiles show Connect on the top card, others show Follow and keep Connect under More. Both paths exist in the code; the More path has run against a simulated page only.
 - Not yet seen live: a real send through either path, the 1st-degree filter value `F` in a search address, and a direct message to an existing connection.
+
+## 11 November 2026, v0.17.0 (referrals)
+
+- Company page `linkedin.com/company/dehaat/` checked live: the employee-count link carries `currentCompany=["13396287"]`.
+- People search with that filter and `network=["F","S"]` checked live: 10 rows, 7 pages, every person at DeHaat; rows match the reader.
+- Not yet run through the extension itself in Edge: the two job-page buttons end to end.

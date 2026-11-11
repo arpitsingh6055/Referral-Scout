@@ -193,7 +193,7 @@ export const networkRequest=z.discriminatedUnion('action',[
 export type NetworkRequest=z.infer<typeof networkRequest>;
 export const networkPageCommand=z.object({
   kind:z.literal('network.page'),requestId:z.uuid(),deadline:z.number(),
-  action:z.enum(['identity','profile','search','connections','relationship','connect','message','selftest']),
+  action:z.enum(['identity','profile','search','connections','companyId','relationship','connect','message','selftest']),
   url:z.string().default(''),intentId:z.string().default(''),
   body:z.string().default(''),noteMode:z.enum(['require','preferred','none']).default('preferred')
 });

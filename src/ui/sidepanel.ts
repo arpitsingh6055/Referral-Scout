@@ -3,6 +3,7 @@ import { appRoot, element, errorText } from './render';
 import { DAY, defaultSettings, introduction, renderNote, withinActiveHours, type ContactState, type NetworkContact, type NetworkRequest, type NetworkState, type OutreachSettings, dueReminders, staleRequests, jobStatuses, type JobStatus, type SavedItem } from '../shared/network';
 import { completeCvText } from './cv-text';
 import { createToaster, type ToastKind } from './toast';
+import { referralPlan } from '../shared/referral';
 
 type Tab = 'setup' | 'people' | 'referrals' | 'saved' | 'activity';
 const ui = { tab: 'setup' as Tab, filter: 'all', open: new Set<string>(), touched: false };
@@ -108,7 +109,7 @@ const bubble = (label: string, text: string, over = false, counter = ''): HTMLEl
 };
 
 const stateLabels: Record<ContactState, string> = { found: 'Not contacted', shortlisted: 'Queued', requesting: 'Inviting', pending: 'Invited', connected: 'Accepted', messaging: 'Sending', messaged: 'Introduced', attention: 'Needs you', skipped: 'Skipped', review: 'Needs approval' };
-const categoryLabels: Record<string, string> = { recruiter: 'Recruiter', leader: 'Team leader', founder: 'Founder', senior: 'Senior', employee: 'Works there' };
+const categoryLabels: Record<string, string> = { recruiter: 'Recruiter', leader: 'Team leader', founder: 'Founder', senior: 'Senior', peer: 'Same team', employee: 'Works there' };
 
 /* ---------- derived status ---------- */
 function runStatus(s: NetworkState): { tone: 'ok' | 'warn' | 'idle'; pill: string; title: string; sub: string } {
@@ -215,13 +216,15 @@ function buildReferrals(s: NetworkState): HTMLElement {
     if (jobs[0] === job && !ui.open.has(`ref:${job.url}`) && !ui.touched) box.open = true;
     const meta = node('div', '', 'meta');
     meta.append(link('Open job', job.url, 'chip'), node('span', job.mode === 'referral' ? 'Reaching out' : 'Listing only', 'chip'));
-    if (!job.finishedAt) meta.append(node('span', `Searching: step ${Math.min(job.cursor + 1, 4)} of 4`, 'badge review'));
+    const steps = referralPlan(job).length;
+    if (!job.finishedAt) meta.append(node('span', job.companyUrl && !job.companyId && !job.idTried ? 'Finding the company…' : `Searching: step ${Math.min(job.cursor + 1, steps)} of ${steps}`, 'badge review'));
+    if (job.companyId) meta.append(node('span', 'Current-company filter', 'chip'));
     const first = people.filter(p => p.degree === 1).length;
     if (people.length) meta.append(node('span', `${first} you know · ${people.length - first} to invite`, 'chip'));
     body.append(meta);
     if (job.mode === 'connections' && job.finishedAt && people.some(p => p.state === 'found')) body.append(node('p', 'Nobody has been contacted. Press “Ask for a referral” on the people you want to approach; the strongest are at the top.', 'field-help'));
     if (job.mode === 'referral' && !s.active && people.some(p => ['shortlisted', 'connected'].includes(p.state))) body.append(node('p', 'Press Start outreach above: the messages are then drafted for your approval.', 'field-help'));
-    if (!people.length) body.append(node('p', job.finishedAt ? 'Nobody suitable was found at this company.' : 'Results appear here as each search finishes.', 'muted small'));
+    if (!people.length) body.append(node('p', job.finishedAt ? (job.mode === 'connections' ? 'You have no 1st-degree connections at this company. On the job page, press “Ask for referrals” to find its recruiters, the team and people you share connections with.' : 'Nobody suitable was found at this company.') : 'Results appear here as each search finishes.', 'muted small'));
     for (const p of people) body.append(personCard(s, p));
     body.append(button('Remove this job', async () => { if (confirm(`Remove ${job.title} at ${job.company} from Referrals? People already contacted stay on the People list.`)) await act({ kind: 'network', action: 'removeReferralJob', url: job.url }, 'Job removed from Referrals.'); }, 'btn sm ghost danger'));
     panel.append(box);

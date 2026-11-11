@@ -15,6 +15,13 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.17.0
+- Referral searches now use LinkedIn's **Current company** filter. The company's number is read once from its company page (the employee-count link), then every search is limited to people who work there now. Checked live on DeHaat: 10 results per page, all at the company, including the person LinkedIn itself suggested.
+- Fixed: a headline containing "Ex Tata Group" ruled the person out even though they now work at the target company. Only "ex-<this company>" does.
+- New rank "Same team" for people in the job's own function with a mutual connection; unrelated strangers are still dropped.
+- Pressing a referral button again on a finished job searches again.
+- 0.16.1 and 0.16.2: referral buttons now show in the split job-search view; people-team and senior titles are kept.
+
 ## 0.16.0
 - **Referrals.** On a LinkedIn job page, two new buttons next to Remember:
   - **Ask for referrals** searches that company for recruiters, the hiring team, founders and people you already know there, ranks them by whose word counts, and prepares a job-specific message (1st degree) or invitation (2nd and 3rd).

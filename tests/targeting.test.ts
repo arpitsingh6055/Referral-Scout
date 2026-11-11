@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classify, companyMatches, companyOf, functionWords, locationFits, normalizeCompany, planSearch, searchCombos, MAX_SEARCH_PAGES, suggestTarget } from '../src/shared/targeting';
-import { rankReferral, referralAsk, referralNote, referralPlan } from '../src/shared/referral';
+import { rankReferral, referralAsk, referralNote, referralPlan, referralSearchUrl } from '../src/shared/referral';
 import { DAY, defaultNoteTemplate, defaultSettings, emptyNetwork, fitNote, nextContact, renderNote, withinActiveHours, type NetworkContact } from '../src/shared/network';
 
 const product = { roles: ['Product Management internship'], location: 'India' };
@@ -216,8 +216,10 @@ describe('referrals for one job', () => {
   it('leaves out people who cannot help: other companies, former staff, students, and strangers who merely work there', () => {
     expect(rankReferral({ headline: 'Recruiter at HSBC', degree: 2 }, job)).toBeNull();
     expect(rankReferral({ headline: 'Ex-Barclays | Recruiter', degree: 1 }, job)).toBeNull();
-    expect(rankReferral({ headline: 'Software Engineer at Barclays', degree: 2 }, job)).toBeNull();
-    expect(rankReferral({ headline: 'Software Engineer at Barclays', degree: 1 }, job)).toMatchObject({ kind: 'employee' });
+    expect(rankReferral({ headline: 'Accountant at Barclays', degree: 2 }, job)).toBeNull();
+    expect(rankReferral({ headline: 'Accountant at Barclays', degree: 1 }, job)).toMatchObject({ kind: 'employee' });
+    expect(rankReferral({ headline: 'Software Engineer at Barclays', degree: 2 }, job)).toMatchObject({ kind: 'peer' }); // same team, with a mutual connection
+    expect(rankReferral({ headline: 'Software Engineer at Barclays', degree: 3 }, job)).toBeNull();
   });
   it('writes about the job, fits the invitation in 200 characters, and puts the job link in the message', () => {
     const note = fitNote(referralNote(job, { name: 'Asha Rao', category: 'recruiter' }, 'Arpit Singh'));
@@ -231,11 +233,11 @@ describe('referrals for one job', () => {
 describe('referral ranking against real LinkedIn result lines (saved search page, November 2026)', () => {
   const at = (company: string) => ({ url: 'https://www.linkedin.com/jobs/view/1/', title: 'Software engineer', company });
   it.each([
-    ['Software Engineer at Barclays', 'Barclays', 1, 'employee'],
-    ['Senior Software Engineer @ Visa', 'Visa', 1, 'employee'],
+    ['Software Engineer at Barclays', 'Barclays', 1, 'peer'],
+    ['Senior Software Engineer @ Visa', 'Visa', 1, 'peer'],
     ['SDE II @Amazon', 'Amazon', 1, 'employee'],
-    ['Senior Software Engineer at HSBC Technology India', 'HSBC', 1, 'employee'],
-    ['Senior Software Engineer @ Nomura | Backend Development, Cloud Technologies', 'Nomura', 1, 'employee'],
+    ['Senior Software Engineer at HSBC Technology India', 'HSBC', 1, 'peer'],
+    ['Senior Software Engineer @ Nomura | Backend Development, Cloud Technologies', 'Nomura', 1, 'peer'],
     ['HR at BNY', 'BNY', 2, 'recruiter'],
     ['Specialist, People & Talent at Fresh Gravity', 'Fresh Gravity', 2, 'recruiter'],
     ['Executive Director at UBS', 'UBS', 2, 'senior'],
@@ -245,5 +247,27 @@ describe('referral ranking against real LinkedIn result lines (saved search page
   it('LinkedIn’s own suggestions for a Barclays job were mostly people elsewhere; only the Barclays person is kept', () => {
     const suggested = ['Senior Software Engineer @ Visa', 'Software Engineer at Barclays', 'Senior Software Engineer at HSBC Technology India', 'Founder | CTO', 'SDE II @Amazon', 'HR at BNY', 'Executive Director at UBS', 'Assistant Manager| MBA (BA)-SCMHRD | Mentor | Ex Aditya Birla Capital'];
     expect(suggested.filter(headline => rankReferral({ headline, degree: 1 }, at('Barclays')))).toEqual(['Software Engineer at Barclays']);
+  });
+});
+
+describe('referrals with LinkedIn’s Current company filter (checked live on DeHaat, November 2026)', () => {
+  const job = { url: 'https://www.linkedin.com/jobs/view/4478433477/', title: 'Product Management Intern', company: 'DeHaat', mode: 'referral' as const, companyId: '13396287' };
+  it('filters every search by the company number instead of hoping the name appears in a headline', () => {
+    const plan = referralPlan(job);
+    expect(plan[0]).toMatchObject({ keywords: '', network: ['F'] });
+    const url = new URL(referralSearchUrl(plan[1]!, job.companyId));
+    expect(url.searchParams.get('currentCompany')).toBe('["13396287"]');
+    expect(url.searchParams.get('keywords')).toContain('recruiter');
+    expect(referralPlan({ ...job, mode: 'connections' }).map(step => step.network.join())).toEqual(['F', 'F']);
+  });
+  it('keeps the person LinkedIn itself suggested, whose headline says "Ex Tata Group" and never "at DeHaat"', () => {
+    const nikhil = { headline: 'Sales Manager | MBA @ IMT Ghaziabad | Dehaat | Ex Tata Group | Ex ITC | Ex Blinkit', degree: 2 };
+    expect(rankReferral(nikhil, job, true)).toMatchObject({ kind: 'senior' });
+  });
+  it('ranks real DeHaat results: founder and product people above an unrelated engineer, who is dropped', () => {
+    const kind = (headline: string) => rankReferral({ headline, degree: 2 }, job, true)?.kind ?? null;
+    expect([kind('Co-Founder at DeHaat'), kind('Product Manager@Dehaat | IIT Ropar'), kind('Product @DeHaat | IIT Delhi'), kind('Team Lead at DeHaat'), kind('SDE-1 @ DeHaat | Backend Engineer | Python')])
+      .toEqual(['founder', 'leader', 'peer', 'senior', null]);
+    expect(rankReferral({ headline: 'Ex-DeHaat | Product Manager', degree: 2 }, job, true)).toBeNull();
   });
 });

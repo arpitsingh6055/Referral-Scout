@@ -68,7 +68,11 @@ export function registerNetworkMessages():void{
             old.mode='referral';old.cursor=0;delete old.finishedAt;
             for(const p of s.contacts)if(p.referralJob===job.url&&p.state==='found')p.state=p.direct?'connected':'shortlisted';
             message='Reaching out. See the Referrals tab.';
-          }else message=old.finishedAt?'Already done. See the Referrals tab.':'Already searching. See the Referrals tab.';
+          }else if(old.finishedAt){
+            // Asked again: search again from the start (new people join, and the search itself may have improved).
+            old.cursor=0;old.found=s.contacts.filter(p=>p.referralJob===job.url).length;delete old.finishedAt;delete old.idTried;message='Searching again. See the Referrals tab.';
+          }else message='Already searching. See the Referrals tab.';
+          if(old&&job.companyUrl&&!old.companyUrl)old.companyUrl=job.companyUrl;
           s.status=`${job.company}: ${mode==='referral'?'looking for people who can refer you for':'listing your connections for'} ${job.title}.`;
           return s;
         });

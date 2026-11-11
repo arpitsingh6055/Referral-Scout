@@ -301,3 +301,19 @@ it('"My connections here" only lists people; nobody is queued until asked', asyn
   expect(saved.referralJobs![0]!.finishedAt).toBeGreaterThan(0);
   expect(saved.status).toMatch(/TBX: found 1 person/);
 });
+
+it('reads the company number from its page first, then searches with the Current company filter', async () => {
+  await seed({ active: false, referralJobs: [{ url: 'https://www.linkedin.com/jobs/view/5/', title: 'Product Management Intern', company: 'DeHaat', location: '', companyUrl: 'https://www.linkedin.com/company/dehaat/', mode: 'connections', addedAt: 1, cursor: 0, found: 0 }] });
+  vi.mocked(networkCommand).mockResolvedValueOnce({ id: '13396287' });
+  await networkTick();
+  expect(String(vi.mocked(networkTab).mock.calls[0]![0])).toBe('https://www.linkedin.com/company/dehaat/');
+  expect((await getNetwork()).referralJobs![0]).toMatchObject({ companyId: '13396287', cursor: 0 });
+  vi.mocked(networkCommand).mockResolvedValueOnce([card('friend', 'Sales Manager | Dehaat | Ex Tata Group', 1)]);
+  await networkTick();
+  const url = urls()[1]!;
+  expect(url.searchParams.get('currentCompany')).toBe('["13396287"]');
+  expect(url.searchParams.has('keywords')).toBe(false);
+  const saved = await getNetwork();
+  expect(saved.contacts[0]).toMatchObject({ name: 'friend', state: 'found', category: 'senior' });
+  expect(saved.referralJobs![0]!.finishedAt).toBeGreaterThan(0); // fewer than 10 people: no second page needed
+});

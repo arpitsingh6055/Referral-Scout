@@ -4,7 +4,7 @@ import { classify, normalizeCompany, planSearch, companyOf } from '../shared/tar
 import { companyFromCurrent } from '../parsers/network';
 import { read, mutate } from '../storage/state';
 import { acquire, release, renew } from './lease';
-import { referralAsk, referralNote, referralPlan, rankReferral, type ReferralJob } from '../shared/referral';
+import { referralAsk, referralNote, referralPlan, referralSearchUrl, rankReferral, type ReferralJob } from '../shared/referral';
 import { networkCommand, networkTab, showWorkTab } from './network-browser';
 import { prepareIntroduction, prepareInvitation } from './network-ai';
 
@@ -111,14 +111,21 @@ async function discover(s:NetworkState,signal:AbortSignal):Promise<void>{
 const PENDING_EXPIRY=30*DAY,OWNER_RECHECK=6*3600000;
 /** One search of a job's referral plan per turn; the next follows a few seconds later. */
 async function referralScan(s:NetworkState,job:ReferralJob,signal:AbortSignal):Promise<void>{
-  const plan=referralPlan(job),step=plan[job.cursor];
+  // First, once: read the company's LinkedIn number from its page, so every search can use the Current company filter.
+  if(job.companyUrl&&!job.companyId&&!job.idTried){
+    await note(s,`${job.company}: finding the company on LinkedIn…`);
+    let id:string|null=null;
+    try{const tab=await networkTab(job.companyUrl,signal);id=z.object({id:z.string().nullable()}).parse(await networkCommand(tab,{action:'companyId'},signal)).id;}
+    catch(error){const m=error instanceof Error?error.message:String(error);if(signal.aborted||ACCOUNT_LEVEL.test(m))throw error;}
+    await updateNetwork(current=>{const saved=current.referralJobs?.find(j=>j.url===job.url);if(saved){saved.idTried=true;if(id)saved.companyId=id;current.status=id?`${saved.company}: found. Searching only people who work there now.`:`${saved.company}: company filter unavailable, searching by name instead.`;}return current;});
+    return;
+  }
+  const plan=referralPlan(job),step=plan[job.cursor],verified=!!job.companyId;
   let people:z.infer<typeof networkProfileSchema>[]=[],failed='';
   if(step){
     await note(s,`${job.company}: searching ${step.label} (step ${job.cursor+1} of ${plan.length})…`);
     try{
-      const url=new URL('https://www.linkedin.com/search/results/people/');
-      url.searchParams.set('keywords',step.keywords);url.searchParams.set('network',JSON.stringify(step.network));url.searchParams.set('origin','FACETED_SEARCH');
-      const tab=await networkTab(url.href,signal);
+      const tab=await networkTab(referralSearchUrl(step,job.companyId),signal);
       people=z.array(networkProfileSchema).parse(await networkCommand(tab,{action:'search'},signal));
     }catch(error){
       failed=error instanceof Error?error.message:String(error);
@@ -130,7 +137,7 @@ async function referralScan(s:NetworkState,job:ReferralJob,signal:AbortSignal):P
     const queue=saved.mode==='referral';let added=0;
     for(const person of people){
       if(person.url===current.profile?.url)continue;
-      const verdict=rankReferral(person,saved);if(!verdict)continue;
+      const verdict=rankReferral(person,saved,verified);if(!verdict)continue;
       const direct=person.degree===1,state=queue?(direct?'connected' as const:'shortlisted' as const):'found' as const;
       const existing=current.contacts.find(c=>c.url===person.url);
       if(existing){
@@ -142,7 +149,8 @@ async function referralScan(s:NetworkState,job:ReferralJob,signal:AbortSignal):P
       current.contacts.push({...person,reason:verdict.reason,score:verdict.score,category:verdict.kind,companyName:saved.company,referralJob:saved.url,
         ...(direct?{direct:true}:{}),state,addedAt:Date.now(),requestedAt:0,checkedAt:0,messagedAt:0,message:''});added++;
     }
-    saved.cursor++;saved.found+=added;
+    // A short page means there is no next page of the same search: skip it.
+    saved.cursor+=plan[saved.cursor+1]?.page&&people.length<10?2:1;saved.found+=added;
     if(saved.cursor>=plan.length){
       saved.finishedAt=Date.now();
       current.status=saved.found?`${saved.company}: found ${saved.found} ${saved.found===1?'person':'people'} who can help with ${saved.title}. See the Referrals tab.`:`${saved.company}: nobody suitable was found for ${saved.title}. LinkedIn may be showing few people from this company.`;

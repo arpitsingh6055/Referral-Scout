@@ -8,7 +8,7 @@ import { ownProfileEditLink, profileHeader, topCardFacts } from "../parsers/netw
  * precise but can never make the button disappear.
  */
 export type Relation = "connected" | "pending" | "not-connected" | "unknown";
-export interface PageItem { type: "person" | "job"; url: string; title: string; subtitle: string; company?: string; location?: string; relation?: Relation }
+export interface PageItem { type: "person" | "job"; url: string; title: string; subtitle: string; company?: string; location?: string; companyUrl?: string; relation?: Relation }
 export interface PageDeps { visible: (e: Element) => boolean; relation: (top: HTMLElement) => Relation }
 
 const clean = (text: string | null | undefined): string => (text ?? "").replace(/\s+/g, " ").trim();
@@ -59,10 +59,13 @@ function jobItem(doc: Document, href: string): PageItem | null {
     if (header) break;
   }
   const about = clean(doc.querySelector(`[componentkey="JobDetails_AboutTheCompany_${id}"] a[href*="/company/"]`)?.textContent).replace(/\s*[\d,.]+[KM]?\s+followers.*$/i, "");
+  // The company's own page, e.g. /company/dehaat/life/ -> https://www.linkedin.com/company/dehaat/
+  const slug = /\/company\/([^/?#]+)/.exec(doc.querySelector<HTMLAnchorElement>(`[componentkey="JobDetails_AboutTheCompany_${id}"] a[href*="/company/"]`)?.getAttribute("href") ?? "")?.[1];
+  const companyUrl = slug ? `https://www.linkedin.com/company/${slug}/` : "";
   const sameJob = !!parts[0] && !!parts[1] && parts[0].toLowerCase() === title.toLowerCase();
   const company = (onJobPage && parts[1] ? parts[1] : "") || header?.company || about || (sameJob ? parts[1]! : "");
   return { type: "job", url: `https://www.linkedin.com/jobs/view/${id}/`, title: title.slice(0, 200), subtitle: company.slice(0, 500),
-    ...(company ? { company: company.slice(0, 200) } : {}), ...(header?.location ? { location: header.location.slice(0, 200) } : {}) };
+    ...(company ? { company: company.slice(0, 200) } : {}), ...(companyUrl ? { companyUrl } : {}), ...(header?.location ? { location: header.location.slice(0, 200) } : {}) };
 }
 
 export function pageItem(doc: Document, href: string, deps: PageDeps): PageItem | null {
