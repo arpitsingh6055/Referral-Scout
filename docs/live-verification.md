@@ -46,3 +46,11 @@ Still not run live: the invitation dialog and its note field, the Pending marker
 - ChatGPT was never used because it was off by default and required a CV. Now on by default and works from the LinkedIn profile alone.
 - The LinkedIn tab took over the owner's window. Pages now open in a separate window that is never focused.
 - Long silent gaps between steps. Steps now follow each other after 5 to 12 seconds, and each step is announced.
+
+## 11 November 2026, invitation dialog seen in Edge (owner's screenshots), fixed in v0.14.0
+
+- Step 1 is "Add a note to your invitation?" with **Add a note** and **Send without a note**.
+- Step 2 is a different dialog element with a 200-character box, **Cancel**, and a **Send** that stays disabled until text is typed. It also shows how many free notes are left this month.
+- v0.13.0 kept looking at the step 1 element after it had been replaced, found no box and no Send, set the person aside and paused everything. The dialog is now looked up again at every step.
+- When the free notes run out, the extension backs out and uses Send without a note. This path is covered by a simulated page only; the real upgrade offer has not been seen.
+- Not yet seen live: the Pending marker after a real send.

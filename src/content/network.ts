@@ -61,7 +61,7 @@ async function authorize(cmd: NetworkPageCommand, claim: boolean, signal: AbortS
   guard(signal);
   if (!reply || typeof reply !== "object" || !("allowed" in reply) || reply.allowed !== true) throw new Error("Outreach is paused or this action is no longer authorized.");
 }
-const invitationDialog = () => queryAll('[role="dialog"]').filter(visible).find(e => /add a note|invitation|how do you know|send without a note/i.test(e.innerText)) ?? null;
+const invitationDialog = () => queryAll('[role="dialog"], dialog').filter(visible).find(e => /add a note|invitation|how do you know|send without a note|personalized/i.test(e.innerText)) ?? null;
 async function openInvitationDialog(url: string, signal: AbortSignal): Promise<HTMLElement | null> {
   const existing = invitationDialog(); if (existing) return existing;
   const top = topCard(url);
@@ -73,43 +73,71 @@ async function openInvitationDialog(url: string, signal: AbortSignal): Promise<H
   const outcome = await wait(() => invitationDialog() ?? (relationship(topCard(url)) === "pending" ? "sent" as const : null), signal, 8000);
   return outcome === "sent" ? null : outcome;
 }
+/** Closes whatever invitation dialog is open (Cancel, Dismiss or the X), without sending anything. */
+async function dismissInvitation(signal: AbortSignal): Promise<void> {
+  for (let i = 0; i < 3 && invitationDialog(); i++) {
+    const dialog = invitationDialog()!;
+    const close = control(dialog, /^(cancel|dismiss|close|got it|no thanks|not now)$/i);
+    if (close) close.click(); else dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+    await sleep(600, signal);
+  }
+  if (invitationDialog()) throw new Error("LinkedIn’s invitation dialog could not be closed. No invitation was sent.");
+}
+const noteEditor = (): HTMLElement | undefined => {
+  const dialog = invitationDialog();
+  return dialog ? [...dialog.querySelectorAll<HTMLElement>('textarea, [contenteditable="true"], [role="textbox"]')].find(visible) : undefined;
+};
+/*
+ * The live dialog has two steps (seen November 2026):
+ *   1. "Add a note to your invitation?"  with  [Add a note]  [Send without a note]
+ *   2. "Add a note to your invitation"   with a 200-character box and  [Cancel]  [Send]
+ * Step 2 replaces step 1 with a NEW dialog element, so the dialog is looked up again at every step.
+ * Free accounts get only a few notes a month; once they run out, step 2 shows an upgrade offer instead of a box.
+ */
 async function connect(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unknown> {
   const existing = relationship(topCard(cmd.url));
   if (existing === "pending" || existing === "connected") return { state: existing };
   // Opening the dialog is not proof that an invitation was sent.
   await authorize(cmd, true, signal);
-  const dialog = await openInvitationDialog(cmd.url, signal);
-  if (!dialog) {
+  if (!await openInvitationDialog(cmd.url, signal)) {
     if (cmd.noteMode === "require") throw new Error("LinkedIn submitted a request without exposing a note dialog. Verify the exact invitation manually.");
     return { state: "pending", noteSent: false };
   }
-  if (dialog.querySelector('input[type="email"]')) throw new Error("LinkedIn requires a recipient email; no invitation was submitted.");
+  if (invitationDialog()?.querySelector('input[type="email"]')) throw new Error("LinkedIn requires a recipient email; no invitation was submitted.");
   let noteSent = false;
   if (cmd.noteMode !== "none") {
-    const add = control(dialog, /^add a note$|^personalize invitation$/i);
-    if (add) { add.click(); await sleep(400, signal); }
-    const editor = [...dialog.querySelectorAll<HTMLElement>('textarea, [contenteditable="true"], [role="textbox"]')].find(visible);
+    if (!cmd.body.trim()) throw new Error("The personalized invitation note is empty. No invitation was sent.");
+    let editor = noteEditor();
     if (!editor) {
-      // "Use a note when available": free accounts run out of personalised notes, so send without one.
-      if (cmd.noteMode === "require") throw new Error("No editable invitation note field was found. No note-free invitation was sent.");
-    } else {
-      if (!cmd.body.trim()) throw new Error("The personalized invitation note is empty.");
+      const add = control(invitationDialog()!, /^add a note$|^personalize invitation$/i);
+      if (add) { add.click(); editor = await wait(noteEditor, signal, 4000).catch(() => undefined); }
+    }
+    if (editor) {
       const max = editor instanceof HTMLTextAreaElement ? editor.maxLength : Number(editor.getAttribute("maxlength") || editor.getAttribute("aria-valuemax"));
       if (max > 0 && cmd.body.length > max) throw new Error(`The current LinkedIn dialog permits ${max} characters; draft is ${cmd.body.length}. No invitation was sent.`);
-      if (readEditor(editor).trim()) throw new Error("The note field already contains a draft. It was not overwritten.");
+      if (readEditor(editor).trim()) throw new Error("The note field already contains a draft. It was not overwritten. No invitation was sent.");
       insert(editor, cmd.body);
-      if (!sameText(readEditor(editor), cmd.body)) throw new Error("The note was not fully reflected in LinkedIn. No invitation was sent.");
+      await sleep(400, signal);
+      if (!sameText(readEditor(noteEditor() ?? editor), cmd.body)) throw new Error("The note was not fully reflected in LinkedIn. No invitation was sent.");
       noteSent = true;
+    } else {
+      // No box to write in: this account is out of notes for the month (or LinkedIn showed an upgrade offer).
+      if (cmd.noteMode === "require") { await dismissInvitation(signal).catch(() => undefined); throw new Error("HALT: LinkedIn is not offering a note field (free accounts get only a few notes a month). No invitation was sent. Switch notes to “when available” to keep going without them."); }
+      await dismissInvitation(signal);
+      if (!await openInvitationDialog(cmd.url, signal)) return { state: "pending", noteSent: false };
     }
   }
-  const send = control(dialog, /^send$|^send invitation$|^send without a note$/i);
-  if (!send || send.hasAttribute("disabled") || send.getAttribute("aria-disabled") === "true") throw new Error("Invitation Send control is not available; no request was submitted.");
-  if (noteSent && /without a note/i.test(label(send))) throw new Error("LinkedIn still shows Send without a note after insertion. No invitation was sent.");
-  if (cmd.noteMode === "require" && !cmd.body.trim()) throw new Error("This outreach requires a personal note.");
-  if (!dialog.isConnected || !visible(dialog) || profileUrl(location.href) !== cmd.url) throw new Error("Recipient or invitation dialog changed before sending.");
+  // With a note typed, only the plain Send button is acceptable; "Send without a note" would throw the note away.
+  const wanted = noteSent ? /^send$|^send invitation$/i : /^send without a note$|^send$|^send invitation$/i;
+  const send = await wait(() => {
+    const dialog = invitationDialog(); if (!dialog) return null;
+    const button = control(dialog, wanted);
+    return button && !button.hasAttribute("disabled") && button.getAttribute("aria-disabled") !== "true" ? button : null;
+  }, signal, 8000).catch(error => { if (signal.aborted) throw error; throw new Error("LinkedIn’s Send button did not become available. No invitation was sent."); });
+  if (profileUrl(location.href) !== cmd.url) throw new Error("The recipient changed before sending. No invitation was sent.");
   await authorize(cmd, false, signal);
   send.click();
-  await wait(() => relationship(topCard(cmd.url)) === "pending", signal, 10000).catch(() => { throw new Error("LinkedIn did not confirm Pending after Send. The invitation may have been submitted; inspect it manually before retrying."); });
+  await wait(() => relationship(topCard(cmd.url)) === "pending", signal, 12000).catch(() => { throw new Error("LinkedIn did not confirm Pending after Send. The invitation may have been submitted."); });
   return { state: "pending", noteSent };
 }
 /** The chat window for exactly this recipient. It lives in LinkedIn's messaging shadow root. */

@@ -224,3 +224,30 @@ it('uses the template by default, and ChatGPT only when the person chose it (no 
   expect(prepareInvitation).toHaveBeenCalledTimes(1);
   expect((await getNetwork()).contacts[0]).toMatchObject({ state: 'review', invitationNote: 'AI note' });
 });
+
+it('one failed invitation does not stop outreach: it is retried by itself, already approved', async () => {
+  await seed({ contacts: [person('alex', { state: 'review', approvalKind: 'connect', approved: true, invitationNote: 'Hi' })] }, { aiMode: 'template' });
+  vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'not-connected' }).mockRejectedValueOnce(new Error('LinkedIn’s Send button did not become available. No invitation was sent.'));
+  await networkTick();
+  const saved = await getNetwork();
+  expect(saved.active).toBe(true);
+  expect(saved.contacts[0]).toMatchObject({ state: 'review', approved: true, failures: 1 });
+  expect(saved.contacts[0]!.retryAfter).toBeGreaterThan(Date.now());
+  expect(saved.actions).toHaveLength(0); // a send that did not happen does not count against the daily limit
+});
+
+it('when LinkedIn is slow to confirm, looks again instead of asking the person: Pending counts as sent, and it is never sent twice', async () => {
+  await seed({ contacts: [person('alex', { state: 'review', approvalKind: 'connect', approved: true, invitationNote: 'Hi' })] }, { aiMode: 'template' });
+  vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'not-connected' }).mockRejectedValueOnce(new Error('LinkedIn did not confirm Pending after Send. The invitation may have been submitted.'));
+  await networkTick();
+  let p = (await getNetwork()).contacts[0]!;
+  expect(p).toMatchObject({ state: 'review', approved: true });
+  expect(p.attemptedAt).toBeGreaterThan(0);
+  vi.setSystemTime(Date.now() + 3 * 60000);
+  vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'pending' });
+  await networkTick();
+  p = (await getNetwork()).contacts[0]!;
+  expect(p).toMatchObject({ state: 'pending' });
+  expect(p.requestedAt).toBeGreaterThan(0);
+  expect(vi.mocked(networkCommand).mock.calls.filter(c => (c[1] as { action: string }).action === 'connect')).toHaveLength(1);
+});
