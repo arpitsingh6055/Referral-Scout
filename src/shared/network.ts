@@ -47,7 +47,9 @@ export interface NetworkContact extends NetworkProfile {
   /** Already a 1st-degree connection when found: no invitation is needed, only a message. */
   direct?:boolean;
   /** The job (its LinkedIn address) this person was found for, when the aim is a referral. */
-  referralJob?:string;lastError?:string;score?:number;category?:string;failures?:number;retryAfter?:number;
+  referralJob?:string;
+  /** Queued by the person's own "Ask for referrals" click: that click is the approval, so no second one is asked for. */
+  auto?:boolean;lastError?:string;score?:number;category?:string;failures?:number;retryAfter?:number;
 }
 /** The note before v0.11.1. It asked a recruiter about "your work", which is the wrong thing to say to someone who hires. */
 export const legacyNoteTemplate='Hi {firstName}, I’m {myFirstName}, exploring {target} opportunities. Would love to connect and learn about your work at {company}.';
@@ -85,7 +87,9 @@ export interface NetworkState {
   profile:NetworkProfile|null;target:string;location:string;template:string;
   cv:{name:string;type:string;text:string;textVersion?:number;pages?:number;warnings?:string[];savedAt?:number;characterCount?:number}|null;
   dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
-  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;nextSweepAt?:number;referralJobs?:ReferralJob[];saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;
+  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;nextSweepAt?:number;
+  /** 'referrals' = only people from Referrals jobs are contacted; general searching and outreach stay off. */
+  scope?:'all'|'referrals';referralJobs?:ReferralJob[];saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;
   settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;
   actions:{at:number;kind:'connect'|'message'|'check';url:string;confirmed?:boolean;idempotencyKey?:string}[];
   intent:{id:string;tabId:number;url:string;kind:'connect'|'message';at:number;body:string;revision:number;claimed:boolean}|null;

@@ -4,7 +4,7 @@ import { classify, geoFor, normalizeCompany, planSearch, companyOf } from '../sh
 import { companyFromCurrent } from '../parsers/network';
 import { read, mutate } from '../storage/state';
 import { acquire, release, renew } from './lease';
-import { referralAsk, referralNote, referralPlan, referralSearchUrl, rankReferral, type ReferralJob } from '../shared/referral';
+import { REFERRAL_AUTO, referralAsk, referralNote, referralPlan, referralSearchUrl, rankReferral, type ReferralJob } from '../shared/referral';
 import { networkCommand, networkTab, showWorkTab } from './network-browser';
 import { prepareIntroduction, prepareInvitation } from './network-ai';
 
@@ -145,7 +145,7 @@ async function referralScan(s:NetworkState,job:ReferralJob,signal:AbortSignal):P
       const {alum,offered:fromLinkedIn,...person}=row;
       if(person.url===current.profile?.url)continue;
       const verdict=rankReferral({...person,alum},saved,verified&&!fromLinkedIn);if(!verdict)continue;
-      const direct=person.degree===1,state=queue?(direct?'connected' as const:'shortlisted' as const):'found' as const;
+      const direct=person.degree===1,state='found' as const; // everyone is listed first; the strongest are queued together once the search is complete
       const existing=current.contacts.find(c=>c.url===person.url);
       if(existing){
         // Someone already on the list is tied to this job only if nothing has been sent to them yet.
@@ -160,6 +160,12 @@ async function referralScan(s:NetworkState,job:ReferralJob,signal:AbortSignal):P
     saved.cursor+=plan[saved.cursor+1]?.page&&people.length<10?2:1;saved.found+=added;
     if(saved.cursor>=plan.length){
       saved.finishedAt=Date.now();
+      if(queue){
+        // Reach out to the strongest few by themselves; everyone else stays listed for the person to pick.
+        const open=current.contacts.filter(p=>p.referralJob===saved.url&&!p.requestedAt&&!p.messagedAt&&['found','shortlisted','connected'].includes(p.state)).sort((a,b)=>(b.score??0)-(a.score??0));
+        const already=current.contacts.filter(p=>p.referralJob===saved.url&&(p.requestedAt||p.messagedAt||['review','requesting','messaging','pending','messaged'].includes(p.state))).length;
+        open.forEach((p,i)=>{if(i<Math.max(0,REFERRAL_AUTO-already)){p.state=p.direct?'connected':'shortlisted';p.auto=true;}else{p.state='found';delete p.auto;}});
+      }
       current.status=saved.found?`${saved.company}: found ${saved.found} ${saved.found===1?'person':'people'} who can help with ${saved.title}. See the Referrals tab.`:`${saved.company}: nobody suitable was found for ${saved.title}. LinkedIn may be showing few people from this company.`;
     }else current.status=failed?`${saved.company}: one search could not be read (${failed.slice(0,120)}). Carrying on.`:`${saved.company}: ${added} found in ${step?.label??'this search'}. Next search in a few seconds.`;
     return current;
@@ -257,7 +263,7 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
   if(kind==='message'&&!p.message)
     p.message=job?referralAsk(job,p,me,!p.direct):p.direct?directMessage(fresh,p,me):await draft(()=>prepareIntroduction(fresh,p,signal),()=>introduction(fresh,p,me));
   const review=kind==='connect'?settings.outreachMode==='review':settings.followupMode==='review';
-  if(review&&!approved){
+  if(review&&!approved&&!p.auto){
     p.state='review';p.approvalKind=kind;p.reason=kind==='connect'?'Invitation ready. Approve to send.':p.direct?'Already your connection. Message ready; approve to send.':'They accepted. Follow-up message ready; approve to send.';
     await saveContact(p);return;
   }
@@ -365,7 +371,9 @@ async function run():Promise<void>{
     // Every 2 hours, one look at the connections list shows everyone who accepted, however many invitations are out.
     const waiting=s.contacts.some(p=>p.state==='pending'&&p.requestedAt>0)||(s.saved??[]).some(i=>i.type==='person'&&i.relation==='pending');
     if(waiting&&Date.now()>=(s.nextSweepAt??0)){worked=true;await sweepAcceptances(s,abort.signal);return;}
-    const person=nextContact(s);
+    // In referrals-only running, general contacts are left exactly as they are.
+    const referralsOnly=s.scope==='referrals',view=referralsOnly?{...s,contacts:s.contacts.filter(p=>p.referralJob)}:s;
+    const person=nextContact(view);
     if(person){
       if(Date.now()<s.nextActionAt)return;
       worked=true;
@@ -385,10 +393,11 @@ async function run():Promise<void>{
       }
       return;
     }
-    const queued=s.contacts.filter(p=>p.state==='shortlisted').length;
-    const why=idleReason(s);
+    const queued=view.contacts.filter(p=>p.state==='shortlisted').length;
+    const why=idleReason(view);
     if(why){await note(s,why);return;}
     if(queued>=SHORTLIST_BACKLOG){await note(s,`${queued} people are queued. Searching pauses until the queue shrinks.`);return;}
+    if(referralsOnly){await note(s,view.contacts.some(p=>p.state==='pending')?'Referral invitations are out. Acceptances are checked every 2 hours.':'Referral outreach is up to date.');return;}
     if(Date.now()>=s.nextDiscoveryAt){worked=true;await discover(s,abort.signal);}
   }catch(error){if(!abort.signal.aborted)await pauseNetwork(error instanceof Error?error.message:String(error));}
   finally{clearInterval(renewal);controller=null;await release(owner);}

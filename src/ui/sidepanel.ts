@@ -3,7 +3,7 @@ import { appRoot, element, errorText } from './render';
 import { DAY, defaultSettings, introduction, renderNote, withinActiveHours, type ContactState, type NetworkContact, type NetworkRequest, type NetworkState, type OutreachSettings, dueReminders, staleRequests, jobStatuses, type JobStatus, type SavedItem } from '../shared/network';
 import { completeCvText } from './cv-text';
 import { createToaster, type ToastKind } from './toast';
-import { referralPlan } from '../shared/referral';
+import { REFERRAL_AUTO, referralPlan } from '../shared/referral';
 
 type Tab = 'setup' | 'people' | 'referrals' | 'saved' | 'activity';
 const ui = { tab: 'setup' as Tab, filter: 'all', open: new Set<string>(), touched: false };
@@ -115,6 +115,7 @@ const categoryLabels: Record<string, string> = { recruiter: 'Recruiter', leader:
 function runStatus(s: NetworkState): { tone: 'ok' | 'warn' | 'idle'; pill: string; title: string; sub: string } {
   const settings = s.settings ?? defaultSettings;
   if (s.active && !withinActiveHours(settings)) return { tone: 'warn', pill: 'Waiting', title: 'Waiting for active hours', sub: `Outreach resumes at ${pad(settings.activeHours?.from ?? 8)}:00. Nothing is wrong.` };
+  if (s.active && s.scope === 'referrals') return { tone: 'ok', pill: 'Referrals', title: 'Referral outreach is running', sub: `${s.status || 'Starting up…'} Only people from your Referrals jobs are contacted.` };
   if (s.active) return { tone: 'ok', pill: 'Running', title: 'Outreach is running', sub: s.status || 'Starting up…' };
   if (!s.status) return { tone: 'idle', pill: 'Ready', title: 'Ready to start', sub: 'Check who we contact and your messages in Setup, then press Start.' };
   return { tone: s.contacts.some(p => p.state === 'attention') ? 'warn' : 'idle', pill: 'Paused', title: 'Paused', sub: s.status };
@@ -225,7 +226,8 @@ function buildReferrals(s: NetworkState): HTMLElement {
     if (people.length) meta.append(node('span', `${first} you know · ${people.length - first} to invite`, 'chip'));
     body.append(meta);
     if (job.mode === 'connections' && job.finishedAt && people.some(p => p.state === 'found')) body.append(node('p', 'Nobody has been contacted. Press “Ask for a referral” on the people you want to approach; the strongest are at the top.', 'field-help'));
-    if (job.mode === 'referral' && !s.active && people.some(p => ['shortlisted', 'connected'].includes(p.state))) body.append(node('p', 'Press Start outreach above: the messages are then drafted for your approval.', 'field-help'));
+    if (job.mode === 'referral' && job.finishedAt && people.length) body.append(node('p', `The strongest ${Math.min(people.length, REFERRAL_AUTO)} are contacted by themselves: people you know get a message, the others an invitation, a few seconds apart and within your daily limits. Anyone else is listed below with a button.`, 'field-help'));
+    if (job.mode === 'referral' && !s.active && people.some(p => ['shortlisted', 'connected'].includes(p.state))) body.append(node('p', 'Outreach is paused, so nothing is being sent. Press Start outreach above to continue.', 'field-help'));
     if (!people.length) body.append(node('p', job.finishedAt ? (job.mode === 'connections' ? 'You have no 1st-degree connections at this company. On the job page, press “Ask for referrals” to find its recruiters, the team and people you share connections with.' : 'Nobody suitable was found at this company.') : 'Results appear here as each search finishes.', 'muted small'));
     for (const p of people) body.append(personCard(s, p));
     body.append(button('Remove this job', async () => { if (confirm(`Remove ${job.title} at ${job.company} from Referrals? People already contacted stay on the People list.`)) await act({ kind: 'network', action: 'removeReferralJob', url: job.url }, 'Job removed from Referrals.'); }, 'btn sm ghost danger'));
@@ -273,6 +275,7 @@ function render(s: NetworkState): void {
   /* run card */
   const run = node('section', '', 'card run');
   run.append(node('h2', status.title, 'run-title'), node('p', status.sub, 'run-sub'));
+  if (s.active && s.scope === 'referrals') run.append(button('Also start general outreach', async () => { await setup.save().catch(() => undefined); await act({ kind: 'network', action: 'start' }, 'General outreach started as well.'); }, 'btn primary block'), node('div', '', 'gap'));
   run.append(button(s.active ? 'Pause outreach' : 'Start outreach', async () => {
     if (s.active) { await act({ kind: 'network', action: 'pause' }, 'Outreach paused. Your progress is kept.'); return; }
     await setup.save();

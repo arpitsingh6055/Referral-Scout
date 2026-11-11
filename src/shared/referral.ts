@@ -31,6 +31,8 @@ export interface ReferralJob extends z.infer<typeof referralJobInput> {
   /** LinkedIn's number for the company, once read. `idTried` stops a second attempt when it could not be read. */
   companyId?: string; idTried?: boolean;
 }
+/** How many people one "Ask for referrals" click contacts by itself: the strongest few. A whole recruiting team is not messaged at once. */
+export const REFERRAL_AUTO = 8;
 export interface ReferralSearch { label: string; keywords: string; network: ('F' | 'S' | 'O')[]; page?: number }
 
 /**

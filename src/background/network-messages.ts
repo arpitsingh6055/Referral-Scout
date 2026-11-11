@@ -66,7 +66,6 @@ export function registerNetworkMessages():void{
           else if(old.mode==='connections'&&mode==='referral'){
             // Already listed the connections; now also look wider and reach out.
             old.mode='referral';old.cursor=0;delete old.finishedAt;
-            for(const p of s.contacts)if(p.referralJob===job.url&&p.state==='found')p.state=p.direct?'connected':'shortlisted';
             message='Reaching out. See the Referrals tab.';
           }else if(old.finishedAt){
             // Asked again: search again from the start (new people join, and the search itself may have improved).
@@ -75,6 +74,8 @@ export function registerNetworkMessages():void{
           if(old&&job.companyUrl&&!old.companyUrl)old.companyUrl=job.companyUrl;
           if(old&&job.suggested)old.suggested=job.suggested;
           s.status=`${job.company}: ${mode==='referral'?'looking for people who can refer you for':'listing your connections for'} ${job.title}.`;
+          // "Ask for referrals" means act now. If outreach is paused, switch on referral outreach only; general outreach stays off.
+          if(mode==='referral'&&!s.active){s.active=true;s.revision++;s.scope='referrals';}
           return s;
         });
         void networkTick();
@@ -199,7 +200,7 @@ export function registerNetworkMessages():void{
             if(s.revision!==after.revision)throw new Error('Outreach was paused while processing; start again when ready.');
             // v0.9.0 read a hidden "1st" label and wrongly set people aside as already connected; give them another look.
             for(const p of s.contacts)if(p.state==='skipped'&&/^Already connected before this campaign/.test(p.reason)&&!p.requestedAt){p.state='shortlisted';p.reason='Queued again after a wrong "already connected" reading.';}
-            return {...s,active:true,revision:s.revision+1,status:s.settings?.outreachMode==='automatic'?'Outreach started. Invitations are sent automatically within your limits.':'Outreach started. Finding people and drafting notes for you to approve.'};
+            return {...s,active:true,scope:'all' as const,revision:s.revision+1,status:s.settings?.outreachMode==='automatic'?'Outreach started. Invitations are sent automatically within your limits.':'Outreach started. Finding people and drafting notes for you to approve.'};
           });
           await chrome.alarms.create('network-tick',{periodInMinutes:1});
         }
@@ -243,7 +244,9 @@ export function registerNetworkMessages():void{
         });
         if(req.action==='askReferral')await updateNetwork(s=>{
           const p=s.contacts.find(x=>x.url===req.url);if(!p||p.state!=='found')throw new Error('This person is already queued or has been contacted.');
-          p.state=p.direct?'connected':'shortlisted';s.status=`${p.name} queued. ${s.active?'A draft will be ready shortly.':'Press Start outreach to prepare the message.'}`;return s;
+          p.state=p.direct?'connected':'shortlisted';p.auto=true;
+          if(!s.active){s.active=true;s.revision++;s.scope='referrals';}
+          s.status=`${p.name} queued. ${p.direct?'A message':'An invitation'} goes out in turn.`;return s;
         });
         if(req.action==='removeReferralJob')await updateNetwork(s=>{
           s.referralJobs=(s.referralJobs??[]).filter(j=>j.url!==req.url);
@@ -256,7 +259,7 @@ export function registerNetworkMessages():void{
         if(req.action==='skip')await updateNetwork(s=>{const p=s.contacts.find(p=>p.url===req.url);if(p){p.state='skipped';p.reason='Skipped. No future action is scheduled.';}return s;});
         if(req.action==='clear')await clearAllNetwork();
         return statusView(await getNetwork());
-      }finally{clearInterval(timer);if(exclusive)await release(owner);if(req.action==='start')void networkTick();}
+      }finally{clearInterval(timer);if(exclusive)await release(owner);if(req.action==='start'||req.action==='askReferral')void networkTick();}
     })().then(data=>respond({ok:true,data})).catch((error:unknown)=>respond({ok:false,error:error instanceof Error?error.message:String(error)}));return true;
   });
 }

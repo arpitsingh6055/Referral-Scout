@@ -279,9 +279,9 @@ it('messages an existing 1st-degree connection directly, with wording that does 
   expect(p.message).toBe('Hi alex, hope you’re doing well. I’m Arpit, currently exploring Product Management internship opportunities. Are there any relevant openings at Acme I could apply for, or someone I should speak to?');
 });
 
-it('a referral search runs even while outreach is paused, keeps only people at that company, and queues them best first', async () => {
+it('a referral search runs even while outreach is paused, keeps only people at that company, and queues the strongest once it is complete', async () => {
   const jobUrl = 'https://www.linkedin.com/jobs/view/123/';
-  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Product Manager', company: 'Acme', location: '', mode: 'referral', addedAt: 1, cursor: 0, found: 0 }] });
+  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Product Manager', company: 'Acme', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0 }] });
   vi.mocked(networkCommand).mockResolvedValueOnce([card('rec', 'Senior Recruiter at Acme', 2), card('friend', 'Analyst at Acme', 1), card('stranger', 'Analyst at Acme', 3), card('elsewhere', 'Recruiter at Other Co', 2)]);
   await networkTick();
   const url = urls()[0]!;
@@ -289,7 +289,8 @@ it('a referral search runs even while outreach is paused, keeps only people at t
   const saved = await getNetwork();
   expect(saved.contacts.sort((a, b) => b.score! - a.score!).map(c => [c.name, c.state, c.referralJob === jobUrl])).toEqual([['rec', 'shortlisted', true], ['friend', 'connected', true]]);
   expect(saved.contacts.find(c => c.name === 'friend')).toMatchObject({ direct: true, category: 'employee' });
-  expect(saved.referralJobs![0]).toMatchObject({ cursor: 1, found: 2 });
+  expect(saved.contacts.every(c => c.auto)).toBe(true);
+  expect(saved.referralJobs![0]).toMatchObject({ cursor: 4, found: 2 });
   expect(saved.active).toBe(false);
 });
 
@@ -318,4 +319,30 @@ it('reads the company number from its page first, then searches with the Current
   const saved = await getNetwork();
   expect(saved.contacts[0]).toMatchObject({ name: 'friend', state: 'found', category: 'senior' });
   expect(saved.referralJobs![0]!.finishedAt).toBeGreaterThan(0); // fewer than 10 people: no second page needed
+});
+
+it('contacts only the strongest 8 by itself and leaves the rest listed', async () => {
+  const jobUrl = 'https://www.linkedin.com/jobs/view/77/';
+  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Technology analyst', company: 'Infosys', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0 }] });
+  vi.mocked(networkCommand).mockResolvedValueOnce(Array.from({ length: 10 }, (_, i) => card(`rec-${i}`, 'Talent Acquisition at Infosys', i < 2 ? 1 : 2)));
+  await networkTick();
+  const people = (await getNetwork()).contacts;
+  expect(people.filter(p => p.auto).length).toBe(8);
+  expect(people.filter(p => p.state === 'found').length).toBe(2);
+  expect(people.filter(p => p.auto && p.direct).map(p => p.state)).toEqual(['connected', 'connected']); // people already known are always among the first
+});
+
+it('referral outreach sends without a second approval, and leaves general contacts alone while only referrals are running', async () => {
+  const jobUrl = 'https://www.linkedin.com/jobs/view/77/';
+  await seed({ scope: 'referrals', referralJobs: [{ url: jobUrl, title: 'Technology analyst', company: 'Infosys', location: '', mode: 'referral', addedAt: 1, cursor: 4, found: 1, finishedAt: 1 }],
+    contacts: [person('general', { score: 999 }), person('ref', { referralJob: jobUrl, auto: true, companyName: 'Infosys', category: 'recruiter', score: 300 })] });
+  vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'not-connected' }).mockResolvedValueOnce({ state: 'pending', noteSent: true });
+  await networkTick();
+  const saved = await getNetwork();
+  expect(saved.contacts.find(c => c.name === 'ref')).toMatchObject({ state: 'pending' });
+  expect(saved.contacts.find(c => c.name === 'general')).toMatchObject({ state: 'shortlisted' });
+  expect(vi.mocked(networkCommand).mock.calls[1]![1]).toMatchObject({ action: 'connect', body: 'Hi ref, I’m Arpit. I’m applying for the Technology analyst role at Infosys. Would love to connect about it.' });
+  vi.mocked(networkCommand).mockClear(); vi.setSystemTime(Date.now() + 10 * 60000);
+  await networkTick();
+  expect(vi.mocked(networkCommand).mock.calls.some(c => (c[1] as { action: string }).action === 'search')).toBe(false); // no general searching
 });

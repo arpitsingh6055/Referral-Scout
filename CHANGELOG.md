@@ -15,6 +15,10 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.18.0
+- **Ask for referrals now acts.** When the search finishes, the strongest 8 people are contacted without a second approval: people you already know get a message, the others an invitation, paced and within the daily limits. Everyone else stays listed with an "Invite and ask" button.
+- If outreach was paused, the click switches on **referral outreach only**: general searching and general contacts stay untouched until you press "Also start general outreach". Pause still stops everything.
+
 ## 0.17.2 (referral audit)
 - Recruiter searches and recognition now cover HR, HRBP, human resources, people partners and operations, TA, sourcers, campus and early-careers teams. The same wider wording is used in general outreach searches.
 - Interns, trainees, students and people marked open to work are left out even when they work at the company.
