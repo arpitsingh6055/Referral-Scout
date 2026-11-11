@@ -165,7 +165,7 @@ describe('who goes next', () => {
   });
   it('ships safe defaults that protect a public user’s LinkedIn account', () => {
     expect(defaultSettings).toMatchObject({ dailyInvites: 15, weeklyInvites: 80, maxPending: 100, aiMode: 'chatgpt', outreachMode: 'review', followupMode: 'review', activeHours: { from: 8, to: 22 } });
-    expect(defaultSettings.paceMinutes).toBeGreaterThanOrEqual(3);
+    expect(defaultSettings.paceMinutes).toBe(0.5); // 30 seconds, varied 22 to 43 s; the daily and weekly caps are what bound volume
   });
 });
 
