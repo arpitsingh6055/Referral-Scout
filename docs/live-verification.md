@@ -2,6 +2,31 @@
 
 What has and has not been checked against the real, signed-in LinkedIn site. Update this whenever a page reader or action changes.
 
+## 11 November 2026, Remember button on a saved real profile page (v0.15.3)
+
+The owner saved a real profile page from Edge (Stands AdBlocker and Grammarly installed) after loading v0.15.2, and the button was not visible. Findings, reproduced by loading that saved page in Chromium:
+
+| Finding | Detail |
+|---|---|
+| Detection works on the real page | Name and headline read from the real top card |
+| Hidden by an ad blocker | Stands injects `head ~ div[style*="z-index"] { display: none !important }`; the v0.15.2 button was a div under `<html>` with an inline z-index |
+| LinkedIn enforces Trusted Types | `require-trusted-types-for 'script'` blocks `innerHTML`; the original button code used it |
+| v0.15.3 on the same page | Button is 190 x 38 px at the bottom-left, topmost element there; click, note, Save sent the note |
+
+Not yet confirmed: the same in the owner's live Edge window.
+
+## 11 November 2026, Remember button (v0.15.2)
+
+Run in headless Chromium against simulated LinkedIn pages built from the structures recorded below, with a stand-in for the extension's background. **Not run on the live site.**
+
+| Step | Result |
+|---|---|
+| Button shows on a person profile, a job page and the jobs split view | Works on simulated pages |
+| Button stays when the top card is not recognised | Works on simulated pages |
+| Hidden on your own profile and on the feed | Works on simulated pages |
+| Click, type a note, Save sends the note; Forget; failed save shows a message | Works on simulated pages |
+| Real LinkedIn profile and job pages | NOT checked |
+
 ## 11 November 2026 (v0.9.0), read-only session
 
 LinkedIn now serves generated class names (for example `i87k8o`). No `artdeco`, `entity-result`, `global-nav` or `job-card` class exists on the profile, search or jobs pages. Every class-based reader in v0.8.0 returned nothing on the live site.

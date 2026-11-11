@@ -3,6 +3,18 @@
 All versions below were built on 11 November 2026 on the `cleanup/linkedin-only` branch.
 What is and is not proven on the live site is recorded in `docs/live-verification.md`.
 
+## 0.15.3
+- Remember button was invisible in browsers with an ad blocker. Blockers such as Stands AdBlocker hide any `div` placed directly under `<html>` that has an inline `z-index` (rule `head ~ div[style*="z-index"]`). The button is now its own element in `<body>`, with no inline style, positioned from a stylesheet inside its shadow root.
+- If something still hides it, it is moved once and the page console says so.
+- The button is built with DOM calls only. LinkedIn enforces Trusted Types, which blocks `innerHTML` and stopped the original version from ever creating the button.
+
+## 0.15.2
+- Remember button: now shown on every LinkedIn profile and job page (except your own profile), even when LinkedIn's layout can't be read. Before, it stayed hidden unless the top card was recognised exactly.
+- Click it, write a note (for example the role that is open at their company), press Save. The note box is part of the button, not a second step.
+- A failed save now says so ("Refresh this LinkedIn tab and try again") instead of doing nothing.
+- Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
+- Not yet confirmed on the live site; see `docs/live-verification.md`.
+
 ## 0.15.1
 - Settings no longer fail to save silently; the rejected field is named.
 - Gap between sends can be set from 5 seconds upward.
