@@ -241,14 +241,14 @@ function jobChooser(search: JobSearch): HTMLElement {
     chosen.clear();
   }, 'btn primary block');
   const count = (): void => { const n = search.found.filter(j => isOn(j.id, j.picked)).length; go.textContent = n ? `Find referrers at ${n} ${n === 1 ? 'company' : 'companies'}` : 'Tick at least one company'; go.disabled = !n || n > 20; };
-  card.append(node('h2', 'Choose companies', 'card-title'), node('p', 'One job per company, best match first. Companies where you already have a way in are ranked higher. Untick any you do not want.', 'card-sub'));
+  card.append(node('h2', 'Choose companies', 'card-title'), node('p', 'One job per company, best match first. Companies where you already have a way in are ranked higher. Untick any you do not want. Click a title to open the job on LinkedIn.', 'card-sub'));
   for (const job of search.found) {
     const row = node('label', '', 'job-row'), box = node('input'), text = node('div');
     box.type = 'checkbox'; box.checked = isOn(job.id, job.picked);
     box.addEventListener('change', () => { chosen.set(job.id, box.checked); dirty = true; count(); });
-    text.append(node('b', job.title), node('span', `${job.company} · ${job.location}`, 'muted small'));
+    text.append(link(job.title, job.url, 'job-title'), node('span', `${job.company} · ${job.location}`, 'muted small'));
     if (job.insight) text.append(node('span', job.insight, 'badge connected'));
-    row.append(box, text, link('Open', job.url, 'chip')); list.append(row);
+    row.append(box, text, link('View job ↗', job.url, 'job-open')); list.append(row);
   }
   const per = node('label', '', 'mini'), select = node('select'); per.append(node('span', 'Invitations per company'), select);
   for (const n of [3, 4, 5]) { const o = node('option', `${n} people`); o.value = String(n); select.append(o); }
@@ -280,7 +280,7 @@ function buildReferrals(s: NetworkState): HTMLElement {
     const { box, body } = accordion(`ref:${job.url}`, `${job.title} · ${job.company}`, job.finishedAt ? String(people.length) : 'searching…');
     if (jobs[0] === job && !ui.open.has(`ref:${job.url}`) && !ui.touched) box.open = true;
     const meta = node('div', '', 'meta');
-    meta.append(link('Open job', job.url, 'chip'), node('span', job.mode === 'referral' ? 'Reaching out' : 'Listing only', 'chip'));
+    meta.append(link('View job ↗', job.url, 'job-open'), node('span', job.mode === 'referral' ? 'Reaching out' : 'Listing only', 'chip'));
     const steps = referralPlan(job).length;
     if (!job.finishedAt) meta.append(node('span', job.companyUrl && !job.companyId && !job.idTried ? 'Finding the company…' : `Searching: step ${Math.min(job.cursor + 1, steps)} of ${steps}`, 'badge review'));
     const first = people.filter(p => p.degree === 1).length;
