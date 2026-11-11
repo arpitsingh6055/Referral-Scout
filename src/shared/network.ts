@@ -88,7 +88,7 @@ export interface NetworkState {
   profile:NetworkProfile|null;target:string;location:string;template:string;
   cv:{name:string;type:string;text:string;textVersion?:number;pages?:number;warnings?:string[];savedAt?:number;characterCount?:number}|null;
   dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
-  active:boolean;/** Everything is stopped (by the person or by an account-level problem) until something is started or resumed. */paused?:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;nextSweepAt?:number;jobSearch?:JobSearch;plan?:SearchPlan;
+  active:boolean;/** Everything is stopped (by the person or by an account-level problem) until something is started or resumed. */paused?:boolean;/** What was running when everything was paused, so Resume restores exactly that. */resumeTo?:{active:boolean;scope?:'all'|'referrals'};revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;nextSweepAt?:number;jobSearch?:JobSearch;plan?:SearchPlan;
   /** 'referrals' = only people from Referrals jobs are contacted; general searching and outreach stay off. */
   scope?:'all'|'referrals';referralJobs?:ReferralJob[];saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;hoursV2?:boolean;/** The person has said what they are looking for; until then setup asks instead of assuming. */targetSet?:boolean;
   settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;
@@ -209,3 +209,14 @@ export const networkPageCommand=z.object({
 });
 export type NetworkPageCommand=z.infer<typeof networkPageCommand>;
 export const networkReplySchema=z.object({requestId:z.uuid(),ok:z.boolean(),data:z.unknown().optional(),error:z.string().max(2000).optional()});
+
+/** What is left unfinished, in plain words: shown while paused and announced on Resume. */
+export function unfinished(s:NetworkState,sending=s.resumeTo?.active??s.active):string[]{
+  const out:string[]=[],jobs=s.referralJobs??[],open=jobs.filter(j=>j.finishedAt===undefined&&!j.waiting).length,asks=jobs.filter(j=>j.waiting).length;
+  if(s.jobSearch?.status==='finding')out.push(s.plan?`the job search (${Math.min(s.jobSearch.cursor,s.plan.terms.length)} of ${s.plan.terms.length} titles done)`:'the job search');
+  if(open)out.push(`people searches at ${open} ${open===1?'company':'companies'}`);
+  const scope=s.resumeTo?.scope??s.scope,queue=s.contacts.filter(p=>(scope!=='referrals'||p.referralJob)&&(['shortlisted','requesting','messaging'].includes(p.state)||(p.state==='review'&&p.approved)||(p.state==='connected'&&p.auto))).length;
+  if(sending&&queue)out.push(`${queue} ${queue===1?'message or invitation':'messages and invitations'} to send`);
+  if(asks)out.push(`${asks} ${asks===1?'company waits':'companies wait'} for your answer`);
+  return out;
+}

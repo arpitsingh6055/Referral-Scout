@@ -1,6 +1,6 @@
 import './network.css';
 import { appRoot, element, errorText } from './render';
-import { DAY, defaultSettings, introduction, renderNote, withinActiveHours, type ContactState, type NetworkContact, type NetworkRequest, type NetworkState, type OutreachSettings, dueReminders, staleRequests, jobStatuses, type JobStatus, type SavedItem } from '../shared/network';
+import { unfinished, DAY, defaultSettings, introduction, renderNote, withinActiveHours, type ContactState, type NetworkContact, type NetworkRequest, type NetworkState, type OutreachSettings, dueReminders, staleRequests, jobStatuses, type JobStatus, type SavedItem } from '../shared/network';
 import { completeCvText } from './cv-text';
 import { createToaster, type ToastKind } from './toast';
 import { referralPlan } from '../shared/referral';
@@ -462,7 +462,11 @@ function render(s: NetworkState): void {
   // One main action at a time. General networking outreach lives in Settings.
   // Pause stops searches as well as sending; Resume picks everything up where it stopped.
   const main = s.paused ? 'btn block' : 'btn primary block';
-  if (s.paused) run.append(button('Resume', () => act({ kind: 'network', action: 'resume' }, 'Resumed where you stopped.'), 'btn primary block'));
+  if (s.paused) {
+    const left = unfinished(s);
+    run.append(node('p', left.length ? `Resume continues: ${left.join('; ')}.` : 'Nothing was left unfinished.', 'field-help'),
+      button('Resume', () => act({ kind: 'network', action: 'resume' }), 'btn primary block'));
+  }
   if (search?.status === 'finding') {
     run.append(node('p', 'You can keep using your browser. Results appear under Jobs.', 'field-help'),
       button('Stop this search', () => act({ kind: 'network', action: 'cancelJobSearch' }, 'Job search stopped.'), 'btn block'));

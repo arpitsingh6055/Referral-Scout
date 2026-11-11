@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { rememberMessage, type SavedItem, networkRequest, networkProfileSchema, profileUrl, networkKey, suggestedTarget, defaultSettings, type NetworkState, DAY, introduction, renderNote , directMessage } from '../shared/network';
+import { rememberMessage, type SavedItem, networkRequest, networkProfileSchema, profileUrl, networkKey, suggestedTarget, defaultSettings, type NetworkState, DAY, introduction, renderNote , directMessage, unfinished } from '../shared/network';
 import { trustedExtension, trustedSite } from '../validators/security';
 import { referralMessage, referralAsk, referralNote } from '../shared/referral';
 import { fitNote } from '../shared/network';
@@ -253,7 +253,13 @@ export function registerNetworkMessages():void{
           if(!current.profile)throw new Error('Read your LinkedIn profile first.');
           await updateNetwork(s=>({...s,jobSearch:{status:'finding',cursor:0,found:[],startedAt:Date.now()},status:'Starting your job search…'}));
         }
-        if(req.action==='resume')await updateNetwork(s=>{referralsOn(s);s.status='Resumed. Messages and invitations for your chosen companies go out in turn.';return s;});
+        if(req.action==='resume')await updateNetwork(s=>{
+          // After a pause, exactly what was running comes back: sending only if it was on, with the same scope. Without a pause this is "Resume sending".
+          const back=s.paused?s.resumeTo:undefined;
+          if(back){if(back.active&&!s.active){s.active=true;s.revision++;}if(back.scope)s.scope=back.scope;}else referralsOn(s);
+          delete s.paused;delete s.resumeTo;s.failureStreak=0;
+          const left=unfinished(s,s.active);
+          s.status=left.length?`Resumed: ${left.join('; ')}.`:'Resumed. Nothing was left unfinished.';return s;});
         if(req.action==='cancelJobSearch')await updateNetwork(s=>{delete s.jobSearch;s.status='Job search closed. Companies you already chose are kept.';return s;});
         if(req.action==='pickJobs')await updateNetwork(s=>{
           const search=s.jobSearch;if(!search||search.status==='finding')throw new Error('The job list is not ready yet.');

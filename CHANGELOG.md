@@ -15,6 +15,12 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.28.0: Resume restores exactly what was running
+- Pause remembers what was running (sending on or off, referrals only or general outreach). **Resume brings back exactly that**; before, it always switched sending on in referrals-only mode, whatever you had been doing.
+- While paused, Home lists what Resume will continue: the job search and how far it got, companies still to search, messages queued, companies waiting for your answer. Pressing Resume confirms the same list.
+- Pause followed straight away by Resume no longer does nothing for up to a minute: a request that arrives while the interrupted step is still stopping now runs right after it.
+- A problem that pauses things after you had already paused keeps your original state, so Resume still restores it.
+
 ## 0.27.0: setup asks what you are looking for
 - After your profile is read, setup asks one question, "what are you looking for?" (role and place), instead of assuming "Product Management internship" in India. Home appears only after you answer.
 - Existing installs that already have jobs or people are not asked again.

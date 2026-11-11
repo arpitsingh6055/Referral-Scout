@@ -499,3 +499,29 @@ it('finds the company page through LinkedIn company search when the job did not 
   await networkTick();
   expect(urls()[0]!.searchParams.get('currentCompany')).toBe('["3686501"]'); // every people search is filtered by current company
 });
+
+it('remembers what was running when paused (even if paused twice), and can say what is left to do', async () => {
+  const { pauseNetwork } = await import('../src/background/network');
+  const { unfinished } = await import('../src/shared/network');
+  await seed({ scope: 'all', contacts: [person('queued')], plan: { forRoles: 'x', terms: ['a', 'b', 'c'], titles: { large: [], mid: [], small: [] }, source: 'rules', at: 1 },
+    jobSearch: { status: 'finding', cursor: 1, found: [], startedAt: 1 },
+    referralJobs: [{ url: 'https://www.linkedin.com/jobs/view/1/', title: 'T', company: 'Acme', location: '', mode: 'referral', addedAt: 1, cursor: 2, found: 0 }] });
+  await pauseNetwork();
+  await pauseNetwork('LinkedIn is signed out.');               // an error after a pause must not forget that sending was on
+  const saved = await getNetwork();
+  expect(saved).toMatchObject({ active: false, paused: true, resumeTo: { active: true, scope: 'all' }, status: 'LinkedIn is signed out.' });
+  expect(unfinished(saved)).toEqual(['the job search (1 of 3 titles done)', 'people searches at 1 company', '1 message or invitation to send']);
+});
+
+it('does not drop a request that arrives while the previous step is still finishing', async () => {
+  await seed({ active: false, referralJobs: [{ url: 'https://www.linkedin.com/jobs/view/2/', title: 'T', company: 'Acme', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0, infoTried: true, lookupTried: true, strategyTried: true }] });
+  vi.useFakeTimers({ toFake: ['setTimeout'] });
+  let release!: (v: unknown[]) => void;
+  vi.mocked(networkCommand).mockReturnValueOnce(new Promise(r => { release = r as never; }) as never);
+  const first = networkTick();
+  await networkTick();                                           // arrives mid-step: must be queued, not ignored
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+  release([]); await first;
+  expect(vi.getTimerCount()).toBeGreaterThan(0);                 // a follow-up run is scheduled
+  vi.useRealTimers();
+});

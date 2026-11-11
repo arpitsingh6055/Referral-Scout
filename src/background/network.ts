@@ -41,7 +41,8 @@ export async function updateNetwork(fn:(s:NetworkState)=>NetworkState):Promise<N
 }
 let running:Promise<void>|null=null,controller:AbortController|null=null;
 export async function pauseNetwork(reason='Paused. Your saved people and progress are kept.'):Promise<void>{
-  await updateNetwork(s=>({...s,active:false,paused:true,revision:s.revision+1,status:reason}));
+  // Remember what was running, once: a second pause (or an error after a pause) must not overwrite it.
+  await updateNetwork(s=>({...s,...(s.paused?{}:{resumeTo:{active:s.active,...(s.scope?{scope:s.scope}:{})}}),active:false,paused:true,revision:s.revision+1,status:reason}));
   controller?.abort();
   const tab=await read<number>('network-tab');
   if(tab!==undefined)await chrome.tabs.sendMessage(tab,{kind:'network.cancel'}).catch(()=>undefined);
@@ -542,8 +543,12 @@ async function run():Promise<void>{
   }catch(error){if(!abort.signal.aborted)await pauseNetwork(error instanceof Error?error.message:String(error));}
   finally{clearInterval(renewal);controller=null;await release(owner);}
 }
+let again=false;
 export async function networkTick():Promise<void>{
-  if(running)return;worked=false;running=run();try{await running;}finally{running=null;}
+  // A request that arrives while a step is still winding down (Pause, then Resume straight away) is not dropped: it runs right after.
+  if(running){again=true;return;}
+  worked=false;running=run();try{await running;}finally{running=null;}
+  if(again){again=false;setTimeout(()=>{void networkTick();},300);return;}
   // The alarm only fires once a minute. When a step just finished and more can be done, carry on after a short,
   // irregular pause instead of leaving the person staring at an idle screen. Sending still obeys the pace setting.
   if(worked&&typeof chrome!=='undefined'&&chrome.alarms?.onAlarm)setTimeout(()=>{void networkTick();},5000+Math.floor(Math.random()*7000));
