@@ -91,3 +91,11 @@ it('shows the activity log newest first', async () => {
   const items = [...document.querySelectorAll('.tl span')].map(e => e.textContent);
   expect(items).toEqual(['Invitation confirmed Pending.', 'Searched founders.']);
 });
+
+it('shows a live tracker while jobs are searched: the plan done, the title being searched, the titles left and a running clock', async () => {
+  await open({ status: 'Searching LinkedIn jobs…', plan: { forRoles: 'Product Management internship', terms: ['pm intern', 'apm intern', 'product analyst intern'], titles: { large: [], mid: [], small: [] }, source: 'rules', at: 1 },
+    jobSearch: { status: 'finding', cursor: 1, found: [], startedAt: Date.now() - 65_000 } });
+  expect([...document.querySelectorAll('.live-steps li')].map(li => li.className)).toEqual(['done', 'done', 'now', 'later', 'later']);
+  expect($('.live-clock')!.textContent).toMatch(/^1:0\d$/);
+  expect($('.live-expect')!.textContent).toMatch(/Usually 2 to 4 minutes/);
+});

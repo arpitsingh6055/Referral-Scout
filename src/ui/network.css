@@ -219,3 +219,22 @@ textarea.draft:focus{outline:2px solid var(--primary);outline-offset:1px}
 .job-row .badge{align-self:flex-start;margin-top:2px}
 .job-title{font-size:13.5px;font-weight:700;color:var(--text);text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--text) 30%,transparent);text-underline-offset:3px}.job-title:hover{color:var(--primary)}
 .job-open{flex:none;font-size:12.5px;font-weight:700;color:var(--primary);background:var(--surface);border:1px solid var(--primary);padding:4px 11px;border-radius:999px;white-space:nowrap}.job-open:hover{background:var(--primary-soft);text-decoration:none}
+
+/* live tracker and larger step labels */
+.journey li{font-size:13px;gap:7px}.journey i{width:30px;height:30px;font-size:13.5px}.journey li+li::before{top:14px;right:calc(50% + 19px);left:calc(-50% + 19px)}
+.run-title{font-size:22px}.run-sub{font-size:15px;line-height:1.45}
+.live{padding:16px}
+.live-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.live-title{flex:1;font-size:17px;font-weight:700;letter-spacing:-.2px}
+.live-clock{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--primary);background:var(--primary-soft);padding:3px 10px;border-radius:999px}
+.spinner{flex:none;width:18px;height:18px;border-radius:50%;border:2.5px solid var(--primary-soft);border-top-color:var(--primary);animation:spin .9s linear infinite}
+.live-steps{list-style:none;padding:0;margin:0}
+.live-steps li{display:grid;grid-template-columns:24px 1fr;gap:10px;padding:8px 0;font-size:15px;line-height:1.4}
+.live-steps i{width:22px;height:22px;border-radius:50%;border:2px solid var(--border);display:grid;place-items:center;margin-top:1px}
+.live-steps b{display:block;font-weight:600;overflow-wrap:anywhere}.live-steps span{display:block;font-size:13.5px;color:var(--muted);overflow-wrap:anywhere}
+.live-steps .later b{color:var(--faint);font-weight:500}
+.live-steps .done i{background:var(--ok);border-color:var(--ok);color:#fff}.live-steps .done .ico{width:13px;height:13px;stroke-width:3}
+.live-steps .now i{border-color:var(--primary);border-top-color:transparent;animation:spin .9s linear infinite}
+.live-steps .now b{color:var(--primary)}
+.live-expect{font-size:13.5px;color:var(--muted);background:var(--surface-2);border-radius:var(--r-sm);padding:10px 12px;margin-top:8px}
+.live-foot{font-size:13px;color:var(--faint);margin-top:10px}

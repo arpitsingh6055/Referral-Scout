@@ -131,12 +131,15 @@ export function queueBest(current:NetworkState,job:ReferralJob):void{
 }
 const jobRowSchema=z.object({id:z.string().regex(/^\d+$/),title:z.string(),company:z.string(),location:z.string(),insight:z.string()});
 /** One step of a job search per turn: first the plan (once per set of target roles), then one LinkedIn job search per planned title. */
+/* Planning prompts wait at most 40 s for ChatGPT to accept the question and 2 minutes in all; each stage is shown as it happens. */
+const AI_STAGES:Record<string,string>={queued:'opening ChatGPT',tab_opened:'ChatGPT page is loading',send_clicked:'question sent',user_turn_verified:'question received',assistant_streaming:'ChatGPT is writing its answer',completion_verified:'answer finished, reading it',response_extracted:'answer read'};
+const planLimits=(what:string)=>({startMs:40_000,totalMs:120_000,onStage:(stage:string):void=>{const label=AI_STAGES[stage];if(label)void updateNetwork(c=>({...c,status:`${what}: ${label}…`})).catch(()=>undefined);}});
 async function findJobsStep(s:NetworkState,signal:AbortSignal):Promise<void>{
   const roles=s.settings?.roles?.length?s.settings.roles:[s.target],search=s.jobSearch!;
   if(!s.plan||s.plan.forRoles!==roles.join('|')){
-    await note(s,'Planning your search: asking ChatGPT once for parallel job titles and who to approach at each kind of company…');
+    await note(s,'Planning your search: asking ChatGPT for similar job titles (up to 2 minutes; a built-in list is used if it does not answer)…');
     let plan=rulesPlan(roles),why='';
-    try{plan=planFromReply(extractJson(await askChatGpt(planPrompt(roles,s.location,`${s.profile?.headline??''}. ${(s.cv?.text||s.profile?.about||'').slice(0,1200)}`),signal,'LEGACY',s.profile!.url)),roles);}
+    try{plan=planFromReply(extractJson(await askChatGpt(planPrompt(roles,s.location,`${s.profile?.headline??''}. ${(s.cv?.text||s.profile?.about||'').slice(0,1200)}`),signal,'LEGACY',s.profile!.url,'',planLimits('Planning your search'))),roles);}
     catch(error){why=error instanceof Error?error.message:String(error);if(signal.aborted)throw error;}
     await updateNetwork(c=>({...c,plan,status:plan.source==='chatgpt'?`Search planned with ChatGPT. Job titles to search: ${plan.terms.join(', ')}.`:`ChatGPT was not available (${why.slice(0,110)||'no reply'}), so the built-in plan is used. Job titles to search: ${plan.terms.join(', ')}.`}));
     return;
@@ -166,7 +169,7 @@ async function planCompanies(s:NetworkState,jobs:ReferralJob[],signal:AbortSigna
   const roles=s.settings?.roles?.length?s.settings.roles:[s.target];
   await note(s,`Asking ChatGPT who can refer you at ${jobs.length===1?jobs[0]!.company:`${jobs.length} companies`}…`);
   let found=new Map<string,CompanyStrategy>(),why='';
-  try{found=strategiesFromReply(extractJson(await askChatGpt(companyPlanPrompt(jobs.map(j=>({company:j.company,title:j.title,size:j.sizeText})),roles,`${s.profile?.headline??''}. ${(s.cv?.text||s.profile?.about||'').slice(0,1000)}`),signal,'LEGACY',s.profile!.url)));}
+  try{found=strategiesFromReply(extractJson(await askChatGpt(companyPlanPrompt(jobs.map(j=>({company:j.company,title:j.title,size:j.sizeText})),roles,`${s.profile?.headline??''}. ${(s.cv?.text||s.profile?.about||'').slice(0,1000)}`),signal,'LEGACY',s.profile!.url,'',planLimits('Planning who to ask'))));}
   catch(error){why=error instanceof Error?error.message:String(error);if(signal.aborted)throw error;}
   await updateNetwork(c=>{
     let planned=0;

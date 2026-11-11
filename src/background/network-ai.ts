@@ -120,7 +120,7 @@ async function dispatch(job: AiJob, signal: AbortSignal): Promise<void> {
 export async function aiJobId(prompt:string,kind:AiJob['kind'],owner:string,parentId=''):Promise<string>{
   return digest(`${kind}\n${owner}\n${parentId}\n${prompt}`);
 }
-export async function askChatGpt(prompt: string, signal: AbortSignal, kind: AiJob['kind']='LEGACY', owner='', parentId=''): Promise<string> {
+export async function askChatGpt(prompt: string, signal: AbortSignal, kind: AiJob['kind']='LEGACY', owner='', parentId='', limits?: { startMs: number; totalMs: number; onStage?: (stage: string) => void }): Promise<string> {
   const id = await aiJobId(prompt,kind,owner,parentId);
   let job = await load(id);
   if (job?.result) return job.result;
@@ -152,9 +152,20 @@ export async function askChatGpt(prompt: string, signal: AbortSignal, kind: AiJo
     await save(job!, /submitted|uncertain|already|not visible|after submission|tab closed/i.test(message) ? 'uncertain' : 'failed');
     throw e;
   });
+  const began = Date.now(); let seen = '';
   for (let i=0; i<180; i++) {
     signal.throwIfAborted();
     const stored = await load(id);
+    if (limits && !stored?.result) {
+      // Planning prompts must not hold the whole run up: give up early when the question never reached ChatGPT.
+      const waited = Date.now() - began, sent = !!stored?.trace.some(x => ['send_clicked','user_turn_verified','assistant_streaming','completion_verified'].includes(x.stage));
+      if (stored && stored.stage !== seen) { seen = stored.stage; limits.onStage?.(seen); }
+      if ((!sent && waited > limits.startMs) || waited > limits.totalMs) {
+        const current = stored ?? job, tab = current.tab;
+        if (!sent) { delete current.tab; delete current.documentId; await save(current, 'failed'); if (tab !== undefined) await chrome.tabs.remove(tab).catch(() => undefined); }
+        throw new Error(sent ? 'ChatGPT took too long to answer.' : 'ChatGPT did not accept the question in time. Check that you are signed in at chatgpt.com.');
+      }
+    }
     if (stored?.result) return stored.result;
     if (stored?.stage === 'failed' || stored?.stage === 'uncertain') throw new Error(stored.error || `ChatGPT task ${stored.stage}. Inspect its visible tab.`);
     if (job.tab && i % 3 === 0) {

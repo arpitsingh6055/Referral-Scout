@@ -312,6 +312,67 @@ function buildReferrals(s: NetworkState): HTMLElement {
   }
   return panel;
 }
+/* The live tracker: what is being done right now, what is finished, what is left, and how long it has been.
+   The clock and "last update" tick every second on their own, so the panel never looks frozen between updates. */
+const clock = (ms: number): string => { const sec = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(sec / 60)}:${pad(sec % 60)}`; };
+function tick(): void {
+  const now = Date.now();
+  for (const el of document.querySelectorAll<HTMLElement>('[data-since]')) el.textContent = clock(now - Number(el.dataset.since));
+  for (const el of document.querySelectorAll<HTMLElement>('[data-ago]')) {
+    const sec = Math.floor((now - Number(el.dataset.ago)) / 1000);
+    el.textContent = sec < 5 ? 'Last update just now' : sec < 90 ? `Last update ${sec} s ago` : `Last update ${Math.round(sec / 60)} min ago. Slow pages are retried automatically; nothing is lost.`;
+  }
+}
+setInterval(tick, 1000);
+type LiveStep = [state: 'done' | 'now' | 'later', text: string, detail?: string | undefined];
+function live(s: NetworkState, stage: number): HTMLElement | null {
+  const search = s.jobSearch, jobs = s.referralJobs ?? [], steps: LiveStep[] = [];
+  let title = '', expect = '', since = 0;
+  if (stage === 0 && search) {
+    const terms = s.plan?.terms ?? [];
+    title = 'Searching LinkedIn for jobs'; since = search.startedAt;
+    expect = 'Usually 2 to 4 minutes. ChatGPT gets up to 2 minutes to suggest similar job titles, then each title takes about 15 seconds because every page is opened and read at a human pace.';
+    steps.push([terms.length ? 'done' : 'now', 'Plan the search', terms.length ? `${terms.length} job titles (${s.plan!.source === 'chatgpt' ? 'suggested by ChatGPT' : 'built-in list'})` : s.status]);
+    if (terms.length) terms.forEach((t, i) => steps.push([i < search.cursor ? 'done' : i === search.cursor ? 'now' : 'later', `Search “${t}”`, i === search.cursor ? 'Opening LinkedIn Jobs and reading the results' : undefined]));
+    else steps.push(['later', 'Search LinkedIn Jobs for each title']);
+    steps.push([terms.length && search.cursor >= terms.length ? 'now' : 'later', 'Keep the best job per company', `${search.found.length} jobs read so far`]);
+  } else if (stage === 2) {
+    const open = jobs.filter(j => !j.finishedAt), current = open.find(j => !j.waiting);
+    title = 'Finding who can refer you'; since = Math.min(...open.map(j => j.addedAt));
+    expect = 'About 1 to 2 minutes per company: the job page, the company page, then up to five people searches, spaced a few seconds apart.';
+    if (open.some(j => j.mode === 'referral' && !j.strategy && !j.strategyTried)) steps.push(['now', 'Ask ChatGPT who is worth approaching at each company', s.status]);
+    for (const job of jobs.slice(0, 10)) {
+      const found = s.contacts.filter(p => p.referralJob === job.url).length;
+      if (job.finishedAt) steps.push(['done', job.company, `${found} ${found === 1 ? 'person' : 'people'} found`]);
+      else if (job.waiting) steps.push(['now', job.company, 'Waiting for your answer under “Needs you”']);
+      else if (job === current && (job.strategy || job.strategyTried || job.mode !== 'referral')) steps.push(['now', job.company, s.status || 'Searching']);
+      else steps.push(['later', job.company]);
+    }
+    if (jobs.length > 10) steps.push(['later', `${jobs.length - 10} more companies`]);
+  } else if (stage === 3 && s.active) {
+    const mine = s.contacts.filter(p => p.referralJob), queue = mine.filter(p => ['shortlisted', 'requesting', 'messaging'].includes(p.state) || (p.state === 'connected' && !p.messagedAt));
+    if (!queue.length && !mine.some(p => p.state === 'pending')) return null;
+    const sent = mine.filter(p => ['pending', 'messaged'].includes(p.state) || p.acceptedAt).length, next = queue[0], wait = usage(s).next;
+    title = queue.length ? 'Reaching out' : 'Waiting for replies';
+    expect = 'Messages go out one at a time with a pause between them, within your daily limit. Accepted invitations are checked every 2 hours and followed up automatically.';
+    steps.push(['done', `${sent} sent so far`]);
+    if (next) steps.push(['now', `Next: ${next.name}${next.companyName ? ` at ${next.companyName}` : ''}`, wait || s.status]);
+    if (queue.length > 1) steps.push(['later', `${queue.length - 1} more in the queue`]);
+    steps.push([queue.length ? 'later' : 'now', 'Watch for accepted invitations', `${mine.filter(p => p.state === 'pending').length} waiting to be accepted`]);
+  } else return null;
+  const card = node('section', '', 'card live'), head = node('div', '', 'live-head'), list = node('ol', '', 'live-steps'), foot = node('p', '', 'live-foot'), ago = node('span');
+  head.append(node('span', '', 'spinner'), node('h3', title, 'live-title'));
+  if (since) { const timer = node('span', clock(Date.now() - since), 'live-clock'); timer.dataset.since = String(since); timer.title = 'Time since this started'; head.append(timer); }
+  for (const [state, text, detail] of steps) {
+    const li = node('li', '', state), mark = node('i'), body = node('div');
+    if (state === 'done') mark.append(icon('check'));
+    body.append(node('b', text)); if (detail) body.append(node('span', detail)); li.append(mark, body); list.append(li);
+  }
+  ago.dataset.ago = String((s.log ?? []).at(-1)?.at ?? Date.now()); foot.append(ago);
+  card.append(head, list, node('p', expect, 'live-expect'), foot);
+  return card;
+}
+
 function render(s: NetworkState): void {
   announcedUpTo = Math.max(announcedUpTo, (s.log ?? []).at(-1)?.at ?? 0);
   last = s; signature = JSON.stringify(s); dirty = false; uid = 0;
@@ -415,6 +476,7 @@ function render(s: NetworkState): void {
     const k = node('button', '', 'kpi'); k.type = 'button'; k.append(node('b', String(value)), node('span', label)); k.addEventListener('click', go); kpis.append(k);
   }
   home.append(hello, run);
+  const tracker = live(s, stage); if (tracker) home.append(tracker);
   if (needs || s.active || jobs.length || s.contacts.length) home.append(todos, node('h3', 'Your pipeline', 'section-title'), kpis);
   const log = [...(s.log ?? [])].reverse().slice(0, 3);
   if (log.length) {
@@ -431,7 +493,7 @@ function render(s: NetworkState): void {
   }
 
   page.append(top, panels.setup, panels.home, panels.referrals, panels.people, panels.saved, panels.activity, tabs);
-  refreshPeople(); setTab(ui.tab);
+  refreshPeople(); setTab(ui.tab); tick();
   document.scrollingElement?.scrollTo({ top: scroll });
 }
 
@@ -639,5 +701,5 @@ function announce(s: NetworkState): void {
 }
 const showLoadError = (e: unknown): void => { if (!last) notify('error', errorText(e)); };
 void refresh().catch(showLoadError);
-const timer = setInterval(() => { void refresh().catch(showLoadError); }, 4000);
+const timer = setInterval(() => { void refresh().catch(showLoadError); }, 2500);
 addEventListener('pagehide', () => clearInterval(timer), { once: true });

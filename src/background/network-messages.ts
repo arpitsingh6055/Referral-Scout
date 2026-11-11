@@ -22,7 +22,7 @@ async function importProfile():Promise<void>{
   await updateNetwork(s=>({...s,profile,profileCapturedAt:Date.now(),ownerVerifiedAt:Date.now(),...(s.profile?.url===profile.url?{}:{dossier:'',dossierSavedAt:0}),
     contacts:s.contacts.map(p=>{if(p.messagedAt)return p; const {invitationNote:oldNote,...rest}=p;void oldNote;return {...rest,message:''};}),
     target:s.profile?s.target:suggestedTarget(profile.headline,profile.rawText??''),location:s.profile?s.location:(profile.location.split(',').pop()?.trim()||'India'),
-    status:'Your LinkedIn profile is saved. Check your target and introduction below, then press Start outreach.'}));
+    status:'Your LinkedIn profile is saved. Check your target role on Home, then press Find jobs and referrals.'}));
 }
 async function clearAllNetwork():Promise<void>{
   await remove('meta',networkKey);await clearAiJobs();
@@ -149,7 +149,7 @@ export function registerNetworkMessages():void{
           if(/\{(?!firstName\}|target\})[^}]*\}/.test(req.template))throw new Error('Only {firstName} and {target} are supported in the optional manual template.');
           const settings=req.settings??{...(current.settings??defaultSettings),roles:req.target.split(/[;,\n]+/).map(x=>x.trim()).filter(Boolean)};
           await updateNetwork(s=>({...s,target:req.target,location:req.location,template:req.template,settings,
-            nextDiscoveryAt:0,status:'Target roles, mode, pacing and filters saved.'}));
+            nextDiscoveryAt:0,status:'Settings saved.'}));
         }
         if(req.action==='saveCv'){
           if(current.active)throw new Error('Pause outreach before changing your CV.');

@@ -15,6 +15,13 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.23.0: live progress tracker, shorter ChatGPT wait
+- **Home shows a live tracker** whenever work is running: the step in progress, the steps done and left (each job title being searched, each company being worked), a running clock, how long it normally takes and why, and when the last update arrived. The clock ticks every second so the panel never looks frozen.
+- **ChatGPT can no longer hold a run up for 4.5 minutes.** Planning prompts give up after 40 seconds if the question never reached ChatGPT (usually: not signed in) and after 2 minutes in all, close the unused tab, and continue on the built-in plan. Each ChatGPT stage (opening, question sent, writing, answer read) is shown as it happens.
+- Larger text on the Home status card and step labels. The panel refreshes every 2.5 seconds instead of 4.
+- Job titles in the shortlist are links; the open button reads "View job".
+- Not yet run in Edge.
+
 ## 0.22.0: renamed to Referral Scout
 - The extension is now **Referral Scout**, because its job is finding jobs and the people who can refer you, not cold outreach. Name, description, toolbar title, icons, welcome screen, the button on LinkedIn pages, the export file name and the docs all use it.
 - Your saved data is untouched: the local database keeps its old internal name so nothing is lost on update.
