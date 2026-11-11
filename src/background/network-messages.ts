@@ -58,7 +58,7 @@ export function registerNetworkMessages():void{
       if(sender.tab?.id!==undefined)void chrome.sidePanel?.open?.({tabId:sender.tab.id}).catch(()=>undefined); // show progress where the person can see it
       const {mode,job}=referral.data;
       void (async()=>{
-        if(!(await getNetwork()).profile)return {ok:false,message:'Open Cold Contact and read your LinkedIn profile first.'};
+        if(!(await getNetwork()).profile)return {ok:false,message:'Open Referral Scout and read your LinkedIn profile first.'};
         let message='';
         await updateNetwork(s=>{
           const list=s.referralJobs??(s.referralJobs=[]),old=list.find(j=>j.url===job.url);
@@ -80,7 +80,7 @@ export function registerNetworkMessages():void{
         });
         void networkTick();
         return {ok:true,message};
-      })().then(respond).catch(()=>respond({ok:false,message:'Something went wrong. Open Cold Contact for details.'}));return true;
+      })().then(respond).catch(()=>respond({ok:false,message:'Something went wrong. Open Referral Scout for details.'}));return true;
     }
     const remember=rememberMessage.safeParse(input);
     if(remember.success){

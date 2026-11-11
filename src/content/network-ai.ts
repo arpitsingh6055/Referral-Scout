@@ -18,7 +18,7 @@ export function chatGptReady(): boolean {
   return !!input && input.isConnected && visible(input) && !input.hasAttribute('disabled') &&
     input.getAttribute('aria-disabled') !== 'true' && Date.now() - start >= 1800 && Date.now() - composerSince >= 1200;
 }
-const marker = (id: string) => `[COLD_CONTACT_JOB:${id}]`;
+const marker = (id: string) => `[REFERRAL_SCOUT_JOB:${id}]`;
 const text = (e: HTMLElement): string => e.innerText || e.textContent || '';
 const nodes = (selector: string): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(selector)].filter(visible);
 const userTurns = () => nodes('[data-message-author-role="user"], [data-turn="user"]');
@@ -65,12 +65,12 @@ function relevantAssistant(user: HTMLElement): HTMLElement | null {
   }
   return null;
 }
-const idOf = (user: HTMLElement): string => /\[COLD_CONTACT_JOB:([a-f0-9]{64})\]/.exec(text(user))?.[1] ?? '';
+const idOf = (user: HTMLElement): string => /\[REFERRAL_SCOUT_JOB:([a-f0-9]{64})\]/.exec(text(user))?.[1] ?? '';
 function replyValue(node: HTMLElement): string {
   const markdown = node.querySelector<HTMLElement>('.markdown, [data-message-content]');
   return text(markdown ?? node).replace(/^ChatGPT said:\s*/i, '').trim();
 }
-const OURS = '[COLD_CONTACT_JOB:';
+const OURS = '[REFERRAL_SCOUT_JOB:';
 /** Empties the message box. Only ever used on text this extension typed itself. */
 function clearComposer(editor: HTMLElement): void {
   editor.focus();

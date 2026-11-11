@@ -28,7 +28,7 @@ const make = <K extends keyof HTMLElementTagNameMap>(tag: K, css = "", text = ""
 };
 const FONT = "font:500 13px/1.35 system-ui,-apple-system,'Segoe UI',sans-serif;box-sizing:border-box";
 
-const host = document.createElement("cold-contact-remember");
+const host = document.createElement("referral-scout-remember");
 const root = host.attachShadow({ mode: "closed" });
 const placement = new CSSStyleSheet(); // CSSOM only: page security policies that block inline styles do not apply
 placement.replaceSync(":host{all:initial;position:fixed;left:16px;bottom:16px;z-index:2147483000;display:block}");
@@ -54,7 +54,7 @@ const referralButton = (mode: "referral" | "connections", label: string): HTMLBu
     if (!job.subtitle) { b.textContent = "Could not read the company here. Open the job on its own page and try again."; setTimeout(() => { b.textContent = label; }, 6000); return; }
     b.textContent = "Starting…";
     void chrome.runtime.sendMessage({ kind: "network.referral", mode, job: { url: job.url, title: job.title, company: job.subtitle, location: job.location ?? "", ...(job.companyUrl ? { companyUrl: job.companyUrl } : {}), ...(job.suggested ? { suggested: job.suggested } : {}) } })
-      .then((reply: { message?: string } | undefined) => { b.textContent = reply?.message ?? "Open Cold Contact to see progress."; })
+      .then((reply: { message?: string } | undefined) => { b.textContent = reply?.message ?? "Open Referral Scout to see progress."; })
       .catch(() => { b.textContent = "Refresh this LinkedIn tab and try again."; })
       .finally(() => setTimeout(() => { b.textContent = label; }, 6000));
   });
@@ -108,7 +108,7 @@ function keepVisible(): void {
   if (r.width > 0 && r.height > 0) return;
   const other = parents().find(p => p !== host.parentElement);
   if (!triedOther && other) { triedOther = true; other.append(host); return; }
-  if (!warned) { warned = true; console.warn("[Cold Contact] The Remember button is being hidden by the page or by another extension (an ad blocker?). Allow this extension, or turn the blocker off for linkedin.com."); }
+  if (!warned) { warned = true; console.warn("[Referral Scout] The Remember button is being hidden by the page or by another extension (an ad blocker?). Allow this extension, or turn the blocker off for linkedin.com."); }
 }
 // LinkedIn changes pages without reloading, so look again every second and only act when something changed.
 async function look(): Promise<void> {
@@ -126,10 +126,10 @@ async function look(): Promise<void> {
   }
   paint();
 }
-const installed = globalThis as typeof globalThis & { __coldContactRemember?: boolean };
-if (!installed.__coldContactRemember && location.hostname.endsWith("linkedin.com") && window.top === window) {
-  installed.__coldContactRemember = true;
+const installed = globalThis as typeof globalThis & { __referralScoutRemember?: boolean };
+if (!installed.__referralScoutRemember && location.hostname.endsWith("linkedin.com") && window.top === window) {
+  installed.__referralScoutRemember = true;
   parents()[0]?.append(host);
-  console.info("[Cold Contact] Remember button is active on this tab.");
+  console.info("[Referral Scout] Remember button is active on this tab.");
   setInterval(() => { void look(); }, 1000); void look();
 }

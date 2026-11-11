@@ -1,14 +1,14 @@
 <div align="center">
 
-<img src="public/icons/icon128.png" alt="Cold Contact Pro" width="84" height="84" />
+<img src="public/icons/icon128.png" alt="Referral Scout" width="84" height="84" />
 
-# Cold Contact Pro
+# Referral Scout
 
-**Reach the right people on LinkedIn. Slowly, safely, and in your own words.**
+**Find jobs. Get referred.**
 
-A browser extension that finds recruiters, hiring leaders and founders for the roles you want, sends them a short, human introduction, and follows up once, only after they accept.
+A browser extension that searches LinkedIn jobs for the role you want, lets you choose the companies, then finds the people at each one whose referral counts and asks them politely, a few a day.
 
-<sub>Chrome &amp; Edge (Manifest V3) · v0.15.3 · No servers, no API keys, no telemetry</sub>
+<sub>Chrome &amp; Edge (Manifest V3) · v0.22.0 · No servers, no API keys, no telemetry</sub>
 
 </div>
 
@@ -30,7 +30,7 @@ Doing that well is tedious. You search, scan dozens of headlines, work out who i
 
 The tools that promise to fix this tend to go the other way: fast, bulk, and risky for your account.
 
-## What Cold Contact Pro does
+## What Referral Scout does
 
 It does the searching, filtering, drafting and tracking, and leaves the decisions to you.
 
@@ -134,7 +134,7 @@ The extension does not read cookies, passwords or tokens, does not call private 
 
 ## Privacy
 
-- Everything is stored **locally** in the extension's own database. There is no Cold Contact Pro server, analytics, or account.
+- Everything is stored **locally** in the extension's own database. There is no Referral Scout server, analytics, or account.
 - No OpenAI API key, no private LinkedIn endpoints, no credential access.
 - If you enable ChatGPT, the text needed to write each note (your profile text, plus the recipient's visible name, headline and company) is typed into a visible ChatGPT prompt through your own signed-in session. ChatGPT may retain it under your account settings.
 - You can pause, export, or delete your data from the side panel. Deleting does not recall messages already sent.
@@ -211,4 +211,4 @@ No open-source license has been selected yet; all rights reserved. Discuss befor
 
 ---
 
-<sub>Cold Contact Pro is an independent project. It is not affiliated with, endorsed by, or sponsored by LinkedIn or OpenAI.</sub>
+<sub>Referral Scout is an independent project. It is not affiliated with, endorsed by, or sponsored by LinkedIn or OpenAI.</sub>

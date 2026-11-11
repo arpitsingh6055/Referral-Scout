@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Cold Contact \u2014 LinkedIn Outreach",
-  "version": "0.21.0",
-  "description": "Find recruiters, hiring leaders and founders on LinkedIn, send invitations slowly and safely, and follow up once after they accept.",
+  "name": "Referral Scout: jobs and referrals on LinkedIn",
+  "version": "0.22.0",
+  "description": "Find jobs on LinkedIn, choose the companies, and ask the right people at each one for a referral. Slow, safe and under your control.",
   "minimum_chrome_version": "120",
   "permissions": [
     "storage",
@@ -22,7 +22,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Open Cold Contact Pro"
+    "default_title": "Open Referral Scout"
   },
   "icons": {
     "16": "icons/icon16.png",

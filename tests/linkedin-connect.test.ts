@@ -46,7 +46,7 @@ async function run(noteMode: 'require' | 'preferred' | 'none', body = 'Hi Alex, 
 }
 
 beforeEach(async () => {
-  vi.resetModules(); delete (globalThis as { __coldContactNetworkV1?: boolean }).__coldContactNetworkV1;
+  vi.resetModules(); delete (globalThis as { __referralScoutNetworkV1?: boolean }).__referralScoutNetworkV1;
   vi.spyOn(Element.prototype, 'getClientRects').mockImplementation(function (this: Element) { return (this.closest('[hidden]') ? [] : [{}]) as unknown as DOMRectList; });
   Object.defineProperty(HTMLElement.prototype, 'innerText', { configurable: true, get(this: HTMLElement) { return this.textContent ?? ''; } });
   vi.stubGlobal('chrome', { runtime: { id: 'abc', getURL: (p: string) => `chrome-extension://abc/${p}`, onMessage: { addListener: vi.fn() }, sendMessage: vi.fn().mockResolvedValue({ allowed: true }) } });

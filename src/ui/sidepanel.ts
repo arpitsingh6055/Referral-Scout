@@ -161,7 +161,7 @@ function welcome(): HTMLElement {
     const li = node('li', '', 'step'), body = node('div'); body.append(node('strong', title), node('span', text));
     li.append(node('b', i, 'n'), body); steps.append(li);
   }
-  hero.append(node('div', 'cc', 'mark'), node('p', 'Cold Contact Pro', 'eyebrow'), node('h1', 'Find jobs. Get referred.'),
+  hero.append(node('div', 'RS', 'mark'), node('p', 'Referral Scout', 'eyebrow'), node('h1', 'Find jobs. Get referred.'),
     node('p', 'The right people at the right companies, asked politely, at a pace LinkedIn is comfortable with.', 'lede'), steps,
     button('Read my LinkedIn profile', async () => { await act({ kind: 'network', action: 'import' }, 'Profile saved. Check your target role, then press Find jobs and referrals.'); }, 'btn primary block'),
     node('p', 'Sign in to LinkedIn first. LinkedIn restricts automated activity: defaults are deliberately slow and conservative, but you use this at your own risk.', 'fine'));
@@ -351,7 +351,7 @@ function render(s: NetworkState): void {
   }
   const gear = node('button', '', 'icon-btn'); gear.type = 'button'; gear.title = 'Settings'; gear.setAttribute('aria-label', 'Settings'); gear.append(icon('settings'));
   gear.addEventListener('click', () => setTab(ui.tab === 'setup' ? 'home' : 'setup', true)); tabButtons.set('setup', gear);
-  const top = node('header', '', 'top'); top.append(node('div', 'cc', 'mark'), node('span', 'Cold Contact Pro', 'name'), node('span', status.pill, `pill ${status.tone}`), gear);
+  const top = node('header', '', 'top'); top.append(node('div', 'RS', 'mark'), node('span', 'Referral Scout', 'name'), node('span', status.pill, `pill ${status.tone}`), gear);
   const openPeople = (filter: string): void => { ui.filter = filter; refreshPeople(); setTab('people', true); };
 
   /* ----- home ----- */
@@ -613,7 +613,7 @@ function buildActivity(s: NetworkState): HTMLElement {
   const data = node('section', '', 'card'); data.append(node('h2', 'Your data', 'card-title'), node('p', 'Everything stays on this device.', 'card-sub'));
   data.append(button('Export saved data', async () => {
     const out = await request({ kind: 'network', action: 'export' }), url = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' }));
-    const a = node('a'); a.href = url; a.download = 'cold-contact-pro-export.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const a = node('a'); a.href = url; a.download = 'referral-scout-export.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, 'btn'), button('Delete everything', async () => {
     if (confirm('Delete your profile, CV, dossier, contacts and task history from this device? This does not undo anything on LinkedIn.')) await act({ kind: 'network', action: 'clear', confirm: true }, 'All local data deleted.');
   }, 'btn ghost danger'));

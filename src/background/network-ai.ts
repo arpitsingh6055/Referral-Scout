@@ -191,7 +191,7 @@ export async function prepareDossier(s:NetworkState, signal:AbortSignal):Promise
   try{return validatedDossier(first);}
   catch{
     const parent=await aiJobId(prompt,'BUILD_DOSSIER',s.profile.url);
-    const repair=`The JSON response to the previous COLD_CONTACT_JOB is not valid against the requested schema. Re-read the original candidate sources already visible in this SAME conversation. Correct only the schema/format errors, retain every supported fact, and return exactly one valid schemaVersion 2 JSON object. Do not invent details. No markdown or explanation.`;
+    const repair=`The JSON response to the previous REFERRAL_SCOUT_JOB is not valid against the requested schema. Re-read the original candidate sources already visible in this SAME conversation. Correct only the schema/format errors, retain every supported fact, and return exactly one valid schemaVersion 2 JSON object. Do not invent details. No markdown or explanation.`;
     return validatedDossier(await askChatGpt(repair,signal,'BUILD_DOSSIER',s.profile.url,parent));
   }
 }

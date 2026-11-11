@@ -1,10 +1,10 @@
-# Cold Contact Pro privacy and data handling — v0.8.0 source candidate
+# Referral Scout privacy and data handling — v0.8.0 source candidate
 
 **Updated:** 6 November 2026. This describes the patched source under review and is **not** a verified store-release privacy policy.
 
 ### Stored locally
 
-Cold Contact Pro can store the owner's verified LinkedIn profile URL, visible profile sections and capture times; extracted PDF/DOCX/TXT CV text and file metadata; the ChatGPT-generated career dossier; target roles, company preferences and settings; observed LinkedIn job cards/descriptions, company and recipient evidence; invitation notes; connection/acceptance status; thank-you messages; and timestamps/action ledgers. The data is saved to extension-owned IndexedDB. The former `network-v1` state remains as a compatibility source while v2 normalized owner-keyed records are mirrored. Legacy raw CV-file/base64 fields are stripped on state update. Full text is not included in routine side-panel status polling.
+Referral Scout can store the owner's verified LinkedIn profile URL, visible profile sections and capture times; extracted PDF/DOCX/TXT CV text and file metadata; the ChatGPT-generated career dossier; target roles, company preferences and settings; observed LinkedIn job cards/descriptions, company and recipient evidence; invitation notes; connection/acceptance status; thank-you messages; and timestamps/action ledgers. The data is saved to extension-owned IndexedDB. The former `network-v1` state remains as a compatibility source while v2 normalized owner-keyed records are mirrored. Legacy raw CV-file/base64 fields are stripped on state update. Full text is not included in routine side-panel status polling.
 
 ### Sent to LinkedIn and ChatGPT
 

@@ -15,6 +15,11 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.22.0: renamed to Referral Scout
+- The extension is now **Referral Scout**, because its job is finding jobs and the people who can refer you, not cold outreach. Name, description, toolbar title, icons, welcome screen, the button on LinkedIn pages, the export file name and the docs all use it.
+- Your saved data is untouched: the local database keeps its old internal name so nothing is lost on update.
+- The GitHub repository is still `cold-contact-pro`; rename it in the repository settings when convenient (GitHub redirects the old address).
+
 ## 0.21.0: redesigned side panel
 - **Home is the landing screen.** One status card shows where you are (Find jobs, Choose, Find people, Reach out), what is happening now, the one next action, and today's and this week's invitation budget.
 - **Needs you** lists every decision in one place with the action on the row: approve messages, "Only them / Look wider" for a company where you already know people, reminders, people needing attention. When it is empty the panel says you can close it.

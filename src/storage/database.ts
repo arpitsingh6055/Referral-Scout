@@ -24,7 +24,7 @@ export function openDatabase(): Promise<IDBDatabase> {
       resolve(db);
     };
     request.onerror = () => { pending = undefined; reject(request.error); };
-    request.onblocked = () => { pending = undefined; reject(new Error("Storage is busy. Close other Cold Contact windows and try again.")); };
+    request.onblocked = () => { pending = undefined; reject(new Error("Storage is busy. Close other Referral Scout windows and try again.")); };
   });
   return pending;
 }

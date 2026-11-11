@@ -264,8 +264,8 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
   claimed.add(cmd.intentId);
   return cmd.action === "connect" ? connect(cmd, signal) : message(cmd, signal);
 }
-const installed = globalThis as typeof globalThis & { __coldContactNetworkV1?: boolean };
-if (!installed.__coldContactNetworkV1) chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
+const installed = globalThis as typeof globalThis & { __referralScoutNetworkV1?: boolean };
+if (!installed.__referralScoutNetworkV1) chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
   if (sender.id !== chrome.runtime.id || (sender.url && sender.url !== chrome.runtime.getURL("service-worker.js"))) return false;
   if (sender.origin && !["chrome-extension://", "extension://", "edge-extension://"].some(prefix => sender.origin === prefix + chrome.runtime.id)) return false;
   if (input && typeof input === "object" && "kind" in input && input.kind === "network.ping") { respond({ ok: true }); return false; }
@@ -276,4 +276,4 @@ if (!installed.__coldContactNetworkV1) chrome.runtime.onMessage.addListener((inp
   void handle(cmd, signal).then(data => respond({ requestId: cmd.requestId, ok: true, data })).catch((e: unknown) => respond({ requestId: cmd.requestId, ok: false, error: e instanceof Error ? e.message : String(e) }));
   return true;
 });
-installed.__coldContactNetworkV1 = true;
+installed.__referralScoutNetworkV1 = true;
