@@ -15,6 +15,11 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.27.0: setup asks what you are looking for
+- After your profile is read, setup asks one question, "what are you looking for?" (role and place), instead of assuming "Product Management internship" in India. Home appears only after you answer.
+- Existing installs that already have jobs or people are not asked again.
+- Home shows the target role large, in its own card with an Edit button.
+
 ## 0.26.0: the Current company filter is used even when the job hides the company page
 - When a job does not give the company's LinkedIn page, the company is now looked up through LinkedIn's own company search (exact name, preferring the one in the job's location). Its number is then read from the company page, so people searches use LinkedIn's **Current company** filter instead of a bare name search that also returns "ex-" and volunteer mentions.
 - Checked live on 12 November 2026 for Ketto: company search rows and the company page link (`currentCompany=["3686501"]`, "201-500 employees") read correctly.

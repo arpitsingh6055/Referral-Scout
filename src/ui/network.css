@@ -246,3 +246,5 @@ textarea.draft:focus{outline:2px solid var(--primary);outline-offset:1px}
 .target-role{font-size:18px;line-height:1.3;font-weight:700;overflow-wrap:anywhere}
 .target-place{font-size:14.5px;color:var(--muted)}
 .target .btn{flex:none;color:var(--primary);border-color:var(--primary)}
+
+.hero.ask{padding-top:28px}.hero.ask .card{text-align:left;margin-bottom:16px}.hero.ask h1{font-size:26px}

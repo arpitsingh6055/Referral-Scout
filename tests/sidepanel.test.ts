@@ -9,7 +9,7 @@ const $ = <T extends Element>(q: string) => document.querySelector<T>(q);
 const byText = (q: string, text: string) => [...document.querySelectorAll<HTMLElement>(q)].find(e => e.textContent?.includes(text));
 
 async function open(patch: Partial<typeof state> = {}) {
-  state = { ...emptyNetwork(), profile, settings: { ...defaultSettings, roles: ['Product Management internship'], activeHours: null }, target: 'Product Management internship', ...patch };
+  state = { ...emptyNetwork(), targetSet: true, profile, settings: { ...defaultSettings, roles: ['Product Management internship'], activeHours: null }, target: 'Product Management internship', ...patch };
   sent.length = 0;
   vi.resetModules(); document.body.innerHTML = '<main id="app"></main>';
   vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async (req: { action?: string }) => { sent.push(req); if (req.action === 'import') state.profile = profile; if (req.action === 'start') state.active = true; if (req.action === 'pause') state.active = false; return { ok: true, data: structuredClone(state) }; }) } });
@@ -108,4 +108,16 @@ it('when paused, Resume is the main action and the live tracker is hidden; while
   await open({ active: false, jobSearch: { status: 'finding', cursor: 0, found: [], startedAt: Date.now() } });
   expect(byText('button', 'Pause everything')).toBeTruthy();
   expect($('.live')).not.toBeNull();
+});
+
+it('asks what the person is looking for during setup instead of assuming a role, and saves the answer', async () => {
+  await open({ targetSet: false });
+  expect($('.tabs')).toBeNull();
+  expect($<HTMLTextAreaElement>('textarea')!.value).toBe('');
+  byText('button', 'Continue')!.click();
+  await vi.waitFor(() => expect(byText('.toast.error', 'Type the role you are looking for')).toBeTruthy());
+  const role = $<HTMLTextAreaElement>('textarea')!, place = $<HTMLInputElement>('input')!;
+  role.value = 'Operations intern'; place.value = 'Bengaluru';
+  byText('button', 'Continue')!.click();
+  await vi.waitFor(() => expect(sent.find(r => r.action === 'save')).toMatchObject({ target: 'Operations intern', location: 'Bengaluru', settings: { roles: ['Operations intern'] } }));
 });

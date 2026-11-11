@@ -164,8 +164,27 @@ function welcome(): HTMLElement {
   }
   hero.append(node('div', 'RS', 'mark'), node('p', 'Referral Scout', 'eyebrow'), node('h1', 'Find jobs. Get referred.'),
     node('p', 'The right people at the right companies, asked politely, at a pace LinkedIn is comfortable with.', 'lede'), steps,
-    button('Read my LinkedIn profile', async () => { await act({ kind: 'network', action: 'import' }, 'Profile saved. Check your target role, then press Find jobs and referrals.'); }, 'btn primary block'),
+    button('Read my LinkedIn profile', async () => { await act({ kind: 'network', action: 'import' }, 'Profile saved. One more question: what are you looking for?'); }, 'btn primary block'),
     node('p', 'Sign in to LinkedIn first. LinkedIn restricts automated activity: defaults are deliberately slow and conservative, but you use this at your own risk.', 'fine'));
+  return hero;
+}
+
+/* Second step of setup: the person says what they want. Nothing is assumed for them. */
+function askTarget(s: NetworkState): HTMLElement {
+  const hero = node('section', '', 'hero ask'), form = node('div', '', 'card');
+  const roles = field({ label: 'Role you want', value: '', multiline: true, rows: 2, help: 'One per line if you have more than one. Similar job titles are added for you.' });
+  const place = field({ label: 'Where', value: '', help: 'A country or a city. Leave empty to search everywhere.' });
+  roles.input.placeholder = 'For example: Product Management internship'; place.input.placeholder = 'For example: India, or Bengaluru';
+  for (const f of [roles, place]) f.input.addEventListener('input', () => { dirty = true; });
+  form.append(roles.wrap, place.wrap);
+  hero.append(node('div', 'RS', 'mark'), node('p', 'Step 2 of 2', 'eyebrow'), node('h1', `Hi ${s.profile!.name.split(/\s+/)[0] ?? ''}, what are you looking for?`),
+    node('p', 'This is what LinkedIn jobs are searched for. You can change it any time from Home.', 'lede'), form,
+    button('Continue', async () => {
+      const list = roles.input.value.split(/[\n;,]+/).map(x => x.trim()).filter(Boolean);
+      if (!list.length) { roles.input.focus(); throw new Error('Type the role you are looking for, for example "Product Management internship".'); }
+      dirty = false;
+      await act({ kind: 'network', action: 'save', target: list[0]!, location: place.input.value.trim(), template: s.template, settings: { ...(s.settings ?? defaultSettings), roles: list } }, 'Saved. Press Find jobs and referrals when you are ready.');
+    }, 'btn primary block'));
   return hero;
 }
 
@@ -387,6 +406,7 @@ function render(s: NetworkState): void {
   const scroll = document.scrollingElement?.scrollTop ?? 0;
   page.replaceChildren();
   if (!s.profile) { page.append(welcome()); return; }
+  if (!s.targetSet && !s.contacts.length && !(s.referralJobs ?? []).length && !s.jobSearch) { page.append(askTarget(s)); return; }
   const status = runStatus(s), settings = s.settings ?? defaultSettings, search = s.jobSearch, jobs = s.referralJobs ?? [];
   const count = (st: ContactState): number => s.contacts.filter(p => p.state === st).length;
 

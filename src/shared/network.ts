@@ -90,7 +90,7 @@ export interface NetworkState {
   dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
   active:boolean;/** Everything is stopped (by the person or by an account-level problem) until something is started or resumed. */paused?:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;nextSweepAt?:number;jobSearch?:JobSearch;plan?:SearchPlan;
   /** 'referrals' = only people from Referrals jobs are contacted; general searching and outreach stay off. */
-  scope?:'all'|'referrals';referralJobs?:ReferralJob[];saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;hoursV2?:boolean;
+  scope?:'all'|'referrals';referralJobs?:ReferralJob[];saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;hoursV2?:boolean;/** The person has said what they are looking for; until then setup asks instead of assuming. */targetSet?:boolean;
   settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;
   actions:{at:number;kind:'connect'|'message'|'check';url:string;confirmed?:boolean;idempotencyKey?:string}[];
   intent:{id:string;tabId:number;url:string;kind:'connect'|'message';at:number;body:string;revision:number;claimed:boolean}|null;
