@@ -89,12 +89,12 @@ async function dispatch(job: AiJob, signal: AbortSignal): Promise<void> {
     job.tab=parent.tab;await save(job,'tab_opened');
   }
   if (job.tab === undefined) {
-    job.tab = await openWorkTab('https://chatgpt.com/'); await save(job,'tab_opened');
+    job.tab = await openWorkTab('https://chatgpt.com/','chatgpt'); await save(job,'tab_opened');
   }
   try { await chrome.tabs.get(job.tab); } catch {
     // A completed or attempted submission must never be restarted in another chat blindly.
     if (['send_clicked','user_turn_verified','assistant_streaming','completion_verified'].includes(job.stage)) throw new Error('The ChatGPT tab closed after submission. Open the original conversation and review it before retrying.');
-    job.tab = await openWorkTab('https://chatgpt.com/'); await save(job,'tab_opened');
+    job.tab = await openWorkTab('https://chatgpt.com/','chatgpt'); await save(job,'tab_opened');
   }
   if(job.tab===undefined)throw new Error('No ChatGPT tab was assigned.');
   await chrome.tabs.update(job.tab,{active:true});

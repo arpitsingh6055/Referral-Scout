@@ -31,14 +31,17 @@ export async function readyNetworkTab(tabId: number, signal: AbortSignal): Promi
  * Pages are opened in one separate "work" window that is never brought to the front, so the
  * person can keep using their own window and tabs while outreach runs.
  */
-export async function openWorkTab(url: string): Promise<number> {
-  let windowId = await read<number>("work-window");
+export async function openWorkTab(url: string, kind: "linkedin" | "chatgpt" = "linkedin"): Promise<number> {
+  // LinkedIn and ChatGPT each get their own window: a tab hidden behind another one is slowed down by the browser,
+  // and two windows let a ChatGPT rewrite run while outreach carries on.
+  const key = kind === "chatgpt" ? "chatgpt-window" : "work-window";
+  let windowId = await read<number>(key);
   if (windowId !== undefined) { try { await chrome.windows.get(windowId); } catch { windowId = undefined; } }
   if (windowId === undefined) {
-    const created = await chrome.windows.create({ url, focused: false, type: "normal", width: 1180, height: 860 });
+    const created = await chrome.windows.create({ url, focused: false, type: "normal", width: kind === "chatgpt" ? 900 : 1180, height: kind === "chatgpt" ? 760 : 860 });
     const tabId = created?.tabs?.[0]?.id;
     if (created?.id === undefined || tabId === undefined) throw new Error("Could not open the Cold Contact work window.");
-    await write("work-window", created.id);
+    await write(key, created.id);
     return tabId;
   }
   const tab = await chrome.tabs.create({ windowId, url, active: true });

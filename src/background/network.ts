@@ -113,7 +113,7 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
   const tab=await networkTab(p.url,signal);
   const relation=z.object({state:z.enum(['connected','pending','not-connected','unknown'])}).parse(await networkCommand(tab,{action:'relationship',url:p.url},signal));
   await currentRun(s.revision,signal);
-  const now=Date.now();p.checkedAt=now;
+  const now=Date.now();p.checkedAt=now;if(approved)delete p.approved;
   if(relation.state==='pending'){
     if(!p.requestedAt){p.state='skipped';p.reason='A request existed before this campaign; it was not adopted as an extension send.';}
     else if(now-p.requestedAt>PENDING_EXPIRY){p.state='skipped';p.reason='No response after 30 days. LinkedIn may still show it as pending: consider withdrawing it under My Network, Manage, Sent, which also frees your pending count.';}
@@ -210,7 +210,7 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
 /** Why nothing can be sent right now, in plain words. */
 function idleReason(s:NetworkState,now=Date.now()):string|null {
   const st=s.settings??defaultSettings,count=(k:'connect'|'message',span:number)=>s.actions.filter(a=>a.kind===k&&a.confirmed!==false&&now-a.at<span).length;
-  if(s.contacts.filter(p=>p.state==='review').length>=MAX_REVIEW_QUEUE)return `${MAX_REVIEW_QUEUE} drafts are waiting for your review. Approve or skip them to continue.`;
+  if(s.contacts.filter(p=>p.state==='review'&&!p.approved).length>=MAX_REVIEW_QUEUE)return `${MAX_REVIEW_QUEUE} drafts are waiting for your review. Approve or skip them to continue.`;
   if(!s.contacts.some(p=>p.state==='shortlisted'||(p.state==='connected'&&!p.messagedAt)))return null;
   if(st.dailyInvites!==null&&count('connect',DAY)>=st.dailyInvites)return `Daily invitation limit reached (${st.dailyInvites}). Outreach continues automatically within 24 hours.`;
   if(st.weeklyInvites!==null&&count('connect',7*DAY)>=st.weeklyInvites)return `Weekly invitation limit reached (${st.weeklyInvites}), which protects your LinkedIn account. Outreach continues automatically.`;
@@ -240,7 +240,7 @@ async function run():Promise<void>{
     if(person){
       if(Date.now()<s.nextActionAt)return;
       worked=true;
-      try{await processContact(s,person,abort.signal);if(s.failureStreak)await updateNetwork(c=>({...c,failureStreak:0}));}
+      try{await processContact(s,person,abort.signal,person.state==='review'&&person.approved===true);if(s.failureStreak)await updateNetwork(c=>({...c,failureStreak:0}));}
       catch(error){
         const message=error instanceof Error?error.message:String(error);
         if(abort.signal.aborted||ACCOUNT_LEVEL.test(message))throw error;

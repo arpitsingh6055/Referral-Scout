@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { rememberMessage, type SavedItem, networkRequest, networkProfileSchema, profileUrl, networkKey, suggestedTarget, defaultSettings, type NetworkState, DAY, introduction, renderNote } from '../shared/network';
 import { trustedExtension, trustedSite } from '../validators/security';
-import { getNetwork, updateNetwork, pauseNetwork, networkTick, processContact } from './network';
+import { getNetwork, updateNetwork, pauseNetwork, networkTick } from './network';
 import { networkCommand, networkTab } from './network-browser';
 import { acquire, release, renew } from './lease';
 import { all, remove } from '../storage/database';
@@ -93,8 +93,11 @@ export function registerNetworkMessages():void{
       if(req.action==='pause'){await pauseNetwork();return statusView(await getNetwork());}
       if(req.action==='clear')await pauseNetwork();
       const signal=new AbortController().signal;
-      const owner=crypto.randomUUID();if(!await acquire(owner))throw new Error('A LinkedIn step is already finishing. Try again once it completes.');
-      const timer=setInterval(()=>{void renew(owner);},20000);
+      // Only reading your own profile needs the LinkedIn tab to itself. Everything else (approving, editing, skipping,
+      // saving, a ChatGPT rewrite in its own window) runs alongside whatever outreach is doing and never waits for it.
+      const exclusive=req.action==='import';
+      const owner=crypto.randomUUID();if(exclusive&&!await acquire(owner))throw new Error('Outreach is in the middle of a LinkedIn step. Your profile will be readable in a few seconds; try again.');
+      const timer=setInterval(()=>{if(exclusive)void renew(owner);},20000);
       try{
         const current=await getNetwork();
         if(req.action==='import'){
@@ -161,12 +164,21 @@ export function registerNetworkMessages():void{
           await chrome.alarms.create('network-tick',{periodInMinutes:1});
         }
         if(req.action==='approve'){
-          const fresh=await getNetwork();
-          if(!fresh.active||!fresh.profile)throw new Error('Start or resume outreach before approving a pending draft.');
-          const person=fresh.contacts.find(p=>p.url===req.url);
-          if(!person||person.state!=='review'||!person.approvalKind)throw new Error('This recipient has no valid send awaiting review.');
-          await processContact(fresh,person,signal,true);
+          // Approving never blocks: the message joins a short send queue and outreach sends it in turn, a few seconds apart.
+          await updateNetwork(s=>{
+            const waiting=s.contacts.filter(p=>p.state==='review'&&p.approvalKind&&!p.approved&&(req.url==='*'||p.url===req.url));
+            if(!waiting.length)throw new Error('There is no message waiting for approval here.');
+            for(const p of waiting){p.approved=true;p.reason='Approved. It will be sent in turn, a few seconds after the previous one.';}
+            s.status=waiting.length===1?`Approved for ${waiting[0]!.name}. Sending shortly.`:`${waiting.length} messages approved. They are sent one after another.`;
+            return s;
+          });
+          void networkTick();
         }
+        if(req.action==='unapprove')await updateNetwork(s=>{
+          const p=s.contacts.find(x=>x.url===req.url);
+          if(!p||p.state!=='review'||!p.approved)throw new Error('This message has already gone out or is being sent right now.');
+          delete p.approved;p.reason='Sending cancelled. It is waiting for your approval again.';return s;
+        });
         if(req.action==='removeContact'){await updateNetwork(s=>({...s,contacts:s.contacts.filter(p=>p.url!==req.url)}));}
         if(req.action==='updateSaved')await updateNetwork(s=>{
           const item=s.saved?.find(x=>x.url===req.url);if(!item)throw new Error('This saved item no longer exists.');
@@ -192,7 +204,7 @@ export function registerNetworkMessages():void{
         if(req.action==='skip')await updateNetwork(s=>{const p=s.contacts.find(p=>p.url===req.url);if(p){p.state='skipped';p.reason='Skipped. No future action is scheduled.';}return s;});
         if(req.action==='clear')await clearAllNetwork();
         return statusView(await getNetwork());
-      }finally{clearInterval(timer);await release(owner);if(req.action==='start')void networkTick();}
+      }finally{clearInterval(timer);if(exclusive)await release(owner);if(req.action==='start')void networkTick();}
     })().then(data=>respond({ok:true,data})).catch((error:unknown)=>respond({ok:false,error:error instanceof Error?error.message:String(error)}));return true;
   });
 }

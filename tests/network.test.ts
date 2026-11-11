@@ -221,3 +221,33 @@ it('lets the person reword a draft or go back to their template, and refuses an 
   await send({ action: 'templateDraft', url: contact().url });
   expect((await getNetwork()).contacts[0]!.invitationNote).toMatch(/^Hi Alex, I’m Example, exploring Product Management opportunities\. .*what you’re building at Example\.$/);
 });
+
+it('approving never waits for outreach: it queues at once, even while a LinkedIn step holds the tab, and can be cancelled', async () => {
+  const send = networkUi();
+  const { acquire } = await import('../src/background/lease');
+  expect(await acquire('a-running-outreach-step')).toBe(true); // outreach is busy in the LinkedIn tab
+  const a = contact({ state: 'review', approvalKind: 'connect', invitationNote: 'Hi Alex' });
+  const b = contact({ url: 'https://www.linkedin.com/in/bea/', name: 'Bea Example', state: 'review', approvalKind: 'connect', invitationNote: 'Hi Bea' });
+  await updateNetwork(s => ({ ...s, profile, active: true, ownerVerifiedAt: Date.now(), nextActionAt: Date.now() + 600000, contacts: [a, b] }));
+  expect((await send({ action: 'approve', url: a.url })).ok).toBe(true);
+  expect((await send({ action: 'editDraft', url: b.url, text: 'Hi Bea, reworded.' })).ok).toBe(true); // editing is not blocked either
+  let saved = await getNetwork();
+  expect(saved.contacts.map(p => [p.state, !!p.approved])).toEqual([['review', true], ['review', false]]);
+  expect(nextContact({ ...saved, nextActionAt: 0 })!.url).toBe(a.url); // approved messages go first
+  expect((await send({ action: 'unapprove', url: a.url })).ok).toBe(true);
+  expect((await send({ action: 'approve', url: '*' })).ok).toBe(true);
+  saved = await getNetwork();
+  expect(saved.contacts.every(p => p.approved)).toBe(true);
+  expect(saved.status).toMatch(/2 messages approved/);
+});
+
+it('sends an approved invitation on the next turn and clears the approval', async () => {
+  const p = contact({ state: 'review', approvalKind: 'connect', approved: true, invitationNote: 'Hi Alex' });
+  await updateNetwork(s => ({ ...s, profile, active: true, ownerVerifiedAt: Date.now(), settings: { ...defaultSettings, roles: ['Product Management'], aiMode: 'template', activeHours: null }, contacts: [p] }));
+  vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'not-connected' }).mockResolvedValueOnce({ state: 'pending', noteSent: true });
+  await networkTick();
+  const done = (await getNetwork()).contacts[0]!;
+  expect(done).toMatchObject({ state: 'pending' });
+  expect(done.approved).toBeUndefined();
+  expect(vi.mocked(networkCommand).mock.calls[1]![1]).toMatchObject({ action: 'connect', body: 'Hi Alex' });
+});
