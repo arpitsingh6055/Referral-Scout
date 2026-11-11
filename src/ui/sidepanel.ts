@@ -7,7 +7,7 @@ import { referralPlan } from '../shared/referral';
 import type { JobSearch } from '../shared/jobsearch';
 
 type Tab = 'home' | 'referrals' | 'people' | 'saved' | 'activity' | 'setup';
-const ui = { tab: 'home' as Tab, filter: 'all', open: new Set<string>(), touched: false };
+const ui = { tab: 'home' as Tab, filter: 'all', open: new Set<string>() };
 const root = appRoot();
 let maintenance: HTMLElement[] = [];
 let busy = false, dirty = false, spoke = false, last: NetworkState | null = null, signature = '', uid = 0;
@@ -278,7 +278,6 @@ function buildReferrals(s: NetworkState): HTMLElement {
     const sameCompany = new Set(jobs.filter(j => j.company.toLowerCase() === job.company.toLowerCase()).map(j => j.url));
     const people = s.contacts.filter(p => !!p.referralJob && sameCompany.has(p.referralJob)).sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
     const { box, body } = accordion(`ref:${job.url}`, `${job.title} · ${job.company}`, job.finishedAt ? String(people.length) : 'searching…');
-    if (jobs[0] === job && !ui.open.has(`ref:${job.url}`) && !ui.touched) box.open = true;
     const meta = node('div', '', 'meta');
     meta.append(link('View job ↗', job.url, 'job-open'), node('span', job.mode === 'referral' ? 'Reaching out' : 'Listing only', 'chip'));
     const steps = referralPlan(job).length;
