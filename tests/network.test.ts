@@ -1,7 +1,6 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DAY, defaultSettings, emptyNetwork, introduction, nextContact, profileUrl, relevance, suggestedTarget, type NetworkContact, type NetworkState } from "../src/shared/network";
-import { ownProfileLink, ownProfileEditLink, accountMenuProfileLink, readNetworkProfile } from "../src/parsers/network";
 import { getNetwork, updateNetwork, processContact, recoverNetwork, pauseNetwork, networkTick } from "../src/background/network";
 import { networkCommand, networkTab } from "../src/background/network-browser";
 import { clearDatabase, closeDatabase } from "../src/storage/database";
@@ -13,7 +12,7 @@ const profile = { name: "Example Student", url: "https://www.linkedin.com/in/stu
 function contact(patch: Partial<NetworkContact> = {}): NetworkContact {
   return { name: "Alex Example", url: "https://www.linkedin.com/in/alex/", headline: "Founder at Example", rawText: "Founder at Example", location: "India", about: "", state: "shortlisted", reason: "Founder", addedAt: 1, checkedAt: 0, requestedAt: 0, messagedAt: 0, message: "", ...patch };
 }
-async function state(p = contact()): Promise<NetworkState> { return updateNetwork(() => ({ ...emptyNetwork(), active: true, profile, dossier:'Profile dossier',settings:{...defaultSettings,roles:['Product Management'],outreachMode:'automatic',followupMode:'automatic',noteMode:'none'},contacts: [p] })); }
+async function state(p = contact()): Promise<NetworkState> { return updateNetwork(() => ({ ...emptyNetwork(), active: true, profile, ownerVerifiedAt: Date.now(), dossier:'Profile dossier',settings:{...defaultSettings,roles:['Product Management'],outreachMode:'automatic',followupMode:'automatic',noteMode:'none'},contacts: [p] })); }
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(2026, 10, 9, 11, 0, 0));
   vi.clearAllMocks();
@@ -22,23 +21,6 @@ beforeEach(() => {
   vi.stubGlobal("chrome", { runtime: { id: "abc", onMessage: { addListener: vi.fn() } }, tabs: { sendMessage: vi.fn().mockResolvedValue({}),update:vi.fn().mockResolvedValue({}) } });
 });
 afterEach(async () => { vi.useRealTimers(); await clearDatabase(); await closeDatabase(); vi.unstubAllGlobals(); });
-it("only imports account-navigation identity, never another person's viewed profile", () => {
-  const doc = new DOMParser().parseFromString('<main><section><h1>Someone Else</h1><a href="/in/other/">Profile</a></section></main>', "text/html");
-  expect(ownProfileLink(doc)).toBeNull();
-  doc.body.insertAdjacentHTML("beforeend", '<nav class="global-nav__me-content"><a href="/in/student/?tracking=1">View Profile</a></nav>');
-  expect(ownProfileLink(doc)).toBe(profile.url);
-  const modern = new DOMParser().parseFromString('<header><nav><a aria-label="View profile" href="https://www.linkedin.com/in/student/"></a></nav></header>', "text/html");
-  expect(ownProfileLink(modern)).toBe(profile.url);
-  for (const url of ["https://linkedin.com.evil.test/in/x/", "https://person@linkedin.com/in/x/", "https://linkedin.com/in/x/detail/", "http://linkedin.com/in/x/"]) expect(profileUrl(url)).toBeNull();
-});
-it("reads rendered profile facts without inventing an email or credentials", () => {
-  const doc = new DOMParser().parseFromString('<main><section><h1>Example Student</h1><div data-field="headline">Product analyst</div><div data-field="location">India</div></section></main>', "text/html");
-  expect(readNetworkProfile(doc, profile.url)).toMatchObject(profile);
-  expect(suggestedTarget(profile.headline)).toBe("Product Management");
-  expect(relevance("Founder at Example", "Product Management")).toContain("Founder");
-  expect(relevance("Senior Product Manager", "Product Management")).toContain("team leader");
-  expect(relevance("Software intern", "Product Management")).toBeNull();
-});
 it("prioritizes pending checks only after 24 hours and does not retry uncertain contacts", () => {
   const s = { ...emptyNetwork(), contacts: [contact({ state: "attention" }), contact({ url: "https://www.linkedin.com/in/pending/", state: "pending", requestedAt:100, checkedAt: 100 })] };
   expect(nextContact(s, DAY + 99)).toBeUndefined();
@@ -107,65 +89,33 @@ it("authorizes an action once, for the exact tab/profile, and revokes it on paus
   expect(await ask(false)).toEqual({ allowed: true }); await pauseNetwork(); expect(await ask(false)).toEqual({ allowed: false });
 });
 
-it("ignores suggested sidebar people and supports the live SDUI own-profile layout", () => {
- const doc = new DOMParser().parseFromString('<main><a href="/in/student/edit/intro/">Edit intro</a><div><div><h2>Example Student</h2></div><p>Product analyst</p><p>Example College</p><p>India</p><p>·</p><p>Contact info</p></div><aside><a href="/in/suggested/">Someone else</a></aside></main>', 'text/html');
- expect(ownProfileLink(doc)).toBe(profile.url); expect(readNetworkProfile(doc,profile.url)).toMatchObject(profile);
- doc.querySelector('main>a')?.remove(); expect(ownProfileLink(doc)).toBeNull();
+
+
+
+
+
+
+
+
+it("rejects look-alike profile addresses and judges relevance from the headline", () => {
+  for (const url of ["https://linkedin.com.evil.test/in/x/", "https://person@linkedin.com/in/x/", "https://linkedin.com/in/x/detail/", "http://linkedin.com/in/x/"]) expect(profileUrl(url)).toBeNull();
+  expect(suggestedTarget(profile.headline)).toBe("Product Management");
+  expect(relevance("Founder at Example", "Product Management")).toContain("Founder");
+  expect(relevance("Senior Product Manager", "Product Management")).toContain("team leader");
+  expect(relevance("Software intern", "Product Management")).toBeNull();
 });
 
-it("never treats generic view-profile links or a one-person sidebar as the account", () => {
-  const doc = new DOMParser().parseFromString('<main><a class="profile-card-profile-link" href="/in/stranger/">View profile</a></main><aside aria-label="Sidebar"><a href="/in/stranger/">View my profile</a></aside>', 'text/html');
-  expect(ownProfileLink(doc, true)).toBeNull();
-  expect(ownProfileLink(doc)).toBeNull();
-  doc.body.insertAdjacentHTML('beforeend', '<nav class="global-nav__me-content"><a href="/in/student/">View profile</a></nav>');
-  expect(ownProfileLink(doc)).toBe(profile.url);
-});
-
-it("recognizes the portalled Me menu without legacy classes or aria-controls", () => {
-  const doc = new DOMParser().parseFromString('<header><nav><button>Me</button></nav></header><main><a href="/in/stranger/">View profile</a></main><div data-portal><div><p>Example Student</p><a href="/in/student/?tracking=1"><span>View profile</span></a></div><div><h3>Account</h3><a href="/settings/">Settings &amp; Privacy</a></div><div><button>Sign out</button></div></div>', 'text/html');
-  expect(accountMenuProfileLink(doc)).toBe(profile.url);
-  expect(ownProfileLink(doc, true)).toBe(profile.url);
-  doc.querySelector('[data-portal]')?.remove();
-  expect(ownProfileLink(doc, true)).toBeNull();
-});
-
-it("does not combine unrelated settings/sign-out controls with profile cards", () => {
-  const doc = new DOMParser().parseFromString('<main><a href="/in/stranger/">View profile</a></main><div><a href="/settings/">Settings &amp; Privacy</a><button>Sign out</button></div>', 'text/html');
-  expect(accountMenuProfileLink(doc)).toBeNull();
-});
-
-it("ignores hidden Me menus and rejects ambiguous profile links in the menu", () => {
-  const doc = new DOMParser().parseFromString('<div hidden><a href="/in/old/">View profile</a><button>Settings &amp; Privacy</button><button>Sign out</button></div><div id="current"><a href="/in/student/">View profile</a><button>Settings &amp; Privacy</button><button>Sign out</button></div>', 'text/html');
-  const visible = (e: Element) => !e.closest('[hidden]');
-  expect(accountMenuProfileLink(doc, visible)).toBe(profile.url);
-  doc.querySelector('#current')!.insertAdjacentHTML('beforeend', '<a href="/in/other/">View profile</a>');
-  expect(accountMenuProfileLink(doc, visible)).toBeNull();
-});
-
-it("ignores hidden account links and rejects conflicting account-menu links", () => {
-  const doc = new DOMParser().parseFromString('<nav class="global-nav__me-content"><a hidden href="/in/old/">Old account</a><a href="/in/student/">View profile</a></nav>', 'text/html');
-  expect(ownProfileLink(doc, false, e => !e.hasAttribute('hidden'))).toBe(profile.url);
-  expect(ownProfileLink(doc)).toBeNull();
-});
-
-it("reads role-based main content and retains the final education section", () => {
-  const doc = new DOMParser().parseFromString('<div role="main"><a href="/in/student/edit/intro/">Edit intro</a><div><div><h2>Example Student</h2></div><p>Product analyst</p></div><div><h2>Education</h2></div><p>Example University, 2026</p></div>', 'text/html');
-  expect(ownProfileEditLink(doc, profile.url)).toBe(true);
-  expect(ownProfileEditLink(doc, contact().url)).toBe(false);
-  expect(readNetworkProfile(doc, profile.url)).toMatchObject({name: profile.name, headline: profile.headline});
-  expect(readNetworkProfile(doc, profile.url).rawText).toContain('Example University, 2026');
-});
-
-it("imports the verified own profile in place without navigating an outreach tab", async () => {
-  vi.stubGlobal('chrome', { runtime: {id:'abc', getURL: (p:string) => `chrome-extension://abc/${p}`, onMessage:{addListener:vi.fn()}}, tabs:{query:vi.fn().mockResolvedValue([{id:7,active:true,url:profile.url}])} });
+it("finds the signed-in person through linkedin.com/in/me/ and reads that profile in the same tab", async () => {
+  vi.stubGlobal('chrome', { runtime: {id:'abc', getURL: (p:string) => `chrome-extension://abc/${p}`, onMessage:{addListener:vi.fn()}}, tabs:{sendMessage:vi.fn()} });
   vi.mocked(networkCommand).mockResolvedValueOnce({url:profile.url}).mockResolvedValueOnce(profile);
   registerNetworkMessages();
   const listener = vi.mocked(chrome.runtime.onMessage.addListener).mock.calls[0]![0];
   const reply = await new Promise(resolve => listener({kind:'network',action:'import'}, {id:'abc',url:'chrome-extension://abc/sidepanel.html',origin:'chrome-extension://abc'}, resolve));
   expect(reply).toMatchObject({ok:true,data:{profile}});
-  expect(networkTab).not.toHaveBeenCalled();
+  expect(networkTab).toHaveBeenCalledWith('https://www.linkedin.com/in/me/', expect.any(AbortSignal));
   expect(prepareDossier).not.toHaveBeenCalled();
-  expect(networkCommand).toHaveBeenLastCalledWith(7, {action:'profile',url:profile.url,owner:profile.url}, expect.any(AbortSignal));
+  expect(networkCommand).toHaveBeenLastCalledWith(9, {action:'profile',url:profile.url}, expect.any(AbortSignal));
+  expect((await getNetwork()).ownerVerifiedAt).toBe(Date.now());
 });
 
 function networkUi() {

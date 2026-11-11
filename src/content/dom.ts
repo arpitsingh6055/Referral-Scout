@@ -3,15 +3,22 @@ export const visible = (e: Element): boolean => e.getClientRects().length > 0 &&
 export function find(variants: readonly string[], root: ParentNode = document): HTMLElement | null {
   for (const q of variants) { const e = [...root.querySelectorAll<HTMLElement>(q)].find(visible); if (e) return e; } return null;
 }
+/** LinkedIn draws its messaging window, and some dialogs, inside an open shadow root that document.querySelector cannot see. */
+export function roots(): ParentNode[] {
+  const found: ParentNode[] = [document];
+  for (const host of document.querySelectorAll("#interop-outlet, [data-testid='interop-shadowdom']")) if (host.shadowRoot) found.push(host.shadowRoot);
+  return found;
+}
+export function queryAll<T extends HTMLElement = HTMLElement>(selector: string): T[] { return roots().flatMap(r => [...r.querySelectorAll<T>(selector)]); }
 export function guard(signal: AbortSignal): void {
   if (signal.aborted) throw new DOMException("Paused", "AbortError");
   const site = siteForHost(location.hostname); if (!site) throw new Error("HALT: Unrecognized site");
   if (find(selectors[site].challenge) || /checkpoint|challenge/.test(location.pathname)) throw new Error("HALT: CAPTCHA or checkpoint detected");
-  if (find(selectors[site].login) && (site === "linkedin" || site === "gmail")) throw new Error("HALT: Signed out");
-  const notices = [...document.querySelectorAll('[role="alert"], [role="alertdialog"], [role="status"]')].filter(visible).map(e => (e as HTMLElement).innerText).join(" ");
+  if (site === "linkedin" && find(selectors.linkedin.login)) throw new Error("HALT: Signed out");
+  const notices = queryAll('[role="alert"], [role="alertdialog"], [role="status"]').filter(visible).map(e => (e as HTMLElement).innerText).join(" ");
   if (/unusual activity|suspicious activity|sending limit|too many requests|rate limit|verify you are human/i.test(notices)) throw new Error("HALT: Site security or rate-limit warning");
   // LinkedIn shows its invitation quota as a dialog, not an alert.
-  const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(visible).map(e => (e as HTMLElement).innerText).join(" ");
+  const dialogs = queryAll('[role="dialog"]').filter(visible).map(e => (e as HTMLElement).innerText).join(" ");
   if (/weekly invitation limit|reached the weekly|invitation limit/i.test(`${notices} ${dialogs}`)) throw new Error("HALT: LinkedIn weekly invitation limit reached");
   if (/unusual activity|verify you are human|too many requests/i.test(document.title)) throw new Error("HALT: Site restriction page");
 }
@@ -48,7 +55,9 @@ function pasteText(editor: HTMLElement, value: string): boolean {
 }
 function selectAll(editor: HTMLElement): void {
   const range = document.createRange(); range.selectNodeContents(editor);
-  const selection = getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+  // Inside a shadow root the selection belongs to that root (Chromium), not to the document.
+  const root = editor.getRootNode() as Node & { getSelection?: () => Selection | null };
+  const selection = root.getSelection?.() ?? getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
 }
 export function insert(editor: HTMLElement, value: string): void {
   editor.focus();

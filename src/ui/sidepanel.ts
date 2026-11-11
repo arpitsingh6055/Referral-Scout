@@ -213,7 +213,6 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
   const panel = node('div');
   const roles = field({ label: 'Roles you are looking for', value: settings.roles.join('\n'), multiline: true, rows: 2, help: 'One per line, for example "Product Management internship".' });
   const location = field({ label: 'Where', value: s.location, help: 'A country or city. Leave generic for the widest search.' });
-  const searchMode = choice('Where to look', settings.searchMode, [['both', 'Jobs and people'], ['people', 'People only'], ['jobs', 'Jobs only (people at companies hiring now)']]);
   const noteTemplate = field({ label: 'Invitation note', value: settings.noteTemplate, multiline: true, rows: 3, help: 'Placeholders: {firstName} {myFirstName} {target} {company}. LinkedIn allows 200 characters. Write several versions separated by a line with --- and each person gets one.' });
   const template = field({ label: 'Message after they accept', value: s.template, multiline: true, rows: 4, help: 'Sent once, only after LinkedIn confirms the connection. Same placeholders.' });
   const noteSlot = node('div'), followSlot = node('div');
@@ -229,7 +228,7 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
 
   const who = node('section', '', 'card'); who.append(node('h2', 'Who to contact', 'card-title'), node('p', 'We skip students, open-to-work profiles, former roles, assistants, and anyone you already know.', 'card-sub'));
   const types = node('div', '', 'types'); for (const [k, v] of Object.entries(categoryLabels)) types.append(node('span', v, `type ${k}`));
-  who.append(types, roles.wrap, location.wrap, searchMode.wrap);
+  who.append(types, roles.wrap, location.wrap);
   const words = node('section', '', 'card'); words.append(node('h2', 'Your messages', 'card-title'), node('p', 'What we send on your behalf. Review it once, then it is reused.', 'card-sub'), noteTemplate.wrap, noteSlot, template.wrap, followSlot);
 
   /* pace and safety */
@@ -254,7 +253,7 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
     if (!nextRoles.length) throw new Error('Enter at least one role you are looking for.');
     const next: OutreachSettings = { ...settings, roles: nextRoles, aiMode: aiMode.input.value as OutreachSettings['aiMode'], noteTemplate: noteTemplate.input.value.trim() || settings.noteTemplate,
       weeklyInvites: optional(weekly.input.value), activeHours: hours.input.value === 'on' ? (settings.activeHours ?? { from: 8, to: 22 }) : null,
-      searchMode: searchMode.input.value as OutreachSettings['searchMode'], outreachMode: outreachMode.input.value as OutreachSettings['outreachMode'], noteMode: noteMode.input.value as OutreachSettings['noteMode'],
+      outreachMode: outreachMode.input.value as OutreachSettings['outreachMode'], noteMode: noteMode.input.value as OutreachSettings['noteMode'],
       followupMode: followupMode.input.value as OutreachSettings['followupMode'], paceMinutes: Number(pace.input.value), dailyInvites: optional(invites.input.value), dailyMessages: optional(messages.input.value),
       maxPending: optional(pendingCap.input.value), companyAllowlist: csv(allow.input.value), companyExclusions: csv(exclude.input.value) };
     await request({ kind: 'network', action: 'save', target: nextRoles[0]!, location: location.input.value, template: template.input.value, settings: next });
@@ -263,7 +262,7 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
   panel.append(who, words, advanced.box, chatGpt);
   if (!s.active) panel.append(button('Save changes', async () => { await save(); await act({ kind: 'network', action: 'status' }, 'Changes saved.'); }, 'btn block'));
   else panel.append(node('p', 'Pause outreach to change settings.', 'fine'));
-  for (const f of [roles, location, searchMode, noteTemplate, template, outreachMode, followupMode, noteMode, hours, pace, invites, weekly, messages, pendingCap, allow, exclude, aiMode]) f.input.disabled = s.active;
+  for (const f of [roles, location, noteTemplate, template, outreachMode, followupMode, noteMode, hours, pace, invites, weekly, messages, pendingCap, allow, exclude, aiMode]) f.input.disabled = s.active;
   return { panel, save, aiMode: aiMode.input };
 }
 
@@ -329,15 +328,6 @@ function buildPeople(s: NetworkState, list: HTMLElement, redraw: () => void): vo
     list.append(e);
   }
   for (const p of people) list.append(personCard(s, p));
-  const jobs = s.jobs ?? [];
-  if (jobs.length) {
-    const { box, body } = accordion('jobs', 'Matched jobs', String(jobs.length));
-    for (const j of jobs.slice(-40).reverse()) {
-      const row = node('div', '', 'person'); row.append(link(j.title, j.url, 'person-name'), node('p', `${j.companyName} · ${j.location}`, 'muted small'), node('p', `${s.contacts.filter(c => c.jobIds?.includes(j.id)).length} contacts linked · seen ${when(j.sourceCapturedAt)}`, 'reason'));
-      body.append(row);
-    }
-    list.append(box);
-  }
 }
 function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
   const card = node('article', '', 'person'), head = node('div', '', 'person-head'), info = node('div');
@@ -376,7 +366,7 @@ function buildActivity(s: NetworkState): HTMLElement {
     const r = (await request({ kind: 'network', action: 'selfTest' }) as NetworkState & { selfTest?: { page: string; found?: number; problems: string[] } }).selfTest;
     if (!r) throw new Error('No result from the page.');
     if (r.problems.length) notify('error', `${r.page}: ${r.problems.join(' ')}`); else notify('success', `${r.page} page reads correctly${r.found !== undefined ? ` (${r.found} found)` : ''}.`);
-  }, 'btn'), node('p', 'Open a LinkedIn people search, jobs search or profile in a tab, then press this. It only reads the page.', 'field-help'));
+  }, 'btn'), node('p', 'Open a LinkedIn people search or a profile in a tab, then press this. It only reads the page.', 'field-help'));
   const diag = node('pre', '', 'source-preview'), d = node('details', '', 'inline'); d.append(node('summary', 'Technical details'),
     button('Refresh ChatGPT task details', async () => { diag.textContent = JSON.stringify((await request({ kind: 'network', action: 'diagnostics' }) as NetworkState & { diagnostics?: unknown[] }).diagnostics ?? [], null, 2); }, 'btn sm'), diag);
   tools.append(d);
@@ -385,7 +375,7 @@ function buildActivity(s: NetworkState): HTMLElement {
     const out = await request({ kind: 'network', action: 'export' }), url = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' }));
     const a = node('a'); a.href = url; a.download = 'cold-contact-pro-export.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, 'btn'), button('Delete everything', async () => {
-    if (confirm('Delete your profile, CV, dossier, jobs, contacts and task history from this device? This does not undo anything on LinkedIn.')) await act({ kind: 'network', action: 'clear', confirm: true }, 'All local data deleted.');
+    if (confirm('Delete your profile, CV, dossier, contacts and task history from this device? This does not undo anything on LinkedIn.')) await act({ kind: 'network', action: 'clear', confirm: true }, 'All local data deleted.');
   }, 'btn ghost danger'));
   panel.append(feed, tools, data);
   return panel;

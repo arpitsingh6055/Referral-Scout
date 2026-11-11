@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { networkRequest, networkProfileSchema, profileUrl, networkKey, suggestedTarget, defaultSettings, type NetworkState } from '../shared/network';
 import { trustedExtension, trustedSite } from '../validators/security';
-import { getNetwork, updateNetwork, pauseNetwork, networkTick, processContact, resetMirror } from './network';
-import { networkCommand, networkTab, readyNetworkTab } from './network-browser';
+import { getNetwork, updateNetwork, pauseNetwork, networkTick, processContact } from './network';
+import { networkCommand, networkTab } from './network-browser';
 import { acquire, release, renew } from './lease';
 import { all, remove } from '../storage/database';
 import { prepareDossier, prepareInvitation, prepareIntroduction, clearAiJobs, recoverDossier } from './network-ai';
@@ -10,28 +10,20 @@ import { validatedDossier } from '../shared/dossier';
 
 const authorization=z.object({kind:z.literal('network.authorize'),id:z.uuid(),claim:z.boolean()});
 async function importProfile():Promise<void>{
-  const tabs=await chrome.tabs.query({url:['https://www.linkedin.com/*','https://linkedin.com/*']});
-  const focused=await chrome.tabs.query({active:true,lastFocusedWindow:true});
-  const tab=tabs.find(t=>t.id===focused[0]?.id)??tabs.find(t=>t.active)??(tabs.length===1?tabs[0]:undefined);
-  if(tab?.id===undefined)throw new Error('Open LinkedIn in a signed-in tab, then choose Read my LinkedIn profile.');
   const signal=new AbortController().signal;
-  await readyNetworkTab(tab.id,signal);
-  const {url:identity}=z.object({url:z.string().refine(v=>profileUrl(v)===v)}).parse(await networkCommand(tab.id,{action:'identity'},signal));
+  // linkedin.com/in/me/ always redirects to the signed-in person's own profile, so no menu has to be opened or guessed.
+  const tab=await networkTab('https://www.linkedin.com/in/me/',signal);
+  const {url:identity}=z.object({url:z.string().refine(v=>profileUrl(v)===v)}).parse(await networkCommand(tab,{action:'identity'},signal));
   const current=await getNetwork();
   if(current.profile&&current.profile.url!==identity&&(current.cv||current.contacts.length||current.dossier))throw new Error('Different LinkedIn account detected. Export or clear this account’s saved outreach before switching; CVs are owner-scoped.');
-  const profileTab=profileUrl(tab.url??'')===identity?tab.id:await networkTab(identity,signal);
-  const profile=networkProfileSchema.parse(await networkCommand(profileTab,{action:'profile',url:identity,owner:identity},signal));
-  await updateNetwork(s=>({...s,profile,profileCapturedAt:Date.now(),...(s.profile?.url===profile.url?{}:{dossier:'',dossierSavedAt:0}),
+  const profile=networkProfileSchema.parse(await networkCommand(tab,{action:'profile',url:identity},signal));
+  await updateNetwork(s=>({...s,profile,profileCapturedAt:Date.now(),ownerVerifiedAt:Date.now(),...(s.profile?.url===profile.url?{}:{dossier:'',dossierSavedAt:0}),
     contacts:s.contacts.map(p=>{if(p.messagedAt)return p; const {invitationNote:oldNote,...rest}=p;void oldNote;return {...rest,message:''};}),
     target:s.profile?s.target:suggestedTarget(profile.headline,profile.rawText??''),location:s.profile?s.location:(profile.location.split(',').pop()?.trim()||'India'),
     status:'Your LinkedIn profile is saved. Check your target and introduction below, then press Start outreach.'}));
 }
 async function clearAllNetwork():Promise<void>{
-  resetMirror();
   await remove('meta',networkKey);await clearAiJobs();
-  for(const store of ['owners','searches','outreachJobs','outreachCompanies','contacts','aiJobs','actions','outreachSettings'] as const){
-    for(const entry of await all(store))await remove(store,entry.id);
-  }
   await remove('meta','network-tab');
 }
 function statusView(s:NetworkState):NetworkState {
@@ -40,7 +32,7 @@ function statusView(s:NetworkState):NetworkState {
   return {...s,
     ...(s.profile?{profile:(()=>{const {sections:original,...rest}=s.profile!;void original;return {...rest,rawText:''};})()}:{}),
     ...(s.cv?{cv:{...s.cv,text:'',textVersion:2,characterCount:s.cv.characterCount??s.cv.text.length}}:{}),
-    contacts:s.contacts.map(p=>({...p,rawText:''})),jobs:(s.jobs??[]).map(j=>({...j,descriptionText:''}))};
+    contacts:s.contacts.map(p=>({...p,rawText:''}))};
 }
 export function registerNetworkMessages():void{
   chrome.runtime.onMessage.addListener((input:unknown,sender,respond)=>{
@@ -68,7 +60,7 @@ export function registerNetworkMessages():void{
       if(req.action==='selfTest'){
         const tabs=await chrome.tabs.query({url:['https://www.linkedin.com/*','https://linkedin.com/*']});
         const tab=tabs.find(t=>t.active)??tabs[0];
-        if(!tab?.id)throw new Error('Open a LinkedIn people search, jobs search or profile in a tab first.');
+        if(!tab?.id)throw new Error('Open a LinkedIn people search or a profile in a tab first.');
         const result=await networkCommand(tab.id,{action:'selftest'},new AbortController().signal);
         return {...statusView(await getNetwork()),selfTest:result};
       }
@@ -108,7 +100,7 @@ export function registerNetworkMessages():void{
           await updateNetwork(s=>({...s,status:'Opening visible ChatGPT and waiting for a verified dossier response…'}));
           try{
             const dossier=await prepareDossier(await getNetwork(),signal);
-            await updateNetwork(s=>({...s,dossier,dossierSavedAt:Date.now(),status:'Validated dossier saved locally. Ready to discover jobs and people.'}));
+            await updateNetwork(s=>({...s,dossier,dossierSavedAt:Date.now(),status:'Validated dossier saved locally. Ready to find people.'}));
           }catch(error){
             await updateNetwork(s=>({...s,status:`ChatGPT processing needs attention: ${error instanceof Error?error.message:String(error)}. Original source evidence remains saved.`}));
             throw error;
@@ -149,7 +141,7 @@ export function registerNetworkMessages():void{
           if(!person||person.state!=='review'||!person.approvalKind)throw new Error('This recipient has no valid send awaiting review.');
           await processContact(fresh,person,signal,true);
         }
-        if(req.action==='removeContact'){await updateNetwork(s=>({...s,contacts:s.contacts.filter(p=>p.url!==req.url)}));if(current.profile)await remove('contacts',`${current.profile.url}|${req.url}`);}
+        if(req.action==='removeContact'){await updateNetwork(s=>({...s,contacts:s.contacts.filter(p=>p.url!==req.url)}));}
         if(req.action==='skip')await updateNetwork(s=>{const p=s.contacts.find(p=>p.url===req.url);if(p){p.state='skipped';p.reason='Skipped. No future action is scheduled.';}return s;});
         if(req.action==='clear')await clearAllNetwork();
         return statusView(await getNetwork());

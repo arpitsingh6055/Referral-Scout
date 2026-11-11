@@ -1,119 +1,109 @@
 import { networkProfileSchema, profileUrl, type NetworkProfile } from "../shared/network";
-import { first, textOf, peopleCards } from "./linkedin";
 
-// SDUI renders the Me menu in a portal, outside header/nav, without the old
-// global-nav classes or aria-controls. Identify the account menu by its controls.
-export function accountMenuProfileLink(doc: ParentNode, usable: (e: Element) => boolean = () => true): string | null {
-  const urls = new Set<string>();
-  for (const signOut of doc.querySelectorAll<HTMLElement>('a, button, [role="menuitem"], [role="button"]')) {
-    if (!usable(signOut) || !/^sign out$/i.test(textOf(signOut))) continue;
-    let menu = signOut.parentElement;
-    for (let depth = 0; menu && depth < 8; depth++, menu = menu.parentElement) {
-      if (menu.matches('body, html, main, [role="main"]') || menu.querySelector('main, [role="main"]')) break;
-      const controls = [...menu.querySelectorAll<HTMLElement>('a, button, [role="menuitem"], [role="button"]')].filter(usable);
-      if (!controls.some(e => /^settings\s*(?:&|and)\s*privacy$/i.test(textOf(e)))) continue;
-      const links = [...menu.querySelectorAll<HTMLAnchorElement>('a[href*="/in/"]')].filter(a => usable(a) && /^view (?:my )?profile$/i.test(a.getAttribute('aria-label') || textOf(a)));
-      if (!links.length) continue;
-      for (const link of links) { const url = profileUrl(link.getAttribute('href') ?? ''); if (url) urls.add(url); }
-      break;
-    }
+/*
+ * LinkedIn page readers.
+ *
+ * LinkedIn's current pages (checked live, November 2026) use generated class names
+ * such as "i87k8o" that change between releases, so nothing here depends on a class.
+ * Everything is found by meaning instead: roles, aria-labels, link targets, visible
+ * text, and LinkedIn's own `componentkey` markers where they exist.
+ */
+
+export const textOf = (node: Element | null | undefined): string =>
+  ((node instanceof HTMLElement ? node.innerText || node.textContent : node?.textContent) ?? "").replace(/\s+/g, " ").trim();
+
+const mainOf = (doc: ParentNode): Element | null => doc.querySelector('main, [role="main"]');
+const DEGREE = /^[·•]?\s*(1st|2nd|3rd)\+?$/i;
+const SEPARATOR = /^[·•|]$/;
+
+/** The card at the top of a profile: name, headline, location and the Connect / Message / More controls. */
+export function profileHeader(doc: ParentNode): HTMLElement | null {
+  const keyed = [...doc.querySelectorAll<HTMLElement>('[componentkey$="Topcard"]')];
+  if (keyed.length === 1) return keyed[0]!;
+  // Fallback when the marker is renamed: the smallest block around the name that also holds "Contact info".
+  const name = mainOf(doc)?.querySelector("h1, h2");
+  for (let node = name?.parentElement; node && !node.matches('main, [role="main"], body'); node = node.parentElement) {
+    if (node.querySelector('a[href*="/overlay/contact-info"]')) return node;
   }
-  return urls.size === 1 ? [...urls][0]! : null;
+  return null;
 }
 
-// Only account navigation / the feed's own-profile card can establish the owner.
-// A profile in main content could be someone else's profile.
-export function ownProfileLink(doc: ParentNode, feed = false, usable: (e: Element) => boolean = () => true): string | null {
-  const unique = (links: HTMLAnchorElement[], edit = false): string | null => {
-    const urls = new Set(links.filter(usable).map(a => profileUrl((a.getAttribute("href") ?? "").replace(edit ? /\/edit\/intro\/?(?:\?.*)?$/ : /$^/, "/"))).filter((url): url is string => !!url));
-    return urls.size === 1 ? [...urls][0]! : null;
-  };
-  const edits = [...doc.querySelectorAll<HTMLAnchorElement>('main a[href*="/edit/intro"], [role="main"] a[href*="/edit/intro"]')];
-  if (edits.some(usable)) return unique(edits, true);
-  /* Account-menu links must stay inside account navigation. Generic “View
-     profile” links and sidebars can belong to recommended people. */
-  const selectors = [
-    'header nav a[aria-label="View profile" i][href*="/in/"]',
-    '.global-nav__me-content a[href*="/in/"]'
-  ];
-  if (feed) selectors.push(
-    '.feed-identity-module a[href*="/in/"]',
-    'a[href*="/in/"][data-control-name="identity_profile_photo"]'
-  );
-  return accountMenuProfileLink(doc, usable) ?? unique([...doc.querySelectorAll<HTMLAnchorElement>(selectors.join(','))]);
-}
+/** True only on the signed-in person's own profile, which is the only one with an "Edit intro" link. */
 export function ownProfileEditLink(doc: ParentNode, expected: string, usable: (e: Element) => boolean = () => true): boolean {
-  for (const a of doc.querySelectorAll<HTMLAnchorElement>('main a[href*="/edit/intro"], [role="main"] a[href*="/edit/intro"]')) {
+  for (const a of doc.querySelectorAll<HTMLAnchorElement>('a[href*="/edit/intro"]')) {
     const url = profileUrl((a.getAttribute("href") ?? "").replace(/\/edit\/intro\/?(?:\?.*)?$/, "/"));
     if (usable(a) && url === expected) return true;
   }
   return false;
 }
-export function profileHeader(doc: ParentNode): HTMLElement | null {
-  const name = doc.querySelector<HTMLElement>('main h1, main h2, [role="main"] h1, [role="main"] h2');
-  if (!name) return null;
-  const section = name.closest<HTMLElement>('section'); if (section) return section;
-  let top = name.parentElement;
-  while (top?.parentElement && !top.matches('main, [role="main"]') && !top.querySelector('p, [data-field="headline"], .text-body-medium')) top = top.parentElement;
-  if (top?.matches('main, [role="main"]')) return null;
-  return top;
+
+export interface TopCardFacts { name: string; headline: string; location: string; degree?: number; company?: string }
+
+/** Reads the top card as ordered lines: [degree] headline, location, "Contact info", company, school, ... */
+export function topCardFacts(top: ParentNode): TopCardFacts {
+  const name = textOf(top.querySelector("h1, h2"));
+  const lines = [...top.querySelectorAll("p")].map(textOf).filter(Boolean);
+  const degreeLine = lines.find(l => DEGREE.test(l));
+  const degree = degreeLine ? Number(DEGREE.exec(degreeLine)![1]![0]) : undefined;
+  const body = lines.filter(l => !DEGREE.test(l) && !SEPARATOR.test(l) && l !== name && !/^\((?:he|she|they)\b[^)]*\)$/i.test(l));
+  const contact = body.findIndex(l => /^contact info$/i.test(l));
+  const before = contact >= 0 ? body.slice(0, contact) : body.slice(0, 2);
+  const after = contact >= 0 ? body.slice(contact + 1) : [];
+  const headline = before[0] ?? "";
+  const location = before.length > 1 ? before[before.length - 1]! : "";
+  const company = after.find(l => !/^\d[\d,+]*$/.test(l) && !/connections?$|followers?$|mutual connection/i.test(l));
+  return { name, headline, location, ...(degree ? { degree } : {}), ...(company ? { company } : {}) };
 }
+
+const SECTION = /^(about|experience|education|skills|projects|licenses|certifications|volunteering|honors|languages|publications)/i;
+
 export function readNetworkProfile(doc: ParentNode, url: string): NetworkProfile {
   const canonical = profileUrl(url); if (!canonical) throw new Error("Open a LinkedIn personal profile.");
-  const main = doc.querySelector('main, [role="main"]'); if (!main) throw new Error("LinkedIn has not loaded the profile yet.");
-  const nameNode = main.querySelector("h1, h2"), top = profileHeader(doc);
-  if (!top || !nameNode) throw new Error("Could not read this profile. Keep LinkedIn open and try again.");
-  const headline = textOf(first(top, [".text-body-medium.break-words", "[data-field='headline']", ".text-body-medium", "p"]));
-  if (!headline) throw new Error("Could not read the profile headline. Refresh LinkedIn and try again.");
-  const about = main.querySelector("#about")?.closest("section");
-  const paragraphs = [...top.querySelectorAll('p')].map(textOf);
-  const contactIndex = paragraphs.findIndex(p => /^contact info$/i.test(p));
-  const location = textOf(first(top, [".text-body-small.inline.t-black--light.break-words", "[data-field='location']"])) || (contactIndex > 1 ? paragraphs.slice(0, contactIndex).filter(p => p !== '·').at(-1) : '') || '';
-  const sections: string[] = [textOf(top)];
-  const heads = [...main.querySelectorAll('h1,h2')];
-  for (let i = 1; i < heads.length; i++) {
-    const heading = heads[i]!;
-    if (!/^(about|experience|education|skills|projects|licenses|certifications|volunteering|honors|languages|publications)/i.test(textOf(heading))) continue;
-    const range = heading.ownerDocument.createRange(); range.setStartBefore(heading);
+  const main = mainOf(doc); if (!main) throw new Error("LinkedIn has not loaded the profile yet.");
+  const top = profileHeader(doc);
+  if (!top) throw new Error("Could not find the top of this profile. LinkedIn may have changed its layout.");
+  const facts = topCardFacts(top);
+  if (!facts.name) throw new Error("Could not read the name on this profile.");
+  if (!facts.headline) throw new Error("Could not read the profile headline. Refresh LinkedIn and try again.");
+  // Each profile section is the text between one heading and the next.
+  const heads = [...main.querySelectorAll("h2")];
+  const sections: Record<string, string> = {};
+  heads.forEach((heading, i) => {
+    const title = textOf(heading); if (!SECTION.test(title)) return;
+    const range = heading.ownerDocument.createRange(); range.setStartAfter(heading);
     const next = heads[i + 1]; if (next) range.setEndBefore(next); else range.setEnd(main, main.childNodes.length);
-    sections.push((range.cloneContents().textContent ?? ""));
-  }
-  return networkProfileSchema.parse({ name: textOf(nameNode).slice(0, 150), url: canonical, headline: headline.slice(0, 500), location: location.slice(0, 200), about: textOf(about?.querySelector('.inline-show-more-text') ?? null), rawText: sections.join('\n\n') });
+    sections[title.toLowerCase()] = (range.cloneContents().textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 6000);
+  });
+  const rawText = [`${facts.name}\n${facts.headline}\n${facts.location}`, ...Object.entries(sections).map(([k, v]) => `${k.toUpperCase()}\n${v}`)].join("\n\n");
+  return networkProfileSchema.parse({
+    name: facts.name.slice(0, 150), url: canonical, headline: facts.headline.slice(0, 500), location: facts.location.slice(0, 200),
+    about: (sections["about"] ?? "").slice(0, 3000), rawText, ...(facts.degree ? { degree: facts.degree } : {}), ...(facts.company ? { current: facts.company } : {})
+  });
 }
+
+/** One result in People search. Each is a list item whose first profile link is the person; later links are mutual connections. */
 export function networkPeople(doc: ParentNode): NetworkProfile[] {
-  return peopleCards(doc).flatMap(p => {
-    const parsed = networkProfileSchema.safeParse({ name: p.name.replace(/\s*[•·]\s*(1st|2nd|3rd\+?).*$/, "").slice(0, 150), url: p.url, headline: p.title.slice(0, 500), location: p.location.slice(0, 200), about: "", ...(p.degree ? { degree: p.degree } : {}) });
-    return parsed.success && parsed.data.headline ? [parsed.data] : [];
-  });
-}
-
-
-/** Only facts actually present on rendered LinkedIn Jobs cards. */
-export function networkJobs(doc: ParentNode, capturedAt = Date.now()): import('../shared/network').NetworkJob[] {
-  const items = [...doc.querySelectorAll<HTMLElement>('[data-job-id], .job-card-container, .jobs-search-results__list-item, li.scaffold-layout__list-item')];
+  const main = mainOf(doc) ?? doc;
   const seen = new Set<string>();
-  return items.flatMap(card => {
-    const a = card.querySelector<HTMLAnchorElement>('a[href*="/jobs/view/"]');
-    const raw = card.getAttribute('data-job-id') || card.querySelector('[data-job-id]')?.getAttribute('data-job-id') || a?.href.match(/\/jobs\/view\/(\d+)/)?.[1];
-    if (!raw || !/^\d+$/.test(raw) || seen.has(raw)) return [];
-    const url = `https://www.linkedin.com/jobs/view/${raw}/`;
-    const title = textOf(card.querySelector<HTMLElement>('.job-card-list__title, .job-card-container__link, .job-card-job-posting-card-wrapper__title, a[href*="/jobs/view/"]'));
-    const company = textOf(card.querySelector<HTMLElement>('.job-card-container__primary-description, .artdeco-entity-lockup__subtitle, [data-test-job-card-company], .job-card-container__company-name'));
-    if (!title || !company) return [];
-    const companyLink = card.querySelector<HTMLAnchorElement>('a[href*="/company/"]')?.href;
-    const location = textOf(card.querySelector<HTMLElement>('.job-card-container__metadata-item, .job-card-container__metadata-wrapper, [data-test-job-location]'));
-    seen.add(raw);
-    return [{id:raw,url,title,companyName:company, ...(companyLink?{companyUrl:companyLink.split('?')[0]}:{}),location,sourceCapturedAt:capturedAt,captureStatus:'list' as const,matchingReasons:[]}];
+  return [...main.querySelectorAll('[role="listitem"]')].flatMap(item => {
+    const url = profileUrl(item.querySelector<HTMLAnchorElement>('a[href*="/in/"]')?.getAttribute("href") ?? "");
+    if (!url || seen.has(url)) return [];
+    const lines = [...item.querySelectorAll("p")].map(textOf).filter(Boolean);
+    const lead = /^(.*?)\s*[•·]\s*(1st|2nd|3rd)\+?/i.exec(lines[0] ?? "");
+    const name = (lead ? lead[1]! : lines[0] ?? "").trim();
+    const rest = lines.slice(1).filter(l => !DEGREE.test(l));
+    const isMeta = (l: string | undefined) => !l || /^(current|past|summary|skills):/i.test(l) || /mutual connection|followers?$/i.test(l);
+    const headline = isMeta(rest[0]) ? "" : rest[0]!;
+    const location = isMeta(rest[1]) ? "" : rest[1]!;
+    const current = /^current:\s*(.+)$/i.exec(lines.find(l => /^current:/i.test(l)) ?? "")?.[1];
+    const parsed = networkProfileSchema.safeParse({ name: name.slice(0, 150), url, headline: headline.slice(0, 500), location: location.slice(0, 200), about: "",
+      ...(lead ? { degree: Number(lead[2]![0]) } : {}), ...(current ? { current: current.slice(0, 300) } : {}) });
+    if (!parsed.success || !parsed.data.headline) return [];
+    seen.add(url); return [parsed.data];
   });
 }
-export function networkJobDetail(doc: ParentNode, url: string): Partial<import('../shared/network').NetworkJob> {
-  const main = doc.querySelector<HTMLElement>('main, [role="main"]');
-  const heading = main?.querySelector<HTMLElement>('h1, .jobs-unified-top-card__job-title');
-  const company = main?.querySelector<HTMLAnchorElement>('a[href*="/company/"]');
-  const description = main?.querySelector<HTMLElement>('.jobs-description-content__text, #job-details, .jobs-box__html-content, [data-test-job-description]');
-  return {url,title:textOf(heading ?? null),companyName:textOf(company ?? null),...(company?.href ? {companyUrl:company.href.split('?')[0]}:{}),descriptionText:description?.innerText || description?.textContent || '',sourceCapturedAt:Date.now(),captureStatus:description ? 'detail' : 'unknown'};
-}
-export function networkCompany(doc: ParentNode): { name:string; description:string; url:string; capturedAt:number } {
-  const main = doc.querySelector<HTMLElement>('main, [role="main"]');
-  return {name:textOf(main?.querySelector<HTMLElement>('h1') ?? null),description:(main?.querySelector<HTMLElement>('.org-about-us-organization-description')?.innerText || main?.textContent || '').slice(0,16000),url:location.href,capturedAt:Date.now()};
+/** "Recruiter at LotusFlare" -> "LotusFlare". */
+export function companyFromCurrent(current: string | undefined): string | undefined {
+  const match = /\bat\s+(.+?)(?:\s+-\s+.*)?$/i.exec(current ?? "");
+  return match?.[1]?.replace(/\.{3}.*$/, "").trim() || undefined;
 }
