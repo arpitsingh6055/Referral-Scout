@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classify, companyMatches, companyOf, functionWords, locationFits, normalizeCompany, planSearch, searchCombos, MAX_SEARCH_PAGES, suggestTarget } from '../src/shared/targeting';
-import { DAY, defaultSettings, emptyNetwork, fitNote, nextContact, renderNote, withinActiveHours, type NetworkContact } from '../src/shared/network';
+import { DAY, defaultNoteTemplate, defaultSettings, emptyNetwork, fitNote, nextContact, renderNote, withinActiveHours, type NetworkContact } from '../src/shared/network';
 
 const product = { roles: ['Product Management internship'], location: 'India' };
 const cat = (headline: string, extra: { degree?: number; location?: string } = {}, ctx = product) => classify({ headline, ...extra }, ctx)?.category ?? null;
@@ -178,5 +178,21 @@ describe('message variants', () => {
     expect(new Set(notes.map(n => n.match(/version \w+/)![0])).size).toBeGreaterThan(1);
     expect(pickVariant(variants, 'Priya Sharma')).toBe(pickVariant(variants, 'Priya Sharma'));
     notes.forEach(n => expect(n).not.toContain('---'));
+  });
+});
+
+describe('the closing line of the first note fits who is being contacted', () => {
+  const settings = { noteTemplate: defaultNoteTemplate };
+  it('asks a recruiter about openings, never about "their work"', () => {
+    const note = renderNote(settings, 'Product Management internship', { name: 'Akash Ganguly', companyName: 'TCS', category: 'recruiter' }, 'Arpit Singh');
+    expect(note).toBe('Hi Akash, I’m Arpit, exploring Product Management internship opportunities. Would love to connect in case there are relevant openings at TCS.');
+    expect(renderNote(settings, 'Product Management internship', { name: 'Aashish G', category: 'recruiter' }, 'Arpit Singh')).toMatch(/in case you’re hiring for relevant roles\.$/);
+  });
+  it('asks a team leader about their team and a founder about what they are building', () => {
+    expect(renderNote(settings, 'Product Management', { name: 'Riya S', companyName: 'Acme', category: 'leader' }, 'Arpit')).toMatch(/learn about your team’s work at Acme\.$/);
+    expect(renderNote(settings, 'Product Management', { name: 'Dev K', companyName: 'Acme', category: 'founder' }, 'Arpit')).toMatch(/learn about what you’re building at Acme\.$/);
+  });
+  it('stays within LinkedIn’s 200 characters for a long company name', () => {
+    expect(renderNote(settings, 'Product Management internship', { name: 'Sreekanth R.', companyName: 'Tenarai India Private Limited Technologies', category: 'recruiter' }, 'Arpit').length).toBeLessThanOrEqual(200);
   });
 });

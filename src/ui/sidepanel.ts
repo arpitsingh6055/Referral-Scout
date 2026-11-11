@@ -239,14 +239,14 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
   const panel = node('div');
   const roles = field({ label: 'Roles you are looking for', value: settings.roles.join('\n'), multiline: true, rows: 2, help: 'One per line, for example "Product Management internship".' });
   const location = field({ label: 'Where', value: s.location, help: 'A country or city. Leave generic for the widest search.' });
-  const noteTemplate = field({ label: 'Invitation note', value: settings.noteTemplate, multiline: true, rows: 3, help: 'Placeholders: {firstName} {myFirstName} {target} {company}. LinkedIn allows 200 characters. Write several versions separated by a line with --- and each person gets one.' });
+  const noteTemplate = field({ label: 'Invitation note', value: settings.noteTemplate, multiline: true, rows: 3, help: 'Placeholders: {firstName} {myFirstName} {target} {company} {ask}. {ask} is the closing line and changes with the person: openings for a recruiter, their team for a leader, what they are building for a founder. LinkedIn allows 200 characters. Write several versions separated by a line with --- and each person gets one.' });
   const template = field({ label: 'Message after they accept', value: s.template, multiline: true, rows: 4, help: 'Sent once, only after LinkedIn confirms the connection. Same placeholders.' });
   const noteSlot = node('div'), followSlot = node('div');
-  const me = s.profile!.name, sample = { name: 'Priya Sharma', companyName: 'Acme' };
+  const me = s.profile!.name, sample = { name: 'Priya Sharma', companyName: 'Acme', category: 'recruiter' };
   const refresh = (): void => {
     const role = roles.input.value.split(/[\n;,]+/)[0]?.trim() || s.target;
     const note = renderNote({ noteTemplate: noteTemplate.input.value || settings.noteTemplate }, role, sample, me);
-    noteSlot.replaceChildren(bubble('Preview for Priya at Acme', note, note.length > 200, `${note.length}/200`));
+    noteSlot.replaceChildren(bubble('Preview for Priya, a recruiter at Acme', note, note.length > 200, `${note.length}/200`));
     followSlot.replaceChildren(bubble('Preview for Priya at Acme', introduction({ template: template.input.value || s.template, target: role }, sample, me)));
   };
   for (const f of [roles, noteTemplate, template]) f.input.addEventListener('input', refresh);
