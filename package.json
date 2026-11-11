@@ -6,17 +6,15 @@
   "description": "Visible LinkedIn Jobs and People discovery, ChatGPT-assisted invitations and accepted-connection follow-ups",
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=22.0.0"
   },
   "packageManager": "pnpm@11.25.0",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:spike": "node --test spike/parsers.test.cjs",
     "build": "tsc --noEmit && vite build && vite build --mode content && node scripts/check-build.mjs",
     "package": "pnpm build && node scripts/package-extension.mjs",
-    "check": "node --test spike/parsers.test.cjs && vitest run && tsc --noEmit && vite build && vite build --mode content && node scripts/check-build.mjs",
-    "test:source": "node --test tests/v2-source-contract.test.mjs"
+    "check": "vitest run && tsc --noEmit && vite build && vite build --mode content && node scripts/check-build.mjs"
   },
   "devDependencies": {
     "@types/chrome": "0.3.7",

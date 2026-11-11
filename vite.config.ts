@@ -19,7 +19,7 @@ export default defineConfig(({ mode }) => mode === "content" ? {
   build: {
     target: "chrome120",
     rollupOptions: {
-      input: { options: "options.html", sidepanel: "sidepanel.html", onboarding: "onboarding.html", "service-worker": "src/background/service-worker.ts" },
+      input: { sidepanel: "sidepanel.html", "service-worker": "src/background/service-worker.ts" },
       output: { entryFileNames: "[name].js", chunkFileNames: "chunks/[name]-[hash].js" }
     }
   }
