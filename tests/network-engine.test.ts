@@ -281,7 +281,7 @@ it('messages an existing 1st-degree connection directly, with wording that does 
 
 it('a referral search runs even while outreach is paused, keeps only people at that company, and queues the strongest once it is complete', async () => {
   const jobUrl = 'https://www.linkedin.com/jobs/view/123/';
-  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Product Manager', company: 'Acme', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0, strategyTried: true, infoTried: true }] });
+  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Product Manager', company: 'Acme', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0, strategyTried: true, infoTried: true, lookupTried: true }] });
   vi.mocked(networkCommand).mockResolvedValueOnce([card('rec', 'Senior Recruiter at Acme', 2), card('friend', 'Analyst at Acme', 1), card('stranger', 'Analyst at Acme', 3), card('elsewhere', 'Recruiter at Other Co', 2)]);
   await networkTick();
   const url = urls()[0]!;
@@ -295,7 +295,7 @@ it('a referral search runs even while outreach is paused, keeps only people at t
 });
 
 it('"My connections here" only lists people; nobody is queued until asked', async () => {
-  await seed({ active: false, referralJobs: [{ url: 'https://www.linkedin.com/jobs/view/9/', title: 'Sales Lead', company: 'TBX', location: '', mode: 'connections', addedAt: 1, cursor: 3, found: 0, infoTried: true }] });
+  await seed({ active: false, referralJobs: [{ url: 'https://www.linkedin.com/jobs/view/9/', title: 'Sales Lead', company: 'TBX', location: '', mode: 'connections', addedAt: 1, cursor: 3, found: 0, infoTried: true, lookupTried: true }] });
   vi.mocked(networkCommand).mockResolvedValueOnce([card('pal', 'Account Executive at TBX', 1)]);
   await networkTick();
   expect(JSON.parse(urls()[0]!.searchParams.get('network')!)).toEqual(['F']);
@@ -323,7 +323,7 @@ it('reads the company number from its page first, then searches with the Current
 
 it('messages the people already known and invites only the chosen number of others (3 unless set), leaving the rest listed', async () => {
   const jobUrl = 'https://www.linkedin.com/jobs/view/77/';
-  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Technology analyst', company: 'Infosys', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0, strategyTried: true, infoTried: true }] });
+  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Technology analyst', company: 'Infosys', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0, strategyTried: true, infoTried: true, lookupTried: true }] });
   vi.mocked(networkCommand).mockResolvedValueOnce(Array.from({ length: 10 }, (_, i) => card(`rec-${i}`, 'Talent Acquisition at Infosys', i < 2 ? 1 : 2)));
   await networkTick();
   const people = (await getNetwork()).contacts;
@@ -441,7 +441,7 @@ it('carries on with built-in rules, and says so, when ChatGPT cannot plan the co
 
 it('Pause stops searches as well as sending, and Resume carries on from the same place', async () => {
   const { pauseNetwork } = await import('../src/background/network');
-  await seed({ scope: 'referrals', referralJobs: [{ url: 'https://www.linkedin.com/jobs/view/61/', title: 'Ops Intern', company: 'Stripe', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0, infoTried: true, strategyTried: true }] });
+  await seed({ scope: 'referrals', referralJobs: [{ url: 'https://www.linkedin.com/jobs/view/61/', title: 'Ops Intern', company: 'Stripe', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0, infoTried: true, lookupTried: true, strategyTried: true }] });
   await pauseNetwork();
   vi.mocked(networkCommand).mockClear();
   await networkTick();
@@ -454,7 +454,7 @@ it('Pause stops searches as well as sending, and Resume carries on from the same
 });
 
 it('a company whose search page cannot be read does not stop anything: it is closed and the next company is searched', async () => {
-  const job = (n: number, company: string) => ({ url: `https://www.linkedin.com/jobs/view/7${n}/`, title: 'Ops Intern', company, location: '', mode: 'referral' as const, addedAt: n, cursor: 3, found: 0, infoTried: true, strategyTried: true });
+  const job = (n: number, company: string) => ({ url: `https://www.linkedin.com/jobs/view/7${n}/`, title: 'Ops Intern', company, location: '', mode: 'referral' as const, addedAt: n, cursor: 3, found: 0, infoTried: true, lookupTried: true, strategyTried: true });
   await seed({ active: false, referralJobs: [job(1, 'Brokenco'), job(2, 'Fineco')] });
   vi.mocked(networkCommand).mockRejectedValueOnce(new Error('The results list was not found.'));
   await networkTick();
@@ -482,4 +482,20 @@ it('runs the shortlist past ChatGPT once and takes out the listings it rejects, 
   expect(saved.jobSearch!.found.map(j => j.company).sort()).toEqual(['Acme', 'Sellco']);
   expect(saved.jobSearch!.dropped).toEqual([{ title: 'Product Management Course with Placement', company: 'SkillMill', why: 'Paid course, not a job' }]);
   expect(saved.status).toMatch(/ChatGPT removed 1 advert or poor match/);
+});
+
+it('finds the company page through LinkedIn company search when the job did not give it, so the Current company filter is still used', async () => {
+  const jobUrl = 'https://www.linkedin.com/jobs/view/81/';
+  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Product Intern', company: 'Ketto', location: 'Mumbai, Maharashtra, India', mode: 'referral', addedAt: 1, cursor: 0, found: 0, infoTried: true, strategyTried: true }] });
+  vi.mocked(networkTab).mockClear();
+  vi.mocked(networkCommand).mockResolvedValueOnce([{ name: 'KETTO', url: 'https://www.linkedin.com/company/ketto-france/', lines: ['IT Services', 'Laventie'] },
+    { name: 'Ketto', url: 'https://www.linkedin.com/company/ketto-online-ventures-private-limited/', lines: ['Fundraising', 'MUMBAI, MAHARASHTRA'] }, { name: 'Ketto Foundation', url: 'https://www.linkedin.com/company/kettofoundation/', lines: [] }]);
+  await networkTick();
+  expect(urls()[0]!.pathname).toBe('/search/results/companies/');
+  expect((await getNetwork()).referralJobs![0]).toMatchObject({ lookupTried: true, companyUrl: 'https://www.linkedin.com/company/ketto-online-ventures-private-limited/' });
+  vi.mocked(networkCommand).mockResolvedValueOnce({ id: '3686501', size: '201-500 employees' });
+  await networkTick();
+  vi.mocked(networkTab).mockClear(); vi.mocked(networkCommand).mockResolvedValueOnce([]);
+  await networkTick();
+  expect(urls()[0]!.searchParams.get('currentCompany')).toBe('["3686501"]'); // every people search is filtered by current company
 });

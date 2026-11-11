@@ -4,7 +4,7 @@ import { classify, geoFor, normalizeCompany, planSearch, companyOf } from '../sh
 import { companyFromCurrent } from '../parsers/network';
 import { read, mutate } from '../storage/state';
 import { acquire, release, renew } from './lease';
-import { referralAsk, referralNote, referralPlan, referralSearchUrl, rankReferral, type ReferralJob } from '../shared/referral';
+import { referralAsk, referralNote, referralPlan, referralSearchUrl, rankReferral, type ReferralJob, pickCompany } from '../shared/referral';
 import { reviewFromReply, reviewPrompt, companyPlanPrompt, fallbackTitles, fill, jobsSearchUrl, planFromReply, planPrompt, rulesPlan, scoreJob, shortlist, sizeForType, sizeOf, strategiesFromReply, withRecruiters, type CompanyStrategy } from '../shared/jobsearch';
 import { extractJson } from '../parsers/json';
 import { networkCommand, networkTab, showWorkTab } from './network-browser';
@@ -204,6 +204,20 @@ async function referralScan(s:NetworkState,job:ReferralJob,signal:AbortSignal):P
         if(info?.suggested.length)saved.suggested=info.suggested.slice(0,10).map(p=>({url:p.url,name:p.name,headline:p.headline,...(p.degree?{degree:p.degree}:{}),...(p.alum?{alum:true}:{})}));
         if(info?.location&&!saved.location)saved.location=info.location;
       }
+      return current;
+    });
+    return;
+  }
+  // The job did not give the company page: find it through LinkedIn's company search, so the Current company filter can still be used.
+  if(!job.companyUrl&&!job.lookupTried){
+    await note(s,`${job.company}: looking up the company page on LinkedIn…`);
+    let url:string|null=null;
+    try{const tab=await networkTab(`https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(job.company)}`,signal);
+      url=pickCompany(z.array(z.object({name:z.string(),url:z.string(),lines:z.array(z.string())})).parse(await networkCommand(tab,{action:'companies'},signal)),job.company,job.location);}
+    catch(error){const m=error instanceof Error?error.message:String(error);if(signal.aborted||ACCOUNT_LEVEL.test(m))throw error;}
+    await updateNetwork(current=>{
+      const saved=current.referralJobs?.find(j=>j.url===job.url);
+      if(saved){saved.lookupTried=true;if(url)saved.companyUrl=url;else current.status=`${job.company}: no LinkedIn company page with exactly that name. People are searched by name and kept only if they work there now.`;}
       return current;
     });
     return;

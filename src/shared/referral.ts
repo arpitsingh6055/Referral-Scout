@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { COMPANY_KINDS, classify, companyMatches, functionWords } from './targeting';
+import { COMPANY_KINDS, classify, companyMatches, functionWords, normalizeCompany } from './targeting';
 import type { CompanySize, CompanyStrategy } from './jobsearch';
 
 /*
@@ -42,6 +42,8 @@ export interface ReferralJob extends z.infer<typeof referralJobInput> {
   strategy?: CompanyStrategy; strategyTried?: boolean;
   /** Pages that could not be read for this company. After three the company is closed with what was found, so one bad company never blocks the rest. */
   failures?: number; error?: string;
+  /** The company page was looked up through LinkedIn's company search, because the job itself did not give it. */
+  lookupTried?: boolean;
 }
 /** How many people one "Ask for referrals" click contacts by itself: the strongest few. A whole recruiting team is not messaged at once. */
 export const REFERRAL_AUTO = 8;
@@ -145,4 +147,16 @@ export function referralAsk(job: Pick<ReferralJob, 'title' | 'company' | 'url'>,
     ? 'Could you tell me the best way to be considered, or who is hiring for it?'
     : 'Would you be open to referring me, or pointing me to the right person?';
   return `${open} I’m ${first(me)}, and I’m applying for ${role(job)}: ${job.url} ${ask} Happy to share my CV.`;
+}
+
+/**
+ * The right company among LinkedIn's company search results: the same name, and when several share it,
+ * the one in the job's own place. Nothing is returned for a loose match; a wrong company is worse than none.
+ */
+export function pickCompany(rows: { name: string; url: string; lines: string[] }[], company: string, location = ''): string | null {
+  const want = normalizeCompany(company), ok = /^https:\/\/www\.linkedin\.com\/company\/[^/?#]+\/$/;
+  const same = rows.filter(r => ok.test(r.url) && normalizeCompany(r.name) === want);
+  if (!same.length) return null;
+  const places = location.toLowerCase().split(/[,·|()]/).map(x => x.trim()).filter(x => x.length > 2);
+  return (same.find(r => places.some(p => r.lines.join(' ').toLowerCase().includes(p.split(' ')[0]!))) ?? same[0]!).url;
 }

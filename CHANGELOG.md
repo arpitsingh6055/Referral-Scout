@@ -15,6 +15,11 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.26.0: the Current company filter is used even when the job hides the company page
+- When a job does not give the company's LinkedIn page, the company is now looked up through LinkedIn's own company search (exact name, preferring the one in the job's location). Its number is then read from the company page, so people searches use LinkedIn's **Current company** filter instead of a bare name search that also returns "ex-" and volunteer mentions.
+- Checked live on 12 November 2026 for Ketto: company search rows and the company page link (`currentCompany=["3686501"]`, "201-500 employees") read correctly.
+- Only when no company page has exactly that name does the search fall back to the name, and then only people whose current employer matches are kept; the status says so.
+
 ## 0.25.0: no quiet hours by default; ChatGPT checks the job list
 - **Set hours are off by default** and were switched off once for existing installs. You can still choose "Only 08:00 to 22:00" under Settings, Pace, limits and safety; when work is waiting for those hours, Home shows **Run now anyway**.
 - **The shortlist is checked by ChatGPT before you see it.** One prompt removes paid courses and placement schemes, vague agency listings, the wrong function and the wrong level. Removed listings are listed with the reason under the shortlist, never dropped silently. A reply that removes most of the list is ignored, and if ChatGPT is unavailable the list is shown unfiltered and says so.

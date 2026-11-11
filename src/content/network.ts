@@ -194,6 +194,20 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
   guard(signal);
   if (cmd.action === "selftest") return selfTest();
   if (cmd.action === "identity") return { url: await identity(signal) };
+  if (cmd.action === "companies") {
+    // LinkedIn's own company search (checked live, November 2026): one list item per company, its name in the first line.
+    if (!location.pathname.startsWith("/search/results/companies")) throw new Error("LinkedIn did not open company search.");
+    const read = (): { name: string; url: string; lines: string[] }[] | null => {
+      const rows: { name: string; url: string; lines: string[] }[] = [];
+      for (const li of document.querySelectorAll('[role="listitem"]')) {
+        const slug = /\/company\/([^/?#]+)/.exec(li.querySelector<HTMLAnchorElement>('a[href*="/company/"]')?.href ?? "")?.[1];
+        const lines = [...li.querySelectorAll("p")].map(textOf).filter(Boolean).slice(0, 4);
+        if (slug && lines[0]) rows.push({ name: lines[0].slice(0, 200), url: `https://www.linkedin.com/company/${slug}/`, lines: lines.slice(1).map(l => l.slice(0, 200)) });
+      }
+      return rows.length ? rows.slice(0, 10) : null;
+    };
+    return await wait(read, signal, 10000).catch(() => []);
+  }
   if (cmd.action === "companyId") {
     // A company page links its employee count to a people search filtered by that company; the number is in that link.
     if (!location.pathname.startsWith("/company/")) throw new Error("LinkedIn did not open the company page.");

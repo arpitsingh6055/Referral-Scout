@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { reviewFromReply, scoreJob as scoreOf, companyPlanPrompt, strategiesFromReply, withRecruiters, fallbackTerms, fallbackTitles, fill, jobsSearchUrl, planFromReply, scoreJob, shortlist, sizeOf, type FoundJob } from '../src/shared/jobsearch';
 import { jobRows } from '../src/parsers/network';
-import { rankReferral, referralPlan } from '../src/shared/referral';
+import { pickCompany, rankReferral, referralPlan } from '../src/shared/referral';
 
 beforeEach(() => { Object.defineProperty(HTMLElement.prototype, 'innerText', { configurable: true, get(this: HTMLElement) { return this.textContent ?? ''; } }); });
 
@@ -108,4 +108,10 @@ describe('the shortlist check', () => {
     const job = { title: 'Product Intern', insight: '' };
     expect(scoreOf({ ...job, promoted: true }, ['Product internship'], [])).toBeLessThan(scoreOf(job, ['Product internship'], []));
   });
+});
+
+it('never guesses a company from a loose name match', () => {
+  const rows = [{ name: 'Ketto Foundation', url: 'https://www.linkedin.com/company/kettofoundation/', lines: [] }, { name: 'Ketto Design', url: 'https://www.linkedin.com/company/kettodesign/', lines: [] }];
+  expect(pickCompany(rows, 'Ketto', 'Mumbai')).toBeNull();
+  expect(pickCompany([...rows, { name: 'Ketto', url: 'https://www.linkedin.com/company/ketto/', lines: ['Aschheim, Bavaria'] }], 'Ketto', 'Mumbai')).toBe('https://www.linkedin.com/company/ketto/');
 });
