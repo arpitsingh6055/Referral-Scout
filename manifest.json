@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Cold Contact \u2014 LinkedIn Outreach",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "Find recruiters, hiring leaders and founders on LinkedIn, send invitations slowly and safely, and follow up once after they accept.",
   "minimum_chrome_version": "120",
   "permissions": [

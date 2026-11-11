@@ -15,6 +15,15 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.21.0: redesigned side panel
+- **Home is the landing screen.** One status card shows where you are (Find jobs, Choose, Find people, Reach out), what is happening now, the one next action, and today's and this week's invitation budget.
+- **Needs you** lists every decision in one place with the action on the row: approve messages, "Only them / Look wider" for a company where you already know people, reminders, people needing attention. When it is empty the panel says you can close it.
+- **Bottom navigation**: Home, Jobs, People, Saved, Activity. A red badge appears only where something needs you. Settings moved behind the icon at the top; troubleshooting and data export moved into Settings.
+- The status card, counters and notices no longer repeat on every screen. Each screen has its own title and one job.
+- Settings opens with only the target role and location; messages, limits, CV and general outreach are collapsed. Save stays visible while you scroll.
+- New visual system: stronger hierarchy, pill buttons, clickable pipeline counters, selected state on chosen companies, light and dark themes, reduced-motion support.
+- Checked by rendering nine screen states in headless Chrome with sample data; not yet looked at inside Edge's side panel.
+
 ## 0.20.0: ChatGPT decides who to ask at each company
 - After you confirm the companies, **one ChatGPT prompt covers all of them**. For each company it says what kind of company it is (enterprise, mid-size, scale-up, startup), which job titles to search for, which titles not to approach as a stranger, and how to word the note, the message to people you already know, and the follow-up.
 - The prompt carries worked examples: at Microsoft a Sales Intern applicant should reach campus recruiters and sales managers, not the CEO or CFO; at a 40-person startup the founder and head of the function are the right people.

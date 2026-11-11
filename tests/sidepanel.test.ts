@@ -49,13 +49,23 @@ it('tells the user what is happening instead of looking dead outside active hour
   expect(byText('button', 'Run now anyway')).toBeTruthy();
 });
 
-it('opens on the people list once there is something to see, and the review callout jumps to drafts that need approval', async () => {
+it('opens on Home, lists what needs the person there, and Review jumps to the drafts that need approval', async () => {
   await open({ active: true, contacts: [person('a', 'shortlisted', { score: 90 }), person('b', 'review', { approvalKind: 'connect', invitationNote: 'Hi B', score: 50 })] });
+  expect($<HTMLElement>('.tab[aria-selected=true]')!.textContent).toContain('Home');
+  expect(byText('.todo', '1 message needs your approval')).toBeTruthy();
+  expect(byText('.tab', 'People')!.querySelector('.count')!.textContent).toBe('1'); // a badge only where something needs the person
+  byText('.todo button', 'Review')!.click();
   expect($<HTMLElement>('.tab[aria-selected=true]')!.textContent).toContain('People');
-  expect(byText('.callout', '1 message needs your approval')).toBeTruthy();
   const names = [...document.querySelectorAll('.person-name')].map(e => e.textContent);
   expect(names[0]).toBe('b');                                  // what needs the user comes first
   expect(byText('button', 'Approve invitation')).toBeTruthy();
+});
+
+it('shows where the person is on the way to a referral, and answers the per-company question from Home', async () => {
+  await open({ scope: 'referrals', active: true, referralJobs: [{ url: 'https://www.linkedin.com/jobs/view/1/', title: 'Ops Intern', company: 'Stripe', location: '', mode: 'referral', addedAt: 1, cursor: 2, found: 1, waiting: true, known: 2 }] });
+  expect([...document.querySelectorAll('.journey li')].map(li => li.className)).toEqual(['done', 'done', 'now', '']);
+  byText('.todo button', 'Only them')!.click();
+  await vi.waitFor(() => expect(sent.find(r => r.action === 'referralDecision')).toMatchObject({ widen: false }));
 });
 
 it('switches tabs without losing what the user typed', async () => {
@@ -63,7 +73,7 @@ it('switches tabs without losing what the user typed', async () => {
   const roles = $<HTMLTextAreaElement>('textarea')!; roles.value = 'Data Analytics internship'; roles.dispatchEvent(new Event('input', { bubbles: true }));
   byText('.tab', 'Activity')!.click();
   expect($<HTMLElement>('.tab[aria-selected=true]')!.textContent).toContain('Activity');
-  byText('.tab', 'Setup')!.click();
+  $<HTMLElement>('[aria-label="Settings"]')!.click();
   expect($<HTMLTextAreaElement>('textarea')!.value).toBe('Data Analytics internship');
 });
 

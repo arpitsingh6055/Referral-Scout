@@ -6,10 +6,11 @@ import { createToaster, type ToastKind } from './toast';
 import { referralPlan } from '../shared/referral';
 import type { JobSearch } from '../shared/jobsearch';
 
-type Tab = 'setup' | 'people' | 'referrals' | 'saved' | 'activity';
-const ui = { tab: 'setup' as Tab, filter: 'all', open: new Set<string>(), touched: false };
+type Tab = 'home' | 'referrals' | 'people' | 'saved' | 'activity' | 'setup';
+const ui = { tab: 'home' as Tab, filter: 'all', open: new Set<string>(), touched: false };
 const root = appRoot();
-let busy = false, dirty = false, spoke = false, opened = false, last: NetworkState | null = null, signature = '', uid = 0;
+let maintenance: HTMLElement[] = [];
+let busy = false, dirty = false, spoke = false, last: NetworkState | null = null, signature = '', uid = 0;
 const alertBox = element('div'); alertBox.hidden = true;
 const page = element('div');
 root.append(alertBox, page);
@@ -18,6 +19,16 @@ const toaster = createToaster(document.body);
 /* ---------- small helpers ---------- */
 function node<K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = ''): HTMLElementTagNameMap[K] {
   const result = element(tag, text); result.className = className; return result;
+}
+/* Line icons drawn here, so the panel loads nothing from outside. */
+const ICONS = {
+  home: 'M4 11l8-7 8 7M6 10v9h4v-5h4v5h4v-9', jobs: 'M4 8h16v11H4zM9 8V5h6v3M4 13h16',
+  people: 'M9 11a3 3 0 100-6 3 3 0 000 6zM3 19c0-3 2.7-5 6-5s6 2 6 5M16 5.2a3 3 0 010 5.6M17.5 14.3c2 .6 3.5 2.3 3.5 4.7',
+  saved: 'M7 4h10v16l-5-4-5 4z', activity: 'M3 12h4l3-7 4 14 3-7h4', settings: 'M4 7h10M18 7h2M4 17h2M10 17h10M16 5v4M8 15v4', check: 'M5 12l4 4 10-10',
+};
+function icon(name: keyof typeof ICONS): SVGSVGElement {
+  const NS = 'http://www.w3.org/2000/svg', svg = document.createElementNS(NS, 'svg'), path = document.createElementNS(NS, 'path');
+  svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true'); svg.classList.add('ico'); path.setAttribute('d', ICONS[name]); svg.append(path); return svg;
 }
 const csv = (v: string): string[] => v.split(',').map(x => x.trim()).filter(Boolean);
 const optional = (v: string): number | null => v.trim() ? Number(v) : null;
@@ -118,29 +129,41 @@ function runStatus(s: NetworkState): { tone: 'ok' | 'warn' | 'idle'; pill: strin
   if (s.active && !withinActiveHours(settings)) return { tone: 'warn', pill: 'Waiting', title: 'Waiting for active hours', sub: `Outreach resumes at ${pad(settings.activeHours?.from ?? 8)}:00. Nothing is wrong.` };
   if (s.active && s.scope === 'referrals') return { tone: 'ok', pill: 'Referrals', title: s.jobSearch?.status === 'finding' ? 'Searching for jobs' : 'Working on your referrals', sub: s.status || 'Starting up…' };
   if (s.active) return { tone: 'ok', pill: 'Running', title: 'Outreach is running', sub: s.status || 'Starting up…' };
-  if (!s.status) return { tone: 'idle', pill: 'Ready', title: 'Ready to find jobs', sub: 'Check your target roles and location in Setup, then press Find jobs and referrals.' };
+  if (!s.status) return { tone: 'idle', pill: 'Ready', title: 'Ready to find jobs', sub: 'We search LinkedIn jobs for your role and similar titles. You choose the companies before anyone is contacted.' };
   if (s.jobSearch?.status === 'finding') return { tone: 'ok', pill: 'Searching', title: 'Searching for jobs', sub: s.status };
   return { tone: s.contacts.some(p => p.state === 'attention') ? 'warn' : 'idle', pill: s.active ? 'Running' : 'Paused', title: 'Paused', sub: s.status };
 }
-function usage(s: NetworkState): string[] {
-  const settings = s.settings ?? defaultSettings, now = Date.now();
-  const sent = (span: number) => s.actions.filter(a => a.kind === 'connect' && a.confirmed !== false && now - a.at < span).length;
-  const chips = [`Today ${sent(DAY)}/${settings.dailyInvites ?? '∞'} invitations`, `This week ${sent(7 * DAY)}/${settings.weeklyInvites ?? '∞'}`];
-  if (s.active && s.nextActionAt > now) { const wait = Math.round((s.nextActionAt - now) / 1000); chips.push(wait < 90 ? `Next send in ${Math.max(1, wait)} s` : `Next send in ${Math.round(wait / 60)} min`); }
-  return chips;
+function usage(s: NetworkState): { today: number; week: number; next: string } {
+  const now = Date.now(), sent = (span: number) => s.actions.filter(a => a.kind === 'connect' && a.confirmed !== false && now - a.at < span).length;
+  let next = '';
+  if (s.active && s.nextActionAt > now) { const wait = Math.round((s.nextActionAt - now) / 1000); next = wait < 90 ? `Next send in ${Math.max(1, wait)} s` : `Next send in ${Math.round(wait / 60)} min`; }
+  return { today: sent(DAY), week: sent(7 * DAY), next };
+}
+/* Where the person is on the way from a job search to a referral: 0 finding jobs, 1 choosing, 2 finding people, 3 reaching out. */
+function journey(s: NetworkState): number {
+  const jobs = s.referralJobs ?? [];
+  if (s.jobSearch?.status === 'finding') return 0;
+  if (s.jobSearch?.status === 'choosing' && s.jobSearch.found.length) return 1;
+  if (jobs.some(j => !j.finishedAt)) return 2;
+  return jobs.length || s.contacts.some(p => p.referralJob) ? 3 : -1;
+}
+function meter(label: string, used: number, cap: number | null): HTMLElement {
+  const m = node('div', '', 'meter'), head = node('div', '', 'meter-head'), bar = node('div', '', 'bar'), fill = node('i');
+  head.append(node('span', label), node('b', cap ? `${used} / ${cap}` : String(used)));
+  fill.style.width = `${cap ? Math.min(100, Math.round(used / cap * 100)) : 0}%`; bar.append(fill); m.append(head, bar); return m;
 }
 
 /* ---------- screens ---------- */
 function welcome(): HTMLElement {
   const hero = node('section', '', 'hero');
   const steps = node('ol', '', 'steps');
-  for (const [i, title, text] of [['1', 'Read your profile', 'We read your own LinkedIn profile once. It stays on this device.'], ['2', 'Check who and what', 'See who we will contact and the messages we will send. Edit anything.'], ['3', 'Press Start', 'We find recruiters, team leaders and founders and reach out slowly, a few a day.']] as const) {
+  for (const [i, title, text] of [['1', 'Read your profile', 'Once, from your own LinkedIn page. It stays on this device.'], ['2', 'Pick the companies', 'We search LinkedIn jobs for your role and similar titles. You choose which companies to go after.'], ['3', 'Get referrals', 'At each company we find the people whose referral counts and reach out slowly, a few a day.']] as const) {
     const li = node('li', '', 'step'), body = node('div'); body.append(node('strong', title), node('span', text));
     li.append(node('b', i, 'n'), body); steps.append(li);
   }
-  hero.append(node('div', 'cc', 'mark'), node('h1', 'Reach the right people on LinkedIn'),
-    node('p', 'Find recruiters, hiring leaders and founders for the roles you want, and send a short, human introduction. Slow, safe and under your control.', 'lede'), steps,
-    button('Read my LinkedIn profile', async () => { await act({ kind: 'network', action: 'import' }, 'Profile saved. Check who we will contact and your messages, then press Start.'); }, 'btn primary block'),
+  hero.append(node('div', 'cc', 'mark'), node('p', 'Cold Contact Pro', 'eyebrow'), node('h1', 'Find jobs. Get referred.'),
+    node('p', 'The right people at the right companies, asked politely, at a pace LinkedIn is comfortable with.', 'lede'), steps,
+    button('Read my LinkedIn profile', async () => { await act({ kind: 'network', action: 'import' }, 'Profile saved. Check your target role, then press Find jobs and referrals.'); }, 'btn primary block'),
     node('p', 'Sign in to LinkedIn first. LinkedIn restricts automated activity: defaults are deliberately slow and conservative, but you use this at your own risk.', 'fine'));
   return hero;
 }
@@ -247,7 +270,7 @@ function buildReferrals(s: NetworkState): HTMLElement {
   }
   if (!jobs.length && !search) {
     const e = node('div', '', 'empty'); e.append(node('b', 'No jobs yet'),
-      node('span', 'Press “Find jobs and referrals” above to search LinkedIn for your target roles. Or open any job on LinkedIn and use “Ask for referrals” or “My connections here” at the bottom left of the page.'));
+      node('span', 'Press “Find jobs and referrals” on Home to search LinkedIn for your target roles. Or open any job on LinkedIn and use “Ask for referrals” or “My connections here” at the bottom left of the page.'));
     panel.append(e); return panel;
   }
   for (const job of jobs) {
@@ -260,7 +283,6 @@ function buildReferrals(s: NetworkState): HTMLElement {
     meta.append(link('Open job', job.url, 'chip'), node('span', job.mode === 'referral' ? 'Reaching out' : 'Listing only', 'chip'));
     const steps = referralPlan(job).length;
     if (!job.finishedAt) meta.append(node('span', job.companyUrl && !job.companyId && !job.idTried ? 'Finding the company…' : `Searching: step ${Math.min(job.cursor + 1, steps)} of ${steps}`, 'badge review'));
-    if (job.companyId) meta.append(node('span', 'Current-company filter', 'chip'));
     const first = people.filter(p => p.degree === 1).length;
     if (people.length) meta.append(node('span', `${first} you know · ${people.length - first} to invite`, 'chip'));
     body.append(meta);
@@ -282,7 +304,7 @@ function buildReferrals(s: NetworkState): HTMLElement {
     }
     if (job.mode === 'connections' && job.finishedAt && people.some(p => p.state === 'found')) body.append(node('p', 'Nobody has been contacted. Press “Ask for a referral” on the people you want to approach; the strongest are at the top.', 'field-help'));
     if (job.mode === 'referral' && job.finishedAt && people.length) body.append(node('p', `People you already know here get a message. The strongest ${job.decision === 'known' ? 0 : job.perCompany ?? 3} others get an invitation. Sends are a few seconds apart and within your daily limits; everyone else is listed below with a button.`, 'field-help'));
-    if (job.mode === 'referral' && !s.active && people.some(p => ['shortlisted', 'connected'].includes(p.state))) body.append(node('p', 'Outreach is paused, so nothing is being sent. Press Start outreach above to continue.', 'field-help'));
+    if (job.mode === 'referral' && !s.active && people.some(p => ['shortlisted', 'connected'].includes(p.state))) body.append(node('p', 'Outreach is paused, so nothing is being sent. Press “Resume sending” on Home to continue.', 'field-help'));
     if (!people.length) body.append(node('p', job.finishedAt ? (job.mode === 'connections' ? 'You have no 1st-degree connections at this company. On the job page, press “Ask for referrals” to find its recruiters, the team and people you share connections with.' : 'Nobody suitable was found at this company.') : 'Results appear here as each search finishes.', 'muted small'));
     for (const p of people) body.append(personCard(s, p));
     body.append(button('Remove this job', async () => { if (confirm(`Remove ${job.title} at ${job.company} from Referrals? People already contacted stay on the People list.`)) await act({ kind: 'network', action: 'removeReferralJob', url: job.url }, 'Job removed from Referrals.'); }, 'btn sm ghost danger'));
@@ -295,77 +317,120 @@ function render(s: NetworkState): void {
   last = s; signature = JSON.stringify(s); dirty = false; uid = 0;
   const scroll = document.scrollingElement?.scrollTop ?? 0;
   page.replaceChildren();
-  const status = runStatus(s);
-  // First screen: setup for a new user, the people list once there is something to look at.
-  if (!opened && s.profile) { opened = true; ui.tab = s.active || s.contacts.length ? 'people' : 'setup'; }
   if (!s.profile) { page.append(welcome()); return; }
-  const top = node('header', '', 'top'); top.append(node('div', 'cc', 'mark'), node('span', 'Cold Contact Pro', 'name'), node('span', status.pill, `pill ${status.tone}`));
-  page.append(top);
-  const settings = s.settings ?? defaultSettings;
+  const status = runStatus(s), settings = s.settings ?? defaultSettings, search = s.jobSearch, jobs = s.referralJobs ?? [];
   const count = (st: ContactState): number => s.contacts.filter(p => p.state === st).length;
 
-  const profile = node('div', '', 'profile'), who = node('div');
-  who.append(link(s.profile.name, s.profile.url, 'profile-name'), node('p', s.profile.headline, 'muted small clamp'));
-  profile.append(node('div', initials(s.profile.name), 'avatar'), who); page.append(profile);
+  /* Every screen is built on each render and only one is shown, so nothing typed in Settings is lost by moving around. */
+  const setup = buildSetup(s, settings), activity = buildActivity(s), home = node('div'), people = node('div');
+  setup.panel.append(node('h3', 'Help and your data', 'section-title'), ...maintenance);
+  const panels: Record<Tab, HTMLElement> = { setup: setup.panel, home, referrals: buildReferrals(s), people, saved: buildSaved(s), activity };
+  const peopleList = node('div'), refreshPeople = (): void => { buildPeople(s, peopleList, refreshPeople); };
+  people.append(peopleList);
+  for (const [tab, title, sub] of [['setup', 'Settings', 'What you are looking for, your messages and your limits.'], ['referrals', 'Jobs', 'The companies you chose and who can refer you at each.'],
+    ['people', 'People', 'Everyone queued, invited or contacted.'], ['saved', 'Saved', 'Jobs and people you remembered on LinkedIn.'], ['activity', 'Activity', 'Everything the extension did for you.']] as const) {
+    const head = node('div', '', 'view-head'); head.append(node('h1', title, 'view-title'), node('p', sub, 'view-sub')); panels[tab].prepend(head);
+  }
 
-  /* the setup form exists in every tab so Start can always save it */
-  const setup = buildSetup(s, settings);
-  const panels: Record<Tab, HTMLElement> = { setup: setup.panel, people: node('div'), referrals: buildReferrals(s), saved: buildSaved(s), activity: buildActivity(s) };
-  const tabs = node('div', '', 'tabs'), tabButtons = new Map<Tab, HTMLButtonElement>();
-  const setTab = (tab: Tab): void => {
+  /* navigation: five places at the bottom, settings behind the icon at the top */
+  const tabs = node('nav', '', 'tabs'), tabButtons = new Map<Tab, HTMLElement>(); tabs.setAttribute('role', 'tablist');
+  const setTab = (tab: Tab, top = false): void => {
     ui.tab = tab;
     for (const [name, panel] of Object.entries(panels)) panel.hidden = name !== tab;
     for (const [name, b] of tabButtons) b.setAttribute('aria-selected', String(name === tab));
+    if (top) document.scrollingElement?.scrollTo({ top: 0 });
   };
-  const peopleList = node('div'), refreshPeople = (): void => { buildPeople(s, peopleList, refreshPeople); };
-  panels.people.append(peopleList);
-  const toApprove = s.contacts.filter(p => p.state === 'review' && !p.approved).length, reviewCount = toApprove;
-  for (const [tab, label, n] of [['setup', 'Setup', 0], ['people', 'People', s.contacts.filter(p => p.state !== 'skipped' && p.state !== 'found').length], ['referrals', 'Jobs', (s.jobSearch?.status === 'choosing' ? s.jobSearch.found.length : 0) || (s.referralJobs ?? []).length], ['saved', 'Saved', dueReminders(s).length || (s.saved ?? []).length], ['activity', 'Activity', 0]] as const) {
-    const b = node('button', label, 'tab'); b.type = 'button'; b.setAttribute('role', 'tab');
-    if (n) b.append(node('span', String(n), 'count'));
-    b.addEventListener('click', () => setTab(tab)); tabButtons.set(tab, b); tabs.append(b);
+  const toApprove = s.contacts.filter(p => p.state === 'review' && !p.approved).length, attention = count('attention');
+  const waiting = jobs.filter(j => j.waiting), choosing = search?.status === 'choosing' && search.found.length > 0;
+  // A badge means "something here needs you", never a plain total.
+  for (const [tab, label, glyph, n] of [['home', 'Home', 'home', 0], ['referrals', 'Jobs', 'jobs', waiting.length + (choosing ? 1 : 0)], ['people', 'People', 'people', toApprove + attention],
+    ['saved', 'Saved', 'saved', dueReminders(s).length], ['activity', 'Activity', 'activity', 0]] as const) {
+    const b = node('button', '', 'tab'), wrap = node('span', '', 'tab-ico'); b.type = 'button'; b.setAttribute('role', 'tab');
+    wrap.append(icon(glyph)); if (n) wrap.append(node('span', String(n), 'count'));
+    b.append(wrap, node('span', label, 'tab-label')); b.addEventListener('click', () => setTab(tab, true)); tabButtons.set(tab, b); tabs.append(b);
   }
-  const openPeople = (filter: string): void => { ui.filter = filter; refreshPeople(); setTab('people'); document.scrollingElement?.scrollTo({ top: 0 }); };
+  const gear = node('button', '', 'icon-btn'); gear.type = 'button'; gear.title = 'Settings'; gear.setAttribute('aria-label', 'Settings'); gear.append(icon('settings'));
+  gear.addEventListener('click', () => setTab(ui.tab === 'setup' ? 'home' : 'setup', true)); tabButtons.set('setup', gear);
+  const top = node('header', '', 'top'); top.append(node('div', 'cc', 'mark'), node('span', 'Cold Contact Pro', 'name'), node('span', status.pill, `pill ${status.tone}`), gear);
+  const openPeople = (filter: string): void => { ui.filter = filter; refreshPeople(); setTab('people', true); };
 
-  /* run card */
-  const run = node('section', '', 'card run');
-  run.append(node('h2', status.title, 'run-title'), node('p', status.sub, 'run-sub'));
-  // The main action is the job search. General networking outreach lives in Setup.
-  const search = s.jobSearch;
+  /* ----- home ----- */
+  const hello = node('div', '', 'view-head'), looking = node('p', '', 'view-sub'), change = node('button', 'Change', 'linkish'); change.type = 'button';
+  change.addEventListener('click', () => setTab('setup', true));
+  looking.append(node('span', `Looking for ${settings.roles[0] ?? s.target}${settings.roles.length > 1 ? ` +${settings.roles.length - 1} more` : ''}${s.location ? ` · ${s.location}` : ''} `), change);
+  hello.append(node('h1', `Hi ${s.profile.name.split(/\s+/)[0] ?? ''}`, 'view-title'), looking);
+
+  const run = node('section', '', `card run ${status.tone}`), stage = journey(s), stepper = node('ol', '', 'journey');
+  ['Find jobs', 'Choose', 'Find people', 'Reach out'].forEach((label, i) => {
+    const li = node('li', '', i < stage ? 'done' : i === stage ? 'now' : ''), dot = node('i');
+    if (i < stage) dot.append(icon('check')); else dot.textContent = String(i + 1);
+    li.append(dot, node('span', label)); stepper.append(li);
+  });
+  run.append(stepper, node('h2', status.title, 'run-title'), node('p', status.sub, 'run-sub'));
+  // One main action at a time. General networking outreach lives in Settings.
   if (search?.status === 'finding') {
-    run.append(node('p', 'Looking for jobs. You can keep using your browser; results appear in the Jobs tab.', 'field-help'),
+    run.append(node('p', 'You can keep using your browser. Results appear under Jobs.', 'field-help'),
       button('Stop this search', () => act({ kind: 'network', action: 'cancelJobSearch' }, 'Job search stopped.'), 'btn block'));
-  } else if (search?.status === 'choosing' && search.found.length) {
-    run.append(button(`Choose companies (${search.found.length} found)`, async () => { setTab('referrals'); document.scrollingElement?.scrollTo({ top: 0 }); }, 'btn primary block'));
+  } else if (choosing) {
+    run.append(button(`Choose companies (${search!.found.length} found)`, async () => { setTab('referrals', true); }, 'btn primary block'));
   } else {
-    run.append(button('Find jobs and referrals', async () => {
+    run.append(button(jobs.length ? 'Find more jobs' : 'Find jobs and referrals', async () => {
       await setup.save();
       await act({ kind: 'network', action: 'findJobs' }, 'Job search started. First the search is planned, then LinkedIn jobs are read.');
     }, 'btn primary block'));
   }
-  if (s.active) run.append(node('div', '', 'gap'), button('Pause everything', () => act({ kind: 'network', action: 'pause' }, 'Paused. Your progress is kept.'), 'btn block'));
-  else if (s.contacts.some(p => p.referralJob && ['shortlisted', 'connected', 'review'].includes(p.state))) run.append(node('div', '', 'gap'),
+  if (s.active) run.append(button('Pause everything', () => act({ kind: 'network', action: 'pause' }, 'Paused. Your progress is kept.'), 'btn block'));
+  else if (s.contacts.some(p => p.referralJob && ['shortlisted', 'connected', 'review'].includes(p.state))) run.append(
     button('Resume sending', () => act({ kind: 'network', action: 'resume' }, 'Sending resumed.'), 'btn block'));
-  const meta = node('div', '', 'meta'); for (const text of usage(s)) meta.append(node('span', text, 'chip'));
-  if (s.active && !withinActiveHours(settings)) meta.append(button('Run now anyway', async () => {
+  const used = usage(s), meters = node('div', '', 'meters');
+  meters.append(meter('Invitations today', used.today, settings.dailyInvites), meter('This week', used.week, settings.weeklyInvites)); run.append(meters);
+  const foot = node('div', '', 'meta'); if (used.next) foot.append(node('span', used.next, 'chip'));
+  if (s.active && !withinActiveHours(settings)) foot.append(button('Run now anyway', async () => {
     await request({ kind: 'network', action: 'save', target: s.target, location: s.location, template: s.template, settings: { ...settings, activeHours: null } });
     await act({ kind: 'network', action: 'status' }, 'Quiet hours turned off. Outreach continues now.');
-  }, 'btn sm ghost'));
-  run.append(meta); page.append(run);
+  }, 'btn sm'));
+  if (foot.childNodes.length) run.append(foot);
+
+  /* what needs the person, in one list, with the action on the row */
+  const todos = node('section', '', 'todos');
+  const todo = (tone: 'warn' | 'bad' | 'info', text: string, ...actions: HTMLElement[]): void => {
+    const row = node('div', '', `todo ${tone}`), buttons = node('div', '', 'todo-actions'); buttons.append(...actions); row.append(node('span', text), buttons); todos.append(row);
+  };
+  for (const job of waiting.slice(0, 4)) todo('info', `You already know ${job.known ?? 'some'} ${job.known === 1 ? 'person' : 'people'} at ${job.company}. Ask only them, or also look for stronger referrers?`,
+    button('Only them', () => act({ kind: 'network', action: 'referralDecision', url: job.url, widen: false }, `${job.company}: messaging the people you know.`), 'btn sm primary'),
+    button('Look wider', () => act({ kind: 'network', action: 'referralDecision', url: job.url, widen: true }, `${job.company}: looking for stronger referrers too.`), 'btn sm'));
+  if (toApprove) todo('warn', `${toApprove} ${toApprove === 1 ? 'message needs' : 'messages need'} your approval before anything is sent.`, button('Review', async () => openPeople('review'), 'btn sm primary'),
+    ...(s.active && toApprove > 1 ? [button(`Approve all ${toApprove}`, () => act({ kind: 'network', action: 'approve', url: '*' }, `${toApprove} messages approved. They are sent one after another, a few seconds apart.`), 'btn sm')] : []));
+  if (attention) todo('bad', `${attention} ${attention === 1 ? 'person needs' : 'people need'} your attention.`, button('Show', async () => openPeople('attention'), 'btn sm'));
+  const dueCount = dueReminders(s).length, staleCount = staleRequests(s).length;
+  if (dueCount) todo('warn', `${dueCount} ${dueCount === 1 ? 'reminder is' : 'reminders are'} due.`, button('Show', async () => { setTab('saved', true); }, 'btn sm'));
+  if (staleCount) todo('info', `${staleCount} connection ${staleCount === 1 ? 'request has' : 'requests have'} been unanswered for over 3 weeks.`, button('Show', async () => { setTab('saved', true); }, 'btn sm'));
+  const needs = todos.childElementCount;
+  todos.prepend(node('h3', needs ? `Needs you (${needs})` : 'Needs you', 'section-title'));
+  if (!needs) todos.append(node('p', s.active ? 'Nothing right now. You can close this panel; work continues in the background.' : 'Nothing right now.', 'all-clear'));
 
   const kpis = node('div', '', 'kpis');
-  for (const [label, value] of [['Queued', count('shortlisted')], ['Approve', reviewCount], ['Invited', count('pending')], ['Accepted', s.contacts.filter(p => p.acceptedAt).length], ['Intro', count('messaged')]] as const) {
-    const k = node('div', '', 'kpi'); k.append(node('b', String(value)), node('span', label)); kpis.append(k);
+  for (const [label, value, go] of [['Companies', jobs.length, () => setTab('referrals', true)], ['Invited', count('pending'), () => openPeople('pending')],
+    ['Accepted', s.contacts.filter(p => p.acceptedAt).length, () => openPeople('connected')], ['Asked', count('messaged'), () => openPeople('messaged')]] as const) {
+    const k = node('button', '', 'kpi'); k.type = 'button'; k.append(node('b', String(value)), node('span', label)); k.addEventListener('click', go); kpis.append(k);
   }
-  page.append(kpis);
-  if (reviewCount) { const c = node('div', '', 'callout'); c.append(node('span', `${reviewCount} ${reviewCount === 1 ? 'message needs' : 'messages need'} your approval before anything is sent.`), button('Review', async () => openPeople('review'), 'btn sm primary'), ...(s.active && toApprove > 1 ? [button(`Approve all ${toApprove}`, () => act({ kind: 'network', action: 'approve', url: '*' }, `${toApprove} messages approved. They are sent one after another, a few seconds apart.`), 'btn sm primary')] : [])); page.append(c); }
-  const dueCount = dueReminders(s).length, staleCount = staleRequests(s).length;
-  if (dueCount) { const c = node('div', '', 'callout'); c.append(node('span', `${dueCount} ${dueCount === 1 ? 'reminder is' : 'reminders are'} due.`), button('Show', async () => { setTab('saved'); }, 'btn sm')); page.append(c); }
-  if (staleCount) { const c = node('div', '', 'callout'); c.append(node('span', `${staleCount} connection ${staleCount === 1 ? 'request has' : 'requests have'} been unanswered for over 3 weeks.`), button('Show', async () => { setTab('saved'); }, 'btn sm')); page.append(c); }
-  const attention = count('attention');
-  if (attention) { const c = node('div', '', 'callout bad'); c.append(node('span', `${attention} ${attention === 1 ? 'person needs' : 'people need'} your attention.`), button('Show', async () => openPeople('attention'), 'btn sm')); page.append(c); }
+  home.append(hello, run);
+  if (needs || s.active || jobs.length || s.contacts.length) home.append(todos, node('h3', 'Your pipeline', 'section-title'), kpis);
+  const log = [...(s.log ?? [])].reverse().slice(0, 3);
+  if (log.length) {
+    const recent = node('section', '', 'card recent'), headRow = node('div', '', 'row between'), all = node('button', 'See all', 'linkish'); all.type = 'button';
+    all.addEventListener('click', () => setTab('activity', true)); headRow.append(node('h3', 'Latest', 'card-title'), all); recent.append(headRow);
+    for (const e of log) { const row = node('p', '', `recent-row ${e.kind}`); row.append(node('span', e.text), node('time', ago(e.at))); recent.append(row); }
+    home.append(recent);
+  } else if (stage < 0) {
+    const how = node('section', '', 'card how'); how.append(node('h3', 'How it works', 'card-title'));
+    for (const [n, text] of [['1', 'We search LinkedIn jobs for your role and similar titles.'], ['2', 'You tick the companies worth going after.'], ['3', 'At each one we find who can refer you and reach out, a few people a day.']] as const) {
+      const row = node('p', '', 'how-row'); row.append(node('b', n), node('span', text)); how.append(row);
+    }
+    home.append(how);
+  }
 
-  page.append(tabs, panels.setup, panels.people, panels.referrals, panels.saved, panels.activity);
+  page.append(top, panels.setup, panels.home, panels.referrals, panels.people, panels.saved, panels.activity, tabs);
   refreshPeople(); setTab(ui.tab);
   document.scrollingElement?.scrollTo({ top: scroll });
 }
@@ -388,10 +453,9 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
   for (const f of [roles, noteTemplate, template]) f.input.addEventListener('input', refresh);
   refresh();
 
-  const who = node('section', '', 'card'); who.append(node('h2', 'Who to contact', 'card-title'), node('p', 'We skip students, open-to-work profiles, former roles, assistants, and anyone you already know.', 'card-sub'));
-  const types = node('div', '', 'types'); for (const [k, v] of Object.entries(categoryLabels)) types.append(node('span', v, `type ${k}`));
-  who.append(types, roles.wrap, location.wrap);
-  const words = node('section', '', 'card'); words.append(node('h2', 'Your messages', 'card-title'), node('p', 'What we send on your behalf. Review it once, then it is reused.', 'card-sub'), noteTemplate.wrap, noteSlot, template.wrap, followSlot);
+  const who = node('section', '', 'card'); who.append(node('h2', 'What you are looking for', 'card-title'), node('p', 'This drives the job search. Similar job titles are added for you.', 'card-sub'));
+  who.append(roles.wrap, location.wrap);
+  const wordsAcc = accordion('words', 'Your messages', 'invitation and follow-up'), words = wordsAcc.body; words.append(node('p', 'What we send on your behalf. Review it once, then it is reused.', 'card-sub'), noteTemplate.wrap, noteSlot, template.wrap, followSlot);
 
   /* pace and safety */
   const outreachMode = choice('Before sending an invitation', settings.outreachMode, [['review', 'Ask me to approve each one'], ['automatic', 'Send automatically']]);
@@ -427,8 +491,8 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
       if (s.active && s.scope !== 'referrals') { await act({ kind: 'network', action: 'pause' }, 'General outreach stopped.'); return; }
       await save(); await act({ kind: 'network', action: 'start' }, 'General outreach started.');
     }, 'btn block'));
-  panel.append(who, words, advanced.box, chatGpt, general.box);
-  if (!s.active) panel.append(button('Save changes', async () => { await save(); await act({ kind: 'network', action: 'status' }, 'Changes saved.'); }, 'btn block'));
+  panel.append(who, wordsAcc.box, advanced.box, chatGpt, general.box);
+  if (!s.active) panel.append(button('Save changes', async () => { await save(); await act({ kind: 'network', action: 'status' }, 'Changes saved.'); }, 'btn primary block savebar'));
   else panel.append(node('p', 'Pause outreach to change settings.', 'fine'));
   for (const f of [roles, location, noteTemplate, template, outreachMode, followupMode, noteMode, hours, pace, invites, weekly, messages, pendingCap, allow, exclude, aiMode]) f.input.disabled = s.active;
   return { panel, save, aiMode: aiMode.input };
@@ -533,9 +597,9 @@ function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
 /* ---------- activity tab ---------- */
 function buildActivity(s: NetworkState): HTMLElement {
   const panel = node('div'), feed = node('section', '', 'card');
-  feed.append(node('h2', 'What happened', 'card-title'), node('p', 'Everything the extension did, newest first.', 'card-sub'));
+  feed.append(node('h2', 'What happened', 'card-title'), node('p', 'Newest first.', 'card-sub'));
   const log = [...(s.log ?? [])].reverse();
-  if (!log.length) feed.append(node('p', 'Nothing yet. Press Start and each step will show up here.', 'muted'));
+  if (!log.length) feed.append(node('p', 'Nothing yet. Each step shows up here once a job search starts.', 'muted'));
   else { const ul = node('ul', '', 'timeline'); for (const e of log.slice(0, 30)) { const li = node('li', '', `tl ${e.kind}`), t = node('div'); t.append(node('span', e.text), node('time', ago(e.at))); li.append(node('i'), t); ul.append(li); } feed.append(ul); }
   const tools = node('section', '', 'card'); tools.append(node('h2', 'Tools', 'card-title'), node('p', 'If something stops working after LinkedIn changes its layout, start here.', 'card-sub'));
   tools.append(button('Check this LinkedIn page', async () => {
@@ -553,7 +617,7 @@ function buildActivity(s: NetworkState): HTMLElement {
   }, 'btn'), button('Delete everything', async () => {
     if (confirm('Delete your profile, CV, dossier, contacts and task history from this device? This does not undo anything on LinkedIn.')) await act({ kind: 'network', action: 'clear', confirm: true }, 'All local data deleted.');
   }, 'btn ghost danger'));
-  panel.append(feed, tools, data);
+  panel.append(feed); maintenance = [tools, data];
   return panel;
 }
 
