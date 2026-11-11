@@ -31,7 +31,7 @@ export async function updateNetwork(fn:(s:NetworkState)=>NetworkState):Promise<N
     if(!base.noteV2&&base.profile)for(const p of base.contacts??[])if(p.state==='review'&&p.approvalKind==='connect'&&settings.aiMode==='template')p.invitationNote=renderNote(settings,base.target,p,base.profile.name);
     const next=fn({...base,cv,settings});next.noteV2=true;next.aiDefaultV3=true;next.paceV2=true;
     // Every new status line is also kept in a short activity log the side panel can show.
-    if(next.status&&next.status!==before)next.log=[...(next.log??[]),{at:Date.now(),text:next.status,kind:/attention|could not|not signed in|usage limit|paused|limit reached|failed|interrupted|quiet hours|waiting/i.test(next.status)?'warn' as const:/saved|sent|started|confirmed|accepted|recovered|validated/i.test(next.status)?'ok' as const:'info' as const}].slice(-60);
+    if(next.status&&next.status!==before)next.log=[...(next.log??[]),{at:Date.now(),text:next.status,kind:/attention|could not|not signed in|usage limit|paused|limit reached|failed|interrupted|different linkedin account/i.test(next.status)?'warn' as const:/saved|sent|started|confirmed|accepted|recovered|validated/i.test(next.status)?'ok' as const:'info' as const}].slice(-60);
     return next;
   });
   return state;

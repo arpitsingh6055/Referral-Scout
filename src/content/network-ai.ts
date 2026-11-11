@@ -70,18 +70,15 @@ function replyValue(node: HTMLElement): string {
   const markdown = node.querySelector<HTMLElement>('.markdown, [data-message-content]');
   return text(markdown ?? node).replace(/^ChatGPT said:\s*/i, '').trim();
 }
-async function thinking(signal: AbortSignal, id: string): Promise<void> {
-  // No subscription inference: attempt only controls actually present, record a verified or skipped choice.
-  const pick = (regex: RegExp): HTMLElement | undefined => [...document.querySelectorAll<HTMLElement>('button, [role="button"], [role="option"], [role="menuitem"]')]
-    .find(e => visible(e) && regex.test([e.getAttribute('aria-label'), e.getAttribute('title'), text(e).trim()].filter(Boolean).join(' ')));
-  const control = find(selectors.chatgpt.thinking) ?? pick(/\b(?:Think|Thinking|Reasoning)\b/i);
-  if (!control) { await progress(id, 'thinking_skipped'); return; }
-  if (control.getAttribute('aria-pressed') !== 'true') { control.click(); await sleep(350, signal); }
-  const medium = find(selectors.chatgpt.thinkingMedium) ?? pick(/^Medium$/i);
-  if (medium) { medium.click(); await sleep(250, signal); }
-  const activated = control.getAttribute('aria-pressed')==='true'||control.getAttribute('aria-checked')==='true'||control.getAttribute('data-state')==='on';
-  const mediumVisible=!!pick(/\bMedium\b/i);
-  await progress(id, activated || mediumVisible ? 'thinking_verified' : 'thinking_unverified');
+const OURS = '[COLD_CONTACT_JOB:';
+/** Empties the message box. Only ever used on text this extension typed itself. */
+function clearComposer(editor: HTMLElement): void {
+  editor.focus();
+  if (editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) { insert(editor, ''); return; }
+  const range = document.createRange(); range.selectNodeContents(editor);
+  const selection = getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+  document.execCommand('delete');
+  if (readEditor(editor).trim()) { editor.replaceChildren(); editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' })); }
 }
 const notSend = /dictate|voice|attach|add files|model|mode|stop|microphone|photo|search|think/i;
 /** Send button inside the composer form. This ChatGPT build exposes almost no data-testid hooks, so fall back to aria-labels and the submit button. */
@@ -107,12 +104,17 @@ async function perform(id: string, prompt: string, parentId?: string): Promise<v
       if(parentId){
         if(!turnFor(parentId))throw new Error('The original task conversation is not visible. Repair cannot be submitted in a different chat.');
       }else if(userTurns().length || assistantTurns().length)throw new Error('This ChatGPT conversation is not empty and does not contain this job. Open a fresh chat; nothing was submitted.');
-      await thinking(signal, id);
       await wait(() => chatGptReady(), signal, 30000);
       await progress(id, 'composer_stable');
       const editor = composer();
       if (!editor) throw new Error('ChatGPT composer disappeared.');
-      if (readEditor(editor).trim()) throw new Error('ChatGPT already has an unsent draft. It was left untouched.');
+      const leftover = readEditor(editor).trim();
+      if (leftover) {
+        // A prompt this extension typed earlier but never sent (ChatGPT restores unsent text) is safe to remove. Anything else belongs to the person.
+        if (!leftover.includes(OURS)) throw new Error('ChatGPT has unsent text in its message box that this extension did not write. Send or delete it in ChatGPT, then try again.');
+        clearComposer(editor); await sleep(400, signal);
+        if (readEditor(composer() ?? editor).trim()) throw new Error('An earlier unsent prompt could not be cleared from ChatGPT. Delete the text in ChatGPT’s message box, then try again.');
+      }
       insert(editor, full);
       await progress(id, 'prompt_inserted');
       // Rich editors re-render a long paste asynchronously. Poll for the complete text rather than
@@ -144,6 +146,14 @@ async function perform(id: string, prompt: string, parentId?: string): Promise<v
         clicked = true;
         send.click();
         await progress(id, 'send_clicked');
+        // Some ChatGPT layouts ignore a scripted click on the arrow. If the prompt is still sitting there after a few seconds, press Enter instead.
+        await wait(() => turnFor(id) || !verify(), signal, 4000).catch(() => undefined);
+        if (!turnFor(id) && verify()) {
+          const active = composer()!; active.focus();
+          for (const type of ['keydown', 'keypress', 'keyup'] as const) active.dispatchEvent(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+          const form = active.closest('form'); await sleep(1500, signal);
+          if (!turnFor(id) && verify() && form) form.requestSubmit?.();
+        }
       }
       // The click alone is not proof of a submission.
       user = await wait(() => turnFor(id), signal, 30000).catch(() => { throw new Error(`Send result cannot be verified (${diagnose(id)}). Inspect the ChatGPT tab; do not retry blindly.`); });
@@ -168,6 +178,8 @@ async function perform(id: string, prompt: string, parentId?: string): Promise<v
     throw new Error('ChatGPT response did not finish in the visible tab. The task remains resumable; no second prompt was sent.');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    // Never leave our own unsent prompt behind: ChatGPT restores it in every new chat and it would block the next task.
+    try { const box = composer(); if (box && readEditor(box).includes(OURS) && !turnFor(id)) clearComposer(box); } catch { /* best effort */ }
     await progress(id, clicked && /cannot be verified|disappeared|changed/i.test(message) ? 'uncertain' : 'failed', { error: message.slice(0, 1000) });
   }
 }
