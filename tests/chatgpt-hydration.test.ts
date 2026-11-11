@@ -14,6 +14,7 @@ const PROMPT = ['Return ONLY one JSON object.', '', '# Sources', '- LinkedIn: As
 
 type Mode = 'faithful' | 'drops-text';
 let mode: Mode = 'faithful';
+let shape: 'simple' | 'deep' | 'thinking' = 'simple'; // deep: no hooks, turns nested 14 levels; thinking: an empty block before the answer
 let plainMarkup = false; // true: a ChatGPT build without data-message-author-role / data-turn hooks
 let clicks = 0;
 const events: { stage: string; text?: string; error?: string }[] = [];
@@ -59,13 +60,15 @@ function installFakeBrowser(): void {
           const bubble = document.createElement('div');
           if (!plainMarkup) bubble.setAttribute('data-message-author-role', 'user');
           bubble.textContent = editor().innerText;
-          const userTurn = document.createElement('div'); userTurn.className = 'turn'; userTurn.append(bubble); thread.append(userTurn);
+          const nest = (el: HTMLElement): HTMLElement => { let out = el; if (shape === 'deep') for (let i = 0; i < 14; i++) { const w = document.createElement('div'); w.append(out); out = w; } return out; };
+          const userTurn = document.createElement('div'); userTurn.className = 'turn'; userTurn.append(nest(bubble)); thread.append(userTurn);
           editor().replaceChildren();
           setTimeout(() => {
             const answer = document.createElement('div');
             if (!plainMarkup) answer.setAttribute('data-message-author-role', 'assistant');
-            answer.innerHTML = '<div class="markdown">{"schemaVersion":2}</div>';
-            const botTurn = document.createElement('div'); botTurn.className = 'turn'; botTurn.append(answer); thread.append(botTurn);
+            answer.innerHTML = shape === 'thinking' ? '<div class="markdown"></div><div><div class="markdown"><pre><span>json</span><button>Copy code</button><code>{"schemaVersion":2}</code></pre></div></div>'
+              : shape === 'deep' ? '<h6 class="sr-only">ChatGPT said:</h6><div><pre><code>{"schemaVersion":2}</code></pre></div><button aria-label="Stop reading aloud">x</button>' : '<div class="markdown">{"schemaVersion":2}</div>';
+            const botTurn = document.createElement('div'); botTurn.className = 'turn'; botTurn.append(nest(answer)); thread.append(botTurn);
           }, 300);
         });
         document.querySelector('form')!.append(send);
@@ -95,7 +98,7 @@ async function run(): Promise<void> {
   await vi.advanceTimersByTimeAsync(40000);
 }
 
-beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_000_000); events.length = 0; clicks = 0; mode = 'faithful'; plainMarkup = false; buildPage(); installFakeBrowser(); });
+beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_000_000); events.length = 0; clicks = 0; mode = 'faithful'; plainMarkup = false; shape = 'simple'; buildPage(); installFakeBrowser(); });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = ''; });
 
 it('sends a multi-paragraph prompt once and extracts the reply when ProseMirror re-renders newlines as paragraphs', async () => {
@@ -133,4 +136,18 @@ it('still finds its own message and the reply when the page has no role attribut
   expect(stages).not.toContain('uncertain');
   expect(clicks).toBe(1);
   expect(events.find(e => e.stage === 'response_extracted')?.text).toBe('{"schemaVersion":2}');
+});
+
+it('reads the reply by position when ChatGPT gives no hooks and nests its turns deeply, even with a stray Stop control on the page', async () => {
+  plainMarkup = true; shape = 'deep';
+  await run();
+  expect(events.map(e => e.stage)).toEqual(expect.arrayContaining(['user_turn_verified', 'assistant_streaming', 'response_extracted']));
+  expect(events.find(e => e.stage === 'response_extracted')?.text).toContain('{"schemaVersion":2}');
+  expect(clicks).toBe(1);
+});
+
+it('reads the answer when an empty "thinking" block comes before it', async () => {
+  shape = 'thinking';
+  await run();
+  expect(events.find(e => e.stage === 'response_extracted')?.text).toContain('{"schemaVersion":2}');
 });

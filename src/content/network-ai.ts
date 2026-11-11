@@ -67,8 +67,30 @@ function relevantAssistant(user: HTMLElement): HTMLElement | null {
 }
 const idOf = (user: HTMLElement): string => /\[REFERRAL_SCOUT_JOB:([a-f0-9]{64})\]/.exec(text(user))?.[1] ?? '';
 function replyValue(node: HTMLElement): string {
-  const markdown = node.querySelector<HTMLElement>('.markdown, [data-message-content]');
-  return text(markdown ?? node).replace(/^ChatGPT said:\s*/i, '').trim();
+  // A reply can hold several content blocks (an empty "thinking" block first, then the answer): read all of them, not the first.
+  const blocks = [...node.querySelectorAll<HTMLElement>('.markdown, [data-message-content]')].filter(b => !b.parentElement?.closest('.markdown, [data-message-content]'));
+  const joined = blocks.map(b => text(b).trim()).filter(Boolean).join('\n');
+  return (joined || text(node)).replace(/^ChatGPT said:\s*/i, '').trim();
+}
+/**
+ * The reply read by position alone, for when ChatGPT's markup gives no usable hooks: everything on the page between
+ * the end of our own prompt and the message box. It does not depend on attributes, class names or how deeply the
+ * turns are nested, only on the order of the text.
+ */
+function replyByPosition(user: HTMLElement, prompt: string): string {
+  const tail = prompt.replace(/\s+/g, '').slice(-60); if (tail.length < 20) return '';
+  const form = composer()?.closest('form') ?? null, range = document.createRange();
+  range.setStartBefore(user);
+  if (form && (user.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING)) range.setEndBefore(form); else range.setEndAfter(document.body.lastChild ?? document.body);
+  const all = range.toString(), map: number[] = []; let packed = '';
+  for (let i = 0; i < all.length; i++) if (!/\s/.test(all[i]!)) { packed += all[i]; map.push(i); }
+  const at = packed.lastIndexOf(tail); if (at < 0) return '';
+  return all.slice(map[at + tail.length - 1]! + 1).replace(/^\s*ChatGPT said:\s*/i, '').trim();
+}
+/** True once the text holds one complete JSON object: the answer has fully arrived, whatever the Stop button says. */
+function completeJson(value: string): boolean {
+  const from = value.indexOf('{'), to = value.lastIndexOf('}'); if (from < 0 || to <= from) return false;
+  try { JSON.parse(value.slice(from, to + 1)); return true; } catch { return false; }
 }
 const OURS = '[REFERRAL_SCOUT_JOB:';
 /** Empties the message box. Only ever used on text this extension typed itself. */
@@ -166,9 +188,12 @@ async function perform(id: string, prompt: string, parentId?: string): Promise<v
       const currentUser = turnFor(id);
       if (!currentUser) throw new Error('The verified user turn disappeared; conversation may have changed.');
       const reply = relevantAssistant(currentUser);
-      const nowText = reply ? replyValue(reply) : '';
+      const nowText = (reply ? replyValue(reply) : '') || replyByPosition(currentUser, prompt);
       if (nowText !== last) { last = nowText; changed = Date.now(); if (last && !streamingReported) {streamingReported=true;await progress(id, 'assistant_streaming');} }
-      if (last && Date.now() - changed >= 2500 && !find(selectors.chatgpt.stop) && reply?.isConnected) {
+      // Finished when the text has stopped changing and either a whole JSON object has arrived, the Stop button is gone,
+      // or nothing has changed for 12 seconds (a stray "Stop" control must not hold the answer back for ever).
+      const still = Date.now() - changed;
+      if (last && (reply ? reply.isConnected : true) && ((completeJson(last) && still >= 1500) || (still >= 2500 && !find(selectors.chatgpt.stop)) || still >= 12000)) {
         await progress(id, 'completion_verified');
         await progress(id, 'response_extracted', { text: last });
         return;

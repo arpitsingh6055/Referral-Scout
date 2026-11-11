@@ -15,6 +15,13 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.29.0: ChatGPT's answer is now read back
+- **Fixed: ChatGPT answered but the extension never picked the answer up** ("ChatGPT took too long to answer" while the reply was on screen). The reader depended on ChatGPT's markup: it gave up when turns were nested more than eight levels deep, and read only the first content block of a reply, which is empty when a "thinking" block comes first.
+- The reply is now also read **by position**: everything between the end of our own prompt and the message box, whatever the markup looks like. All content blocks of a reply are read, not the first.
+- An answer counts as finished as soon as it holds one complete JSON object and has stopped changing for 1.5 seconds. A stray "Stop" control on the page can no longer hold it back.
+- LinkedIn's "Verify in 2 minutes" prompt is no longer sent to ChatGPT as your headline.
+- Reproduced with two new fake-page tests that fail on the old reader and pass on the new one. Not yet confirmed against the live ChatGPT page.
+
 ## 0.28.0: Resume restores exactly what was running
 - Pause remembers what was running (sending on or off, referrals only or general outreach). **Resume brings back exactly that**; before, it always switched sending on in referrals-only mode, whatever you had been doing.
 - While paused, Home lists what Resume will continue: the job search and how far it got, companies still to search, messages queued, companies waiting for your answer. Pressing Resume confirms the same list.
