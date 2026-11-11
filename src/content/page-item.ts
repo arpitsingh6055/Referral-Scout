@@ -8,7 +8,7 @@ import { ownProfileEditLink, profileHeader, topCardFacts } from "../parsers/netw
  * precise but can never make the button disappear.
  */
 export type Relation = "connected" | "pending" | "not-connected" | "unknown";
-export interface PageItem { type: "person" | "job"; url: string; title: string; subtitle: string; company?: string; relation?: Relation }
+export interface PageItem { type: "person" | "job"; url: string; title: string; subtitle: string; company?: string; location?: string; relation?: Relation }
 export interface PageDeps { visible: (e: Element) => boolean; relation: (top: HTMLElement) => Relation }
 
 const clean = (text: string | null | undefined): string => (text ?? "").replace(/\s+/g, " ").trim();
@@ -47,8 +47,22 @@ function jobItem(doc: Document, href: string): PageItem | null {
   const heading = clean(doc.querySelector("main h1")?.textContent);
   const link = clean([...doc.querySelectorAll<HTMLAnchorElement>(`a[href*="/jobs/view/${id}"]`)].map(a => a.textContent).find(t => clean(t)));
   const title = fromTitle || heading || link || (parts[0] && !GENERIC.test(parts[0]) ? parts[0] : "") || `LinkedIn job ${id}`;
-  const company = onJobPage && parts[1] ? parts[1] : "";
-  return { type: "job", url: `https://www.linkedin.com/jobs/view/${id}/`, title: title.slice(0, 200), subtitle: company.slice(0, 500), ...(company ? { company: company.slice(0, 200) } : {}) };
+  // Most people browse jobs in the split search view (/jobs/search-results/?currentJobId=...), not on /jobs/view/.
+  // There the company is read from the line under the job title ("DeHaat • Gurugram, Haryana, India (On-site)"),
+  // then from the "About the company" block, and from the tab title only when it clearly names this same job.
+  let header: { company: string; location: string } | null = null;
+  for (const a of doc.querySelectorAll<HTMLAnchorElement>(`a[href*="/jobs/view/${id}"]`)) {
+    for (let n = a.parentElement, depth = 0; n && depth < 8 && !header; n = n.parentElement, depth++) {
+      const line = [...n.querySelectorAll("p")].map(p => clean(p.textContent)).find(t => /^[^•]{1,120} • .+/.test(t) && !/^\d+\s?(?:h|d|w|mo|yr)\b/i.test(t) && !/^beta\b/i.test(t));
+      if (line) { const [first, ...rest] = line.split(" • "); header = { company: first!.trim(), location: rest.join(" • ").trim() }; }
+    }
+    if (header) break;
+  }
+  const about = clean(doc.querySelector(`[componentkey="JobDetails_AboutTheCompany_${id}"] a[href*="/company/"]`)?.textContent).replace(/\s*[\d,.]+[KM]?\s+followers.*$/i, "");
+  const sameJob = !!parts[0] && !!parts[1] && parts[0].toLowerCase() === title.toLowerCase();
+  const company = (onJobPage && parts[1] ? parts[1] : "") || header?.company || about || (sameJob ? parts[1]! : "");
+  return { type: "job", url: `https://www.linkedin.com/jobs/view/${id}/`, title: title.slice(0, 200), subtitle: company.slice(0, 500),
+    ...(company ? { company: company.slice(0, 200) } : {}), ...(header?.location ? { location: header.location.slice(0, 200) } : {}) };
 }
 
 export function pageItem(doc: Document, href: string, deps: PageDeps): PageItem | null {

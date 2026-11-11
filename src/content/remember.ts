@@ -50,9 +50,10 @@ const jobRow = make("div", "display:none");
 const referralButton = (mode: "referral" | "connections", label: string): HTMLButtonElement => {
   const b = make("button", PILL2, label); b.type = "button";
   b.addEventListener("click", () => {
-    const job = current; if (!job || job.type !== "job" || !job.subtitle) return;
+    const job = current; if (!job || job.type !== "job") return;
+    if (!job.subtitle) { b.textContent = "Could not read the company here. Open the job on its own page and try again."; setTimeout(() => { b.textContent = label; }, 6000); return; }
     b.textContent = "Starting…";
-    void chrome.runtime.sendMessage({ kind: "network.referral", mode, job: { url: job.url, title: job.title, company: job.subtitle, location: "" } })
+    void chrome.runtime.sendMessage({ kind: "network.referral", mode, job: { url: job.url, title: job.title, company: job.subtitle, location: job.location ?? "" } })
       .then((reply: { message?: string } | undefined) => { b.textContent = reply?.message ?? "Open Cold Contact to see progress."; })
       .catch(() => { b.textContent = "Refresh this LinkedIn tab and try again."; })
       .finally(() => setTimeout(() => { b.textContent = label; }, 6000));
@@ -70,7 +71,7 @@ function paint(): void {
   ui.style.display = current ? "block" : "none";
   if (!current) { box.style.display = "none"; return; }
   const noun = current.type === "job" ? "job" : "person";
-  jobRow.style.display = current.type === "job" && current.subtitle ? "block" : "none";
+  jobRow.style.display = current.type === "job" ? "block" : "none"; // always offered on a job; a missing company is explained on click
   pill.textContent = saved ? "✓ Remembered · edit note" : `＋ Remember this ${noun}`;
   pill.style.background = saved ? "#1a7f4b" : "#0a66c2";
   who.textContent = current.title; sub.textContent = current.subtitle;
