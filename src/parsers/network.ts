@@ -110,6 +110,28 @@ export function recentConnections(doc: ParentNode): string[] {
   for (const a of main.querySelectorAll<HTMLAnchorElement>('a[href*="/in/"]')) { const url = profileUrl(a.getAttribute("href") ?? ""); if (url) found.add(url); }
   return [...found];
 }
+export interface JobRow { id: string; title: string; company: string; location: string; insight: string }
+/**
+ * Rows of the LinkedIn job search list (checked live, November 2026). A row is not a link: it is found by its
+ * "Dismiss <title> job" button, its number is in the `job-card-component-ref-<id>` marker, and its lines read
+ * title, company, location, then a hint such as "3 connections work here" or "2 school alumni work here".
+ */
+export function jobRows(doc: ParentNode): JobRow[] {
+  const rows: JobRow[] = [], seen = new Set<string>();
+  for (const marker of doc.querySelectorAll('[componentkey^="job-card-component-ref-"]')) {
+    const id = /(\d{6,})$/.exec(marker.getAttribute("componentkey") ?? "")?.[1]; if (!id || seen.has(id)) continue;
+    let row: Element = marker;
+    for (let i = 0; i < 6 && !row.querySelector('button[aria-label^="Dismiss"]') && row.parentElement; i++) row = row.parentElement;
+    const dismiss = row.querySelector('button[aria-label^="Dismiss"]')?.getAttribute("aria-label") ?? "";
+    const lines = [...row.querySelectorAll("p")].map(textOf).filter(Boolean);
+    const title = (/^Dismiss (.+) job$/i.exec(dismiss)?.[1] ?? lines[0] ?? "").replace(/\s*\(Verified job\)\s*$/i, "").trim();
+    const company = lines[1] ?? "", location = lines[2] ?? "";
+    if (!title || !company) continue;
+    const insight = lines.slice(3).find(l => /work here|alumni|connection/i.test(l)) ?? "";
+    seen.add(id); rows.push({ id, title: title.slice(0, 200), company: company.slice(0, 200), location: location.slice(0, 200), insight: insight.slice(0, 120) });
+  }
+  return rows;
+}
 /** "Recruiter at LotusFlare" -> "LotusFlare". */
 export function companyFromCurrent(current: string | undefined): string | undefined {
   const match = /\bat\s+(.+?)(?:\s+-\s+.*)?$/i.exec(current ?? "");

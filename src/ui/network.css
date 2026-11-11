@@ -164,3 +164,10 @@ textarea.draft:focus{outline:2px solid var(--primary);outline-offset:1px}
 .stale-row{display:flex;justify-content:space-between;gap:10px;align-items:baseline;margin:0 0 6px}
 
 .tab{padding:8px 4px;font-size:12.5px}
+
+/* job shortlist */
+.job-list{display:flex;flex-direction:column;gap:6px;margin:8px 0 12px;max-height:420px;overflow:auto}
+.job-row{display:flex;gap:10px;align-items:flex-start;padding:9px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);cursor:pointer}
+.job-row input{margin-top:3px;flex:none;width:16px;height:16px}.job-row div{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}.job-row b{font-size:13.5px}
+.job-row .badge{align-self:flex-start;margin-top:2px}
+p.callout{display:block}

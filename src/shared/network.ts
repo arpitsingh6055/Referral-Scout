@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { classify, suggestTarget } from './targeting';
 import type { ReferralJob } from './referral';
+import type { JobSearch, SearchPlan } from './jobsearch';
 export const DAY = 86400000;
 export const networkKey = 'network-v1'; // Retain old state for lossless migration; mirror entities in v2 stores.
 export function profileUrl(value:string):string|null {
@@ -87,7 +88,7 @@ export interface NetworkState {
   profile:NetworkProfile|null;target:string;location:string;template:string;
   cv:{name:string;type:string;text:string;textVersion?:number;pages?:number;warnings?:string[];savedAt?:number;characterCount?:number}|null;
   dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
-  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;nextSweepAt?:number;
+  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;nextSweepAt?:number;jobSearch?:JobSearch;plan?:SearchPlan;
   /** 'referrals' = only people from Referrals jobs are contacted; general searching and outreach stay off. */
   scope?:'all'|'referrals';referralJobs?:ReferralJob[];saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;
   settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;
@@ -188,6 +189,11 @@ export const networkRequest=z.discriminatedUnion('action',[
   z.object({kind:z.literal('network'),action:z.literal('skip'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('forget'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('askReferral'),url:z.string()}),
+  z.object({kind:z.literal('network'),action:z.literal('findJobs')}),
+  z.object({kind:z.literal('network'),action:z.literal('resume')}),
+  z.object({kind:z.literal('network'),action:z.literal('cancelJobSearch')}),
+  z.object({kind:z.literal('network'),action:z.literal('pickJobs'),ids:z.array(z.string().regex(/^\d+$/)).min(1).max(20),perCompany:z.number().int().min(1).max(5)}),
+  z.object({kind:z.literal('network'),action:z.literal('referralDecision'),url:z.string(),widen:z.boolean()}),
   z.object({kind:z.literal('network'),action:z.literal('removeReferralJob'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('updateSaved'),url:z.string(),status:z.enum(jobStatuses).optional(),remindDays:z.number().min(0).max(365).nullable().optional(),note:z.string().max(300).optional()}),
   z.object({kind:z.literal('network'),action:z.literal('editDraft'),url:z.string(),text:z.string().trim().min(1).max(2000)}),
@@ -197,7 +203,7 @@ export const networkRequest=z.discriminatedUnion('action',[
 export type NetworkRequest=z.infer<typeof networkRequest>;
 export const networkPageCommand=z.object({
   kind:z.literal('network.page'),requestId:z.uuid(),deadline:z.number(),
-  action:z.enum(['identity','profile','search','connections','companyId','relationship','connect','message','selftest']),
+  action:z.enum(['identity','profile','search','connections','companyId','jobs','jobInfo','relationship','connect','message','selftest']),
   url:z.string().default(''),intentId:z.string().default(''),
   body:z.string().default(''),noteMode:z.enum(['require','preferred','none']).default('preferred')
 });

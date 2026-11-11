@@ -91,3 +91,8 @@ Still not run live: the invitation dialog and its note field, the Pending marker
 - Company page `linkedin.com/company/dehaat/` checked live: the employee-count link carries `currentCompany=["13396287"]`.
 - People search with that filter and `network=["F","S"]` checked live: 10 rows, 7 pages, every person at DeHaat; rows match the reader.
 - Not yet run through the extension itself in Edge: the two job-page buttons end to end.
+
+## 12 November 2026, v0.19.0 (job search)
+
+- `linkedin.com/jobs/search-results/?keywords=operations intern&geoId=102713980` checked live: 25 rows. A row is not a link; it carries `componentkey="job-card-component-ref-<id>"`, a "Dismiss <title> job" button, and lines for title, company, location and a hint such as "256 company alumni work here".
+- Not yet run through the extension in Edge: the full pipeline, and the ChatGPT plan prompt (ChatGPT has still never completed a task live in this project).

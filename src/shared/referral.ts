@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { COMPANY_KINDS, classify, companyMatches, functionWords } from './targeting';
+import type { CompanySize } from './jobsearch';
 
 /*
  * Referrals for one job.
@@ -30,6 +31,13 @@ export interface ReferralJob extends z.infer<typeof referralJobInput> {
   cursor: number; found: number; finishedAt?: number;
   /** LinkedIn's number for the company, once read. `idTried` stops a second attempt when it could not be read. */
   companyId?: string; idTried?: boolean;
+  /** Read from the job's own page when the job came from a search list and not from a click on a job page. */
+  infoTried?: boolean;
+  size?: CompanySize; sizeText?: string;
+  /** How many invitations this company gets (3 to 5). People already known are messaged on top of that. */
+  perCompany?: number;
+  /** People the person already knows there. When there are some, the person decides: ask only them, or also look for stronger referrers. */
+  known?: number; decision?: 'known' | 'widen'; waiting?: boolean;
 }
 /** How many people one "Ask for referrals" click contacts by itself: the strongest few. A whole recruiting team is not messaged at once. */
 export const REFERRAL_AUTO = 8;
@@ -42,11 +50,16 @@ export interface ReferralSearch { label: string; keywords: string; network: ('F'
  * "Current company" filter, so only people who work there now come back, however they word their headline.
  * Without it the company name is used as a keyword and each result is checked against the name.
  */
-export function referralPlan(job: Pick<ReferralJob, 'company' | 'title' | 'mode' | 'companyId'>): ReferralSearch[] {
+export function referralPlan(job: Pick<ReferralJob, 'company' | 'title' | 'mode' | 'companyId' | 'size'>, titles?: string[]): ReferralSearch[] {
   const fn = functionWords([job.title])[0] ?? '', at = job.company;
   if (job.companyId) {
     const known: ReferralSearch[] = [{ label: `people you already know at ${at}`, keywords: '', network: ['F'] }, { label: `more people you know at ${at}`, keywords: '', network: ['F'], page: 2 }];
     if (job.mode === 'connections') return known;
+    if (titles?.length) {
+      // Planned titles for a company of this size, searched in two groups so each query stays short enough for LinkedIn.
+      const groups = [titles.slice(0, 5), titles.slice(5, 10)].filter(g => g.length);
+      return [...known, ...groups.map((g, i) => ({ label: i ? `more likely referrers at ${at}` : `likely referrers at ${at}`, keywords: `(${g.map(t => /\s/.test(t) ? `"${t}"` : t).join(' OR ')})`, network: ['S', 'O'] as ('S' | 'O')[] }))];
+    }
     return [known[0]!,
       { label: `recruiters and HR at ${at}`, keywords: COMPANY_KINDS[0]!, network: ['S', 'O'] },
       { label: `more recruiters and HR at ${at}`, keywords: COMPANY_KINDS[0]!, network: ['S', 'O'], page: 2 },
@@ -90,7 +103,7 @@ const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * A plain employee in an unrelated team only counts if the person already knows them (1st degree):
  * a stranger who merely works there is the unhelpful suggestion this is meant to avoid.
  */
-export function rankReferral(person: { headline: string; current?: string | undefined; degree?: number | undefined; alum?: boolean | undefined }, job: Pick<ReferralJob, 'company' | 'title'>, verified = false): ReferralVerdict | null {
+export function rankReferral(person: { headline: string; current?: string | undefined; degree?: number | undefined; alum?: boolean | undefined }, job: Pick<ReferralJob, 'company' | 'title' | 'size'>, verified = false, titles: string[] = []): ReferralVerdict | null {
   const headline = person.headline;
   if (!verified && !companyMatches(`${person.current ?? ''} | ${headline}`, job.company)) return null;
   // "Ex Tata Group" must not rule out someone now at this company; only "ex-<this company>" does.
@@ -101,10 +114,14 @@ export function rankReferral(person: { headline: string; current?: string | unde
   const kind: ReferralKind = classify({ headline }, { roles: [job.title] })?.category
     ?? (HIRING.test(headline) ? 'recruiter' : SENIOR.test(headline) ? 'senior' : fn && new RegExp(`\\b${escape(fn)}`, 'i').test(headline) ? 'peer' : 'employee');
   const degree = person.degree ?? 3;
-  if (kind === 'employee' && degree !== 1) return null;
+  // At a large company a founder, director or VP will not answer a stranger about a referral. Keep them only if already known.
+  const tooSenior = job.size === 'large' && (kind === 'founder' || /\b(?:director|vp|vice president|president|chief|c[tfoepm]o|founder|ceo|managing director)\b/i.test(headline)) && !HIRING.test(headline);
+  if (tooSenior && degree !== 1) return null;
+  const planned = titles.some(t => new RegExp(`\\b${escape(t)}`, 'i').test(headline));
+  if (kind === 'employee' && degree !== 1 && !planned) return null;
   if (kind === 'peer' && degree > 2) return null; // same-team peers only when there is at least a mutual connection
   // Someone from the same school is noticeably more willing to help; LinkedIn flags them on the job page.
-  const score = WEIGHT[kind] + (degree === 1 ? 60 : degree === 2 ? 20 : 0) + (person.alum ? 25 : 0);
+  const score = WEIGHT[kind] + (degree === 1 ? 60 : degree === 2 ? 20 : 0) + (person.alum ? 25 : 0) + (planned ? 40 : 0) - (tooSenior ? 80 : 0);
   return { kind, score, reason: `${WHY[kind]} at ${job.company}${degree === 1 ? ', already your connection' : ''}${person.alum ? ', from your school' : ''}. For: ${job.title}` };
 }
 

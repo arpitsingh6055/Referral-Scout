@@ -6,7 +6,7 @@ import { networkCommand, networkTab } from "../src/background/network-browser";
 import { clearDatabase, closeDatabase } from "../src/storage/database";
 import { registerNetworkMessages } from "../src/background/network-messages";
 import { prepareDossier } from "../src/background/network-ai";
-vi.mock("../src/background/network-ai", () => ({ clearAiJobs:vi.fn(), prepareInvitation:vi.fn().mockResolvedValue("Hi Alex, would love to connect."), prepareIntroduction: vi.fn().mockResolvedValue("Hi Alex, thanks for connecting. Could we discuss product opportunities?"), prepareDossier: vi.fn().mockResolvedValue("Saved profile") }));
+vi.mock("../src/background/network-ai", () => ({ askChatGpt:vi.fn().mockRejectedValue(new Error("not available")), clearAiJobs:vi.fn(), prepareInvitation:vi.fn().mockResolvedValue("Hi Alex, would love to connect."), prepareIntroduction: vi.fn().mockResolvedValue("Hi Alex, thanks for connecting. Could we discuss product opportunities?"), prepareDossier: vi.fn().mockResolvedValue("Saved profile") }));
 vi.mock("../src/background/network-browser", () => ({ networkCommand: vi.fn(), networkTab: vi.fn().mockResolvedValue(9), readyNetworkTab: vi.fn(), showWorkTab: vi.fn(), openWorkTab: vi.fn().mockResolvedValue(9) }));
 const profile = { name: "Example Student", url: "https://www.linkedin.com/in/student/", headline: "Product analyst", location: "India", about: "" };
 function contact(patch: Partial<NetworkContact> = {}): NetworkContact {

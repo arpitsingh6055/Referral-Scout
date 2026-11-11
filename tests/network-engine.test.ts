@@ -6,7 +6,7 @@ import { networkCommand, networkTab } from '../src/background/network-browser';
 import { prepareInvitation } from '../src/background/network-ai';
 import { clearDatabase, closeDatabase } from '../src/storage/database';
 
-vi.mock('../src/background/network-ai', () => ({ clearAiJobs: vi.fn(), prepareInvitation: vi.fn().mockResolvedValue('AI note'), prepareIntroduction: vi.fn().mockResolvedValue('AI intro'), prepareDossier: vi.fn().mockResolvedValue('dossier') }));
+vi.mock('../src/background/network-ai', () => ({ askChatGpt: vi.fn().mockRejectedValue(new Error('not available')), clearAiJobs: vi.fn(), prepareInvitation: vi.fn().mockResolvedValue('AI note'), prepareIntroduction: vi.fn().mockResolvedValue('AI intro'), prepareDossier: vi.fn().mockResolvedValue('dossier') }));
 vi.mock('../src/background/network-browser', () => ({ networkCommand: vi.fn(), networkTab: vi.fn().mockResolvedValue(9), readyNetworkTab: vi.fn(), showWorkTab: vi.fn(), openWorkTab: vi.fn().mockResolvedValue(9) }));
 
 const me = { name: 'Arpit Singh', url: 'https://www.linkedin.com/in/arpit45/', headline: 'PGDM', location: 'India', about: '' };
@@ -281,7 +281,7 @@ it('messages an existing 1st-degree connection directly, with wording that does 
 
 it('a referral search runs even while outreach is paused, keeps only people at that company, and queues the strongest once it is complete', async () => {
   const jobUrl = 'https://www.linkedin.com/jobs/view/123/';
-  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Product Manager', company: 'Acme', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0 }] });
+  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Product Manager', company: 'Acme', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0, infoTried: true }] });
   vi.mocked(networkCommand).mockResolvedValueOnce([card('rec', 'Senior Recruiter at Acme', 2), card('friend', 'Analyst at Acme', 1), card('stranger', 'Analyst at Acme', 3), card('elsewhere', 'Recruiter at Other Co', 2)]);
   await networkTick();
   const url = urls()[0]!;
@@ -295,7 +295,7 @@ it('a referral search runs even while outreach is paused, keeps only people at t
 });
 
 it('"My connections here" only lists people; nobody is queued until asked', async () => {
-  await seed({ active: false, referralJobs: [{ url: 'https://www.linkedin.com/jobs/view/9/', title: 'Sales Lead', company: 'TBX', location: '', mode: 'connections', addedAt: 1, cursor: 3, found: 0 }] });
+  await seed({ active: false, referralJobs: [{ url: 'https://www.linkedin.com/jobs/view/9/', title: 'Sales Lead', company: 'TBX', location: '', mode: 'connections', addedAt: 1, cursor: 3, found: 0, infoTried: true }] });
   vi.mocked(networkCommand).mockResolvedValueOnce([card('pal', 'Account Executive at TBX', 1)]);
   await networkTick();
   expect(JSON.parse(urls()[0]!.searchParams.get('network')!)).toEqual(['F']);
@@ -321,14 +321,14 @@ it('reads the company number from its page first, then searches with the Current
   expect(saved.referralJobs![0]!.finishedAt).toBeGreaterThan(0); // fewer than 10 people: no second page needed
 });
 
-it('contacts only the strongest 8 by itself and leaves the rest listed', async () => {
+it('messages the people already known and invites only the chosen number of others (3 unless set), leaving the rest listed', async () => {
   const jobUrl = 'https://www.linkedin.com/jobs/view/77/';
-  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Technology analyst', company: 'Infosys', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0 }] });
+  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Technology analyst', company: 'Infosys', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0, infoTried: true }] });
   vi.mocked(networkCommand).mockResolvedValueOnce(Array.from({ length: 10 }, (_, i) => card(`rec-${i}`, 'Talent Acquisition at Infosys', i < 2 ? 1 : 2)));
   await networkTick();
   const people = (await getNetwork()).contacts;
-  expect(people.filter(p => p.auto).length).toBe(8);
-  expect(people.filter(p => p.state === 'found').length).toBe(2);
+  expect(people.filter(p => p.auto && !p.direct).length).toBe(3);
+  expect(people.filter(p => p.state === 'found').length).toBe(5);
   expect(people.filter(p => p.auto && p.direct).map(p => p.state)).toEqual(['connected', 'connected']); // people already known are always among the first
 });
 
@@ -345,4 +345,55 @@ it('referral outreach sends without a second approval, and leaves general contac
   vi.mocked(networkCommand).mockClear(); vi.setSystemTime(Date.now() + 10 * 60000);
   await networkTick();
   expect(vi.mocked(networkCommand).mock.calls.some(c => (c[1] as { action: string }).action === 'search')).toBe(false); // no general searching
+});
+
+/* ---------- job search pipeline ---------- */
+it('plans once, searches each planned title, then offers one job per company with the best ones ticked', async () => {
+  const { askChatGpt } = await import('../src/background/network-ai');
+  vi.mocked(askChatGpt).mockResolvedValueOnce(JSON.stringify({ searchTerms: ['operations intern', 'supply chain intern'], referralTitles: { large: ['recruiter', 'team lead', 'CEO'], mid: ['HR'], small: ['founder'] },
+    note: 'Hi {firstName}, I’m {myFirstName}. I’m applying for the {title} role at {company} and would love to connect.', ask: 'Hi {firstName}, I’m applying for {title} at {company}: {jobUrl} Could you refer me?' }));
+  await seed({ active: false, jobSearch: { status: 'finding', cursor: 0, found: [], startedAt: 1 } }, { roles: ['Operations intern'] });
+  await networkTick(); // the plan: one ChatGPT prompt
+  let saved = await getNetwork();
+  expect(saved.plan).toMatchObject({ source: 'chatgpt', terms: ['Operations intern', 'supply chain intern'] });
+  expect(saved.plan!.titles.large).toEqual(['recruiter', 'team lead']); // a CEO is never targeted at a large company, whatever the model says
+  vi.mocked(networkCommand).mockResolvedValueOnce([{ id: '11', title: 'Operations Intern', company: 'Stripe', location: 'Bengaluru', insight: '3 connections work here' }, { id: '12', title: 'Senior Operations Manager', company: 'Acme', location: 'Pune', insight: '' }]);
+  await networkTick();
+  expect(urls()[0]!.searchParams.get('geoId')).toBe('102713980');
+  vi.mocked(networkCommand).mockResolvedValueOnce([{ id: '13', title: 'Supply Chain Intern', company: 'Stripe', location: 'Bengaluru', insight: '' }, { id: '14', title: 'Supply Chain Intern', company: 'Lane', location: 'Bengaluru', insight: '' }]);
+  await networkTick();
+  await networkTick(); // no terms left: build the shortlist
+  saved = await getNetwork();
+  expect(saved.jobSearch!.status).toBe('choosing');
+  expect(saved.jobSearch!.found.map(j => [j.company, j.id, j.picked])).toEqual([['Stripe', '11', true], ['Lane', '14', true], ['Acme', '12', false]]);
+  expect(vi.mocked(askChatGpt)).toHaveBeenCalledTimes(1);
+});
+
+it('falls back to built-in titles when ChatGPT is not available, and says so', async () => {
+  const { askChatGpt } = await import('../src/background/network-ai');
+  vi.mocked(askChatGpt).mockRejectedValueOnce(new Error('Sign in to ChatGPT or resolve its challenge in the visible tab.'));
+  await seed({ active: false, jobSearch: { status: 'finding', cursor: 0, found: [], startedAt: 1 } }, { roles: ['Operations intern'] });
+  await networkTick();
+  const saved = await getNetwork();
+  expect(saved.plan).toMatchObject({ source: 'rules' });
+  expect(saved.plan!.terms).toEqual(expect.arrayContaining(['Operations intern', 'supply chain intern', 'logistics intern']));
+  expect(saved.status).toMatch(/ChatGPT was not available/);
+});
+
+it('for a chosen company: opens the job, reads the company size, and asks before looking wider when the person already knows people there', async () => {
+  const jobUrl = 'https://www.linkedin.com/jobs/view/11/';
+  await seed({ scope: 'referrals', referralJobs: [{ url: jobUrl, title: 'Operations Intern', company: 'Stripe', location: '', mode: 'referral', addedAt: 1, cursor: 0, found: 0, perCompany: 4 }] });
+  vi.mocked(networkCommand).mockResolvedValueOnce({ companyUrl: 'https://www.linkedin.com/company/stripe/', location: 'Bengaluru', suggested: [] });
+  await networkTick();
+  vi.mocked(networkCommand).mockResolvedValueOnce({ id: '2135371', size: '5K-10K employees' });
+  await networkTick();
+  expect((await getNetwork()).referralJobs![0]).toMatchObject({ companyId: '2135371', size: 'large' });
+  vi.mocked(networkCommand).mockResolvedValueOnce([card('friend', 'Operations Associate at Stripe', 1)]);
+  await networkTick();
+  let saved = await getNetwork();
+  expect(saved.referralJobs![0]).toMatchObject({ waiting: true, known: 1 });
+  expect(saved.status).toMatch(/You already know 1 person at Stripe/);
+  vi.mocked(networkCommand).mockClear();
+  await networkTick(); // nothing more is searched for this company until the person decides
+  expect(vi.mocked(networkCommand).mock.calls.some(c => (c[1] as { action: string }).action === 'search')).toBe(false);
 });

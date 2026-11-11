@@ -3,7 +3,7 @@ import { rememberMessage, type SavedItem, networkRequest, networkProfileSchema, 
 import { trustedExtension, trustedSite } from '../validators/security';
 import { referralMessage, referralAsk, referralNote } from '../shared/referral';
 import { fitNote } from '../shared/network';
-import { getNetwork, updateNetwork, pauseNetwork, networkTick } from './network';
+import { getNetwork, updateNetwork, pauseNetwork, networkTick, queueBest } from './network';
 import { networkCommand, networkTab } from './network-browser';
 import { acquire, release, renew } from './lease';
 import { all, remove } from '../storage/database';
@@ -248,6 +248,30 @@ export function registerNetworkMessages():void{
           if(!s.active){s.active=true;s.revision++;s.scope='referrals';}
           s.status=`${p.name} queued. ${p.direct?'A message':'An invitation'} goes out in turn.`;return s;
         });
+        const referralsOn=(s:NetworkState):void=>{if(!s.active){s.active=true;s.revision++;s.scope='referrals';}};
+        if(req.action==='findJobs'){
+          if(!current.profile)throw new Error('Read your LinkedIn profile first.');
+          await updateNetwork(s=>({...s,jobSearch:{status:'finding',cursor:0,found:[],startedAt:Date.now()},status:'Starting your job search…'}));
+        }
+        if(req.action==='resume')await updateNetwork(s=>{referralsOn(s);s.status='Resumed. Messages and invitations for your chosen companies go out in turn.';return s;});
+        if(req.action==='cancelJobSearch')await updateNetwork(s=>{delete s.jobSearch;s.status='Job search closed. Companies you already chose are kept.';return s;});
+        if(req.action==='pickJobs')await updateNetwork(s=>{
+          const search=s.jobSearch;if(!search||search.status==='finding')throw new Error('The job list is not ready yet.');
+          const chosen=search.found.filter(j=>req.ids.includes(j.id));if(!chosen.length)throw new Error('Tick at least one company.');
+          const list=s.referralJobs??(s.referralJobs=[]);
+          for(const j of chosen.reverse())if(!list.some(r=>r.url===j.url))list.unshift({url:j.url,title:j.title,company:j.company,location:j.location,mode:'referral',addedAt:Date.now(),cursor:0,found:0,perCompany:req.perCompany});
+          s.referralJobs=list.slice(0,100);
+          search.found=search.found.filter(j=>!req.ids.includes(j.id)).map(j=>({...j,picked:false}));search.status='working';
+          referralsOn(s);
+          s.status=`${chosen.length} ${chosen.length===1?'company':'companies'} chosen. Finding who can refer you, one company at a time.`;return s;
+        });
+        if(req.action==='referralDecision')await updateNetwork(s=>{
+          const job=s.referralJobs?.find(j=>j.url===req.url);if(!job)throw new Error('This job is no longer in Referrals.');
+          job.decision=req.widen?'widen':'known';delete job.waiting;
+          if(!req.widen){job.finishedAt=Date.now();queueBest(s,job);}
+          referralsOn(s);
+          s.status=req.widen?`${job.company}: also looking for stronger referrers.`:`${job.company}: asking only the people you already know.`;return s;
+        });
         if(req.action==='removeReferralJob')await updateNetwork(s=>{
           s.referralJobs=(s.referralJobs??[]).filter(j=>j.url!==req.url);
           // People only listed for this job go with it; anyone already queued or contacted stays on the People list.
@@ -259,7 +283,7 @@ export function registerNetworkMessages():void{
         if(req.action==='skip')await updateNetwork(s=>{const p=s.contacts.find(p=>p.url===req.url);if(p){p.state='skipped';p.reason='Skipped. No future action is scheduled.';}return s;});
         if(req.action==='clear')await clearAllNetwork();
         return statusView(await getNetwork());
-      }finally{clearInterval(timer);if(exclusive)await release(owner);if(req.action==='start'||req.action==='askReferral')void networkTick();}
+      }finally{clearInterval(timer);if(exclusive)await release(owner);if(['start','askReferral','findJobs','pickJobs','referralDecision','resume'].includes(req.action))void networkTick();}
     })().then(data=>respond({ok:true,data})).catch((error:unknown)=>respond({ok:false,error:error instanceof Error?error.message:String(error)}));return true;
   });
 }

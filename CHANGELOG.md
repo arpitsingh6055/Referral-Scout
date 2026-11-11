@@ -15,6 +15,17 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.19.0: job search and referral pipeline
+The product is now built around jobs, not general outreach.
+
+- **Find jobs and referrals** is the main button. It plans the search, reads LinkedIn job results for your target role and its parallel titles (an "operations intern" search also tries supply chain, logistics, procurement and so on), and offers one job per company, best first.
+- **You confirm the companies.** The best matches are pre-ticked; companies where LinkedIn says you have connections or alumni rank higher. You choose 3, 4 or 5 invitations per company.
+- **One ChatGPT prompt per set of target roles**, cached: parallel job titles, which titles to approach at large, mid-size and small companies, and the wording of the note and messages. If ChatGPT is unavailable the built-in plan is used and you are told.
+- **Company size decides who is asked.** The size is read from the company page. At a large company strangers who are founders, directors or VPs are dropped; recruiters, HR, team leads, senior consultants and associates are targeted. At a small company founders and heads are.
+- **People you already know come first.** If you know anyone at a company the extension stops and asks: ask only them, or also look for stronger referrers.
+- General networking outreach is no longer on the home screen; it is under Setup.
+- Checked live: the LinkedIn job list (25 rows read with title, company, location and the "connections work here" hint). Not yet run in Edge end to end.
+
 ## 0.18.0
 - **Ask for referrals now acts.** When the search finishes, the strongest 8 people are contacted without a second approval: people you already know get a message, the others an invitation, paced and within the daily limits. Everyone else stays listed with an "Invite and ask" button.
 - If outreach was paused, the click switches on **referral outreach only**: general searching and general contacts stay untouched until you press "Also start general outreach". Pause still stops everything.

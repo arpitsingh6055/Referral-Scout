@@ -27,13 +27,18 @@ it('shows the three-step welcome screen before a profile is read, and reads it o
   expect(sent.map(r => r.action)).toContain('import');
 });
 
-it('starts outreach in one click: saves the settings first, then starts, then shows a success notification', async () => {
+it('starts a job search in one click: saves the settings first, then starts, then shows a success notification', async () => {
   await open();
-  byText('button', 'Start outreach')!.click();
-  await vi.waitFor(() => expect(sent.map(r => r.action)).toEqual(expect.arrayContaining(['save', 'start'])));
-  expect(sent.map(r => r.action).indexOf('save')).toBeLessThan(sent.map(r => r.action).indexOf('start'));
-  await vi.waitFor(() => expect(byText('.toast', 'Outreach started')).toBeTruthy());
-  expect($('.run-title')!.textContent).toBe('Outreach is running');
+  byText('button', 'Find jobs and referrals')!.click();
+  await vi.waitFor(() => expect(sent.map(r => r.action)).toEqual(expect.arrayContaining(['save', 'findJobs'])));
+  expect(sent.map(r => r.action).indexOf('save')).toBeLessThan(sent.map(r => r.action).indexOf('findJobs'));
+  await vi.waitFor(() => expect(byText('.toast', 'Job search started')).toBeTruthy());
+});
+
+it('keeps general networking outreach available in Setup, off the home screen', async () => {
+  await open();
+  expect(byText('button', 'Start outreach')).toBeFalsy();
+  expect(byText('button', 'Start general outreach')).toBeTruthy();
 });
 
 it('tells the user what is happening instead of looking dead outside active hours', async () => {
@@ -64,8 +69,8 @@ it('switches tabs without losing what the user typed', async () => {
 
 it('shows a clear error banner and toast when an action fails', async () => {
   await open();
-  (chrome.runtime.sendMessage as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (req: { action?: string }) => req.action === 'start' ? { ok: false, error: 'LinkedIn is not signed in.' } : { ok: true, data: structuredClone(state) });
-  byText('button', 'Start outreach')!.click();
+  (chrome.runtime.sendMessage as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (req: { action?: string }) => req.action === 'findJobs' ? { ok: false, error: 'LinkedIn is not signed in.' } : { ok: true, data: structuredClone(state) });
+  byText('button', 'Find jobs and referrals')!.click();
   await vi.waitFor(() => expect($('.alert')?.textContent).toContain('LinkedIn is not signed in.'));
   expect(byText('.toast.error', 'LinkedIn is not signed in.')).toBeTruthy();
 });

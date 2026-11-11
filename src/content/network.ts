@@ -1,5 +1,6 @@
 import { networkPageCommand, profileUrl, type NetworkPageCommand } from "../shared/network";
-import { ownProfileEditLink, readNetworkProfile, networkPeople, profileHeader, topCardFacts, textOf, recentConnections } from "../parsers/network";
+import { ownProfileEditLink, readNetworkProfile, networkPeople, profileHeader, topCardFacts, textOf, recentConnections, jobRows } from "../parsers/network";
+import { pageItem } from "./page-item";
 import { visible, wait, sleep, guard, insert, readEditor, sameText, queryAll } from "./dom";
 
 /*
@@ -202,7 +203,21 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
       }
       return null;
     };
-    return { id: await wait(read, signal, 10000).catch(() => null) };
+    const id = await wait(read, signal, 10000).catch(() => null);
+    // The same link's text is the company's size, e.g. "1K-5K employees".
+    const size = [...document.querySelectorAll<HTMLAnchorElement>('a[href*="currentCompany"]')].map(a => textOf(a)).find(t => /employee/i.test(t)) ?? "";
+    return { id, size };
+  }
+  if (cmd.action === "jobs") {
+    if (!location.pathname.startsWith("/jobs/")) throw new Error("LinkedIn did not open job search.");
+    const rows = await wait(() => { const found = jobRows(document); return found.length ? found : /no (?:matching )?(?:jobs|results)/i.test(textOf(document.querySelector("main"))) ? [] as ReturnType<typeof jobRows> : null; }, signal, 15000)
+      .catch(error => { if (signal.aborted) throw error; return [] as ReturnType<typeof jobRows>; });
+    return rows;
+  }
+  if (cmd.action === "jobInfo") {
+    // On a job's own page: the company's LinkedIn page, the location, and the people LinkedIn suggests reaching out to.
+    const item = await wait(() => { const found = pageItem(document, location.href, { visible, relation: relationship }); return found?.type === "job" && found.company ? found : null; }, signal, 12000).catch(() => null);
+    return { companyUrl: item?.companyUrl ?? null, location: item?.location ?? "", suggested: item?.suggested ?? [] };
   }
   if (cmd.action === "connections") {
     if (!location.pathname.startsWith("/mynetwork/invite-connect/connections")) throw new Error("LinkedIn did not open your connections list.");

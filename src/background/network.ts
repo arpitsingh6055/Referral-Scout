@@ -4,9 +4,11 @@ import { classify, geoFor, normalizeCompany, planSearch, companyOf } from '../sh
 import { companyFromCurrent } from '../parsers/network';
 import { read, mutate } from '../storage/state';
 import { acquire, release, renew } from './lease';
-import { REFERRAL_AUTO, referralAsk, referralNote, referralPlan, referralSearchUrl, rankReferral, type ReferralJob } from '../shared/referral';
+import { referralAsk, referralNote, referralPlan, referralSearchUrl, rankReferral, type ReferralJob } from '../shared/referral';
+import { fallbackTitles, fill, jobsSearchUrl, planFromReply, planPrompt, rulesPlan, scoreJob, shortlist, sizeOf } from '../shared/jobsearch';
+import { extractJson } from '../parsers/json';
 import { networkCommand, networkTab, showWorkTab } from './network-browser';
-import { prepareIntroduction, prepareInvitation } from './network-ai';
+import { prepareIntroduction, prepareInvitation, askChatGpt } from './network-ai';
 
 /** Saved settings with defaults filled in. Templates are the default for the first note; v0.10.0 briefly defaulted to ChatGPT, so existing installs are moved back once. A later choice is kept. */
 function settingsOf(s:NetworkState):NonNullable<NetworkState['settings']>{
@@ -110,18 +112,88 @@ async function discover(s:NetworkState,signal:AbortSignal):Promise<void>{
   });
 }
 const PENDING_EXPIRY=30*DAY,OWNER_RECHECK=6*3600000;
+/** How many people already known at one company are messaged by themselves. */
+const KNOWN_AUTO=5;
+/**
+ * Decides who is contacted for one job once its search is complete (or the person chose "only people I know"):
+ * the strongest people already known get a message, the strongest others an invitation, up to the job's own number.
+ * Everyone else stays listed with a button.
+ */
+export function queueBest(current:NetworkState,job:ReferralJob):void{
+  const mine=current.contacts.filter(p=>p.referralJob===job.url);
+  const open=mine.filter(p=>!p.requestedAt&&!p.messagedAt&&['found','shortlisted','connected'].includes(p.state)).sort((a,b)=>(b.score??0)-(a.score??0));
+  const sent=(direct:boolean):number=>mine.filter(p=>!!p.direct===direct&&(p.requestedAt||p.messagedAt||['review','requesting','messaging','pending','messaged'].includes(p.state))).length;
+  let messages=sent(true),invites=sent(false);const per=job.perCompany??3;
+  for(const p of open){
+    const take=p.direct?messages++<KNOWN_AUTO:job.decision!=='known'&&invites++<per;
+    if(take){p.state=p.direct?'connected':'shortlisted';p.auto=true;}else{p.state='found';delete p.auto;}
+  }
+}
+const jobRowSchema=z.object({id:z.string().regex(/^\d+$/),title:z.string(),company:z.string(),location:z.string(),insight:z.string()});
+/** One step of a job search per turn: first the plan (once per set of target roles), then one LinkedIn job search per planned title. */
+async function findJobsStep(s:NetworkState,signal:AbortSignal):Promise<void>{
+  const roles=s.settings?.roles?.length?s.settings.roles:[s.target],search=s.jobSearch!;
+  if(!s.plan||s.plan.forRoles!==roles.join('|')){
+    await note(s,'Planning your search: asking ChatGPT once for parallel job titles and who to approach at each kind of company…');
+    let plan=rulesPlan(roles),why='';
+    try{plan=planFromReply(extractJson(await askChatGpt(planPrompt(roles,s.location,`${s.profile?.headline??''}. ${(s.cv?.text||s.profile?.about||'').slice(0,1200)}`),signal,'LEGACY',s.profile!.url)),roles);}
+    catch(error){why=error instanceof Error?error.message:String(error);if(signal.aborted)throw error;}
+    await updateNetwork(c=>({...c,plan,status:plan.source==='chatgpt'?`Search planned with ChatGPT. Job titles to search: ${plan.terms.join(', ')}.`:`ChatGPT was not available (${why.slice(0,110)||'no reply'}), so the built-in plan is used. Job titles to search: ${plan.terms.join(', ')}.`}));
+    return;
+  }
+  const term=s.plan.terms[search.cursor];
+  if(term===undefined){
+    await updateNetwork(c=>{
+      const j=c.jobSearch;if(!j)return c;
+      j.found=shortlist(j.found,(c.referralJobs??[]).map(r=>r.company));j.status='choosing';
+      c.status=j.found.length?`Jobs found at ${j.found.length} companies. Open the Jobs tab and confirm which ones to pursue.`:'No matching jobs were found. Try other target roles or a wider location in Setup.';
+      return c;
+    });
+    return;
+  }
+  await note(s,`Searching LinkedIn jobs for “${term}” (${search.cursor+1} of ${s.plan.terms.length})…`);
+  let rows:z.infer<typeof jobRowSchema>[]=[];
+  try{const tab=await networkTab(jobsSearchUrl(term,s.location),signal);rows=z.array(jobRowSchema).parse(await networkCommand(tab,{action:'jobs'},signal));}
+  catch(error){const m=error instanceof Error?error.message:String(error);if(signal.aborted||ACCOUNT_LEVEL.test(m))throw error;}
+  await updateNetwork(c=>{
+    const j=c.jobSearch;if(!j||j.status!=='finding')return c;
+    for(const r of rows)if(!j.found.some(f=>f.id===r.id))j.found.push({...r,url:`https://www.linkedin.com/jobs/view/${r.id}/`,term,picked:false,score:scoreJob(r,roles,c.plan?.terms??[])});
+    j.cursor++;c.status=`“${term}”: ${rows.length} ${rows.length===1?'job':'jobs'} read.`;return c;
+  });
+}
 /** One search of a job's referral plan per turn; the next follows a few seconds later. */
 async function referralScan(s:NetworkState,job:ReferralJob,signal:AbortSignal):Promise<void>{
+  // A job taken from a search list: open the job itself once for its company page and LinkedIn's own suggested people.
+  if(!job.companyUrl&&!job.infoTried){
+    await note(s,`${job.company}: opening the ${job.title} job…`);
+    const infoSchema=z.object({companyUrl:z.string().nullable(),location:z.string(),suggested:z.array(z.object({url:z.string(),name:z.string(),headline:z.string(),degree:z.number().optional(),alum:z.boolean().optional()}))});
+    const got:{info?:z.infer<typeof infoSchema>}={};
+    try{const tab=await networkTab(job.url,signal);got.info=infoSchema.parse(await networkCommand(tab,{action:'jobInfo'},signal));}
+    catch(error){const m=error instanceof Error?error.message:String(error);if(signal.aborted||ACCOUNT_LEVEL.test(m))throw error;}
+    await updateNetwork(current=>{
+      const saved=current.referralJobs?.find(j=>j.url===job.url),info=got.info;
+      if(saved){
+        saved.infoTried=true;
+        if(info?.companyUrl&&/^https:\/\/www\.linkedin\.com\/company\/[^/?#]+\/$/.test(info.companyUrl))saved.companyUrl=info.companyUrl;
+        if(info?.suggested.length)saved.suggested=info.suggested.slice(0,10).map(p=>({url:p.url,name:p.name,headline:p.headline,...(p.degree?{degree:p.degree}:{}),...(p.alum?{alum:true}:{})}));
+        if(info?.location&&!saved.location)saved.location=info.location;
+      }
+      return current;
+    });
+    return;
+  }
   // First, once: read the company's LinkedIn number from its page, so every search can use the Current company filter.
   if(job.companyUrl&&!job.companyId&&!job.idTried){
     await note(s,`${job.company}: finding the company on LinkedIn…`);
-    let id:string|null=null;
-    try{const tab=await networkTab(job.companyUrl,signal);id=z.object({id:z.string().nullable()}).parse(await networkCommand(tab,{action:'companyId'},signal)).id;}
+    let id:string|null=null,sizeText='';
+    try{const tab=await networkTab(job.companyUrl,signal);const read=z.object({id:z.string().nullable(),size:z.string().optional()}).parse(await networkCommand(tab,{action:'companyId'},signal));id=read.id;sizeText=read.size??'';}
     catch(error){const m=error instanceof Error?error.message:String(error);if(signal.aborted||ACCOUNT_LEVEL.test(m))throw error;}
-    await updateNetwork(current=>{const saved=current.referralJobs?.find(j=>j.url===job.url);if(saved){saved.idTried=true;if(id)saved.companyId=id;current.status=id?`${saved.company}: found. Searching only people who work there now.`:`${saved.company}: company filter unavailable, searching by name instead.`;}return current;});
+    await updateNetwork(current=>{const saved=current.referralJobs?.find(j=>j.url===job.url);if(saved){saved.idTried=true;if(id)saved.companyId=id;if(sizeText){saved.sizeText=sizeText.slice(0,60);saved.size=sizeOf(sizeText);}current.status=id?`${saved.company}: found. Searching only people who work there now.`:`${saved.company}: company filter unavailable, searching by name instead.`;}return current;});
     return;
   }
-  const plan=referralPlan(job),step=plan[job.cursor],verified=!!job.companyId;
+  // Which titles to look for depends on the company's size: the planned list when there is one, built-in rules otherwise.
+  const titles=job.companyId&&job.size?(s.plan?.titles??fallbackTitles([job.title]))[job.size]:undefined;
+  const plan=referralPlan(job,titles),step=plan[job.cursor],verified=!!job.companyId;
   let people:z.infer<typeof networkProfileSchema>[]=[],failed='';
   if(step){
     await note(s,`${job.company}: searching ${step.label} (step ${job.cursor+1} of ${plan.length})…`);
@@ -144,7 +216,7 @@ async function referralScan(s:NetworkState,job:ReferralJob,signal:AbortSignal):P
     for(const row of [...people.map(p=>({...p,alum:alumni.has(p.url),offered:false})),...offered.filter(o=>!people.some(p=>p.url===o.url))]){
       const {alum,offered:fromLinkedIn,...person}=row;
       if(person.url===current.profile?.url)continue;
-      const verdict=rankReferral({...person,alum},saved,verified&&!fromLinkedIn);if(!verdict)continue;
+      const verdict=rankReferral({...person,alum},saved,verified&&!fromLinkedIn,titles??[]);if(!verdict)continue;
       const direct=person.degree===1,state='found' as const; // everyone is listed first; the strongest are queued together once the search is complete
       const existing=current.contacts.find(c=>c.url===person.url);
       if(existing){
@@ -158,14 +230,16 @@ async function referralScan(s:NetworkState,job:ReferralJob,signal:AbortSignal):P
     }
     // A short page means there is no next page of the same search: skip it.
     saved.cursor+=plan[saved.cursor+1]?.page&&people.length<10?2:1;saved.found+=added;
+    // After the "people you know" searches: if there are some, the person decides whether that is enough.
+    const knownSteps=plan.filter(st=>st.network.join()==='F').length;
+    if(queue&&verified&&saved.decision===undefined&&saved.cursor>=knownSteps&&saved.cursor<plan.length){
+      saved.known=current.contacts.filter(p=>p.referralJob===saved.url&&p.direct).length;
+      if(saved.known){saved.waiting=true;current.status=`You already know ${saved.known} ${saved.known===1?'person':'people'} at ${saved.company}. Choose in the Referrals tab: ask only them, or also look for stronger referrers.`;return current;}
+      saved.decision='widen';
+    }
     if(saved.cursor>=plan.length){
       saved.finishedAt=Date.now();
-      if(queue){
-        // Reach out to the strongest few by themselves; everyone else stays listed for the person to pick.
-        const open=current.contacts.filter(p=>p.referralJob===saved.url&&!p.requestedAt&&!p.messagedAt&&['found','shortlisted','connected'].includes(p.state)).sort((a,b)=>(b.score??0)-(a.score??0));
-        const already=current.contacts.filter(p=>p.referralJob===saved.url&&(p.requestedAt||p.messagedAt||['review','requesting','messaging','pending','messaged'].includes(p.state))).length;
-        open.forEach((p,i)=>{if(i<Math.max(0,REFERRAL_AUTO-already)){p.state=p.direct?'connected':'shortlisted';p.auto=true;}else{p.state='found';delete p.auto;}});
-      }
+      if(queue)queueBest(current,saved);
       current.status=saved.found?`${saved.company}: found ${saved.found} ${saved.found===1?'person':'people'} who can help with ${saved.title}. See the Referrals tab.`:`${saved.company}: nobody suitable was found for ${saved.title}. LinkedIn may be showing few people from this company.`;
     }else current.status=failed?`${saved.company}: one search could not be read (${failed.slice(0,120)}). Carrying on.`:`${saved.company}: ${added} found in ${step?.label??'this search'}. Next search in a few seconds.`;
     return current;
@@ -244,6 +318,7 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
   const me=fresh.profile!.name;
   // Found for a specific job: the wording is about that job and a referral, not general networking.
   const job=p.referralJob?fresh.referralJobs?.find(j=>j.url===p.referralJob):undefined;
+  const words=job?{firstName:p.name.split(/\s+/)[0]||p.name,myFirstName:me.split(/\s+/)[0]||me,title:job.title,company:job.company,jobUrl:job.url}:undefined;
   // ChatGPT personalisation is optional. If it is off, or fails, the user's own template is used so outreach never stalls.
   const draft=async(ai:()=>Promise<string>,template:()=>string):Promise<string>=>{
     if(settings.aiMode!=='chatgpt')return template();
@@ -259,9 +334,9 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
     }
   };
   if(kind==='connect'&&settings.noteMode!=='none'&&!p.invitationNote)
-    p.invitationNote=job?fitNote(referralNote(job,p,me)):await draft(()=>prepareInvitation(fresh,p,200,signal),()=>renderNote(settings,fresh.target,p,me));
+    p.invitationNote=job?fitNote(fresh.plan?.note?fill(fresh.plan.note,words!):referralNote(job,p,me)):await draft(()=>prepareInvitation(fresh,p,200,signal),()=>renderNote(settings,fresh.target,p,me));
   if(kind==='message'&&!p.message)
-    p.message=job?referralAsk(job,p,me,!p.direct):p.direct?directMessage(fresh,p,me):await draft(()=>prepareIntroduction(fresh,p,signal),()=>introduction(fresh,p,me));
+    p.message=job?((p.direct?fresh.plan?.ask:fresh.plan?.followUp)?fill((p.direct?fresh.plan!.ask:fresh.plan!.followUp)!,words!):referralAsk(job,p,me,!p.direct)):p.direct?directMessage(fresh,p,me):await draft(()=>prepareIntroduction(fresh,p,signal),()=>introduction(fresh,p,me));
   const review=kind==='connect'?settings.outreachMode==='review':settings.followupMode==='review';
   if(review&&!approved&&!p.auto){
     p.state='review';p.approvalKind=kind;p.reason=kind==='connect'?'Invitation ready. Approve to send.':p.direct?'Already your connection. Message ready; approve to send.':'They accepted. Follow-up message ready; approve to send.';
@@ -354,7 +429,8 @@ async function run():Promise<void>{
   try{
     const s=await getNetwork();if(!s.profile)return;
     // A referral search was asked for by a click on a job page, so it runs straight away, even while outreach is paused or outside active hours. It only reads.
-    const scan=(s.referralJobs??[]).find(j=>j.finishedAt===undefined);
+    if(s.jobSearch?.status==='finding'){worked=true;await findJobsStep(s,abort.signal);return;}
+    const scan=(s.referralJobs??[]).find(j=>j.finishedAt===undefined&&!j.waiting);
     if(scan){worked=true;await referralScan(s,scan,abort.signal);return;}
     if(!s.active)return;
     // A send that was cut off (browser closed, tab crashed) is sorted out by itself and outreach carries on.

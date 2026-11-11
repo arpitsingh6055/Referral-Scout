@@ -3,7 +3,8 @@ import { appRoot, element, errorText } from './render';
 import { DAY, defaultSettings, introduction, renderNote, withinActiveHours, type ContactState, type NetworkContact, type NetworkRequest, type NetworkState, type OutreachSettings, dueReminders, staleRequests, jobStatuses, type JobStatus, type SavedItem } from '../shared/network';
 import { completeCvText } from './cv-text';
 import { createToaster, type ToastKind } from './toast';
-import { REFERRAL_AUTO, referralPlan } from '../shared/referral';
+import { referralPlan } from '../shared/referral';
+import type { JobSearch } from '../shared/jobsearch';
 
 type Tab = 'setup' | 'people' | 'referrals' | 'saved' | 'activity';
 const ui = { tab: 'setup' as Tab, filter: 'all', open: new Set<string>(), touched: false };
@@ -115,10 +116,11 @@ const categoryLabels: Record<string, string> = { recruiter: 'Recruiter', leader:
 function runStatus(s: NetworkState): { tone: 'ok' | 'warn' | 'idle'; pill: string; title: string; sub: string } {
   const settings = s.settings ?? defaultSettings;
   if (s.active && !withinActiveHours(settings)) return { tone: 'warn', pill: 'Waiting', title: 'Waiting for active hours', sub: `Outreach resumes at ${pad(settings.activeHours?.from ?? 8)}:00. Nothing is wrong.` };
-  if (s.active && s.scope === 'referrals') return { tone: 'ok', pill: 'Referrals', title: 'Referral outreach is running', sub: `${s.status || 'Starting up…'} Only people from your Referrals jobs are contacted.` };
+  if (s.active && s.scope === 'referrals') return { tone: 'ok', pill: 'Referrals', title: s.jobSearch?.status === 'finding' ? 'Searching for jobs' : 'Working on your referrals', sub: s.status || 'Starting up…' };
   if (s.active) return { tone: 'ok', pill: 'Running', title: 'Outreach is running', sub: s.status || 'Starting up…' };
-  if (!s.status) return { tone: 'idle', pill: 'Ready', title: 'Ready to start', sub: 'Check who we contact and your messages in Setup, then press Start.' };
-  return { tone: s.contacts.some(p => p.state === 'attention') ? 'warn' : 'idle', pill: 'Paused', title: 'Paused', sub: s.status };
+  if (!s.status) return { tone: 'idle', pill: 'Ready', title: 'Ready to find jobs', sub: 'Check your target roles and location in Setup, then press Find jobs and referrals.' };
+  if (s.jobSearch?.status === 'finding') return { tone: 'ok', pill: 'Searching', title: 'Searching for jobs', sub: s.status };
+  return { tone: s.contacts.some(p => p.state === 'attention') ? 'warn' : 'idle', pill: s.active ? 'Running' : 'Paused', title: 'Paused', sub: s.status };
 }
 function usage(s: NetworkState): string[] {
   const settings = s.settings ?? defaultSettings, now = Date.now();
@@ -204,11 +206,48 @@ function buildSaved(s: NetworkState): HTMLElement {
   return panel;
 }
 /* Referrals: one card per job, with the people who can help in order of how much their word counts. */
+/* The shortlist: one job per company, best first, the top ones ticked. The person confirms; nothing is contacted before that. */
+const chosen = new Map<string, boolean>(); let perCompanyChoice = 3;
+function jobChooser(search: JobSearch): HTMLElement {
+  const card = node('section', '', 'card'), list = node('div', '', 'job-list');
+  const isOn = (id: string, fallback: boolean): boolean => chosen.get(id) ?? fallback;
+  const go = button('', async () => {
+    const ids = search.found.filter(j => isOn(j.id, j.picked)).map(j => j.id).slice(0, 20);
+    if (!ids.length) throw new Error('Tick at least one company.');
+    await act({ kind: 'network', action: 'pickJobs', ids, perCompany: perCompanyChoice }, `${ids.length} ${ids.length === 1 ? 'company' : 'companies'} chosen. Finding who can refer you.`);
+    chosen.clear();
+  }, 'btn primary block');
+  const count = (): void => { const n = search.found.filter(j => isOn(j.id, j.picked)).length; go.textContent = n ? `Find referrers at ${n} ${n === 1 ? 'company' : 'companies'}` : 'Tick at least one company'; go.disabled = !n || n > 20; };
+  card.append(node('h2', 'Choose companies', 'card-title'), node('p', 'One job per company, best match first. Companies where you already have a way in are ranked higher. Untick any you do not want.', 'card-sub'));
+  for (const job of search.found) {
+    const row = node('label', '', 'job-row'), box = node('input'), text = node('div');
+    box.type = 'checkbox'; box.checked = isOn(job.id, job.picked);
+    box.addEventListener('change', () => { chosen.set(job.id, box.checked); dirty = true; count(); });
+    text.append(node('b', job.title), node('span', `${job.company} · ${job.location}`, 'muted small'));
+    if (job.insight) text.append(node('span', job.insight, 'badge connected'));
+    row.append(box, text, link('Open', job.url, 'chip')); list.append(row);
+  }
+  const per = node('label', '', 'mini'), select = node('select'); per.append(node('span', 'Invitations per company'), select);
+  for (const n of [3, 4, 5]) { const o = node('option', `${n} people`); o.value = String(n); select.append(o); }
+  select.value = String(perCompanyChoice); select.addEventListener('change', () => { perCompanyChoice = Number(select.value); });
+  count();
+  card.append(list, per, node('p', 'People you already know at a company are messaged on top of this number. LinkedIn allows roughly 100 invitations a week, so fewer, better-chosen people go further.', 'field-help'), go,
+    button('Close this list', () => act({ kind: 'network', action: 'cancelJobSearch' }, 'List closed.'), 'btn sm ghost'));
+  return card;
+}
 function buildReferrals(s: NetworkState): HTMLElement {
-  const panel = node('div'), jobs = s.referralJobs ?? [];
-  if (!jobs.length) {
-    const e = node('div', '', 'empty'); e.append(node('b', 'No referral searches yet'),
-      node('span', 'Open a job on LinkedIn. At the bottom left of the page, press “Ask for referrals” to find and contact the people who can help, or “My connections here” to see who you already know at that company.'));
+  const panel = node('div'), jobs = s.referralJobs ?? [], search = s.jobSearch;
+  if (search?.status === 'finding') panel.append(node('p', s.plan ? `Searching LinkedIn jobs: title ${Math.min(search.cursor + 1, s.plan.terms.length)} of ${s.plan.terms.length}. ${search.found.length} jobs read so far.` : 'Planning the search…', 'callout'));
+  if (search && search.status !== 'finding' && search.found.length) panel.append(jobChooser(search));
+  if (s.plan) {
+    const d = node('details', '', 'inline'); d.append(node('summary', `Search plan (${s.plan.source === 'chatgpt' ? 'from ChatGPT' : 'built-in'})`),
+      node('p', `Job titles searched: ${s.plan.terms.join(', ')}`, 'field-help'),
+      node('p', `Large companies: ${s.plan.titles.large.join(', ')}`, 'field-help'), node('p', `Mid-size: ${s.plan.titles.mid.join(', ')}`, 'field-help'), node('p', `Small: ${s.plan.titles.small.join(', ')}`, 'field-help'));
+    panel.append(d);
+  }
+  if (!jobs.length && !search) {
+    const e = node('div', '', 'empty'); e.append(node('b', 'No jobs yet'),
+      node('span', 'Press “Find jobs and referrals” above to search LinkedIn for your target roles. Or open any job on LinkedIn and use “Ask for referrals” or “My connections here” at the bottom left of the page.'));
     panel.append(e); return panel;
   }
   for (const job of jobs) {
@@ -225,8 +264,17 @@ function buildReferrals(s: NetworkState): HTMLElement {
     const first = people.filter(p => p.degree === 1).length;
     if (people.length) meta.append(node('span', `${first} you know · ${people.length - first} to invite`, 'chip'));
     body.append(meta);
+    if (job.sizeText) meta.append(node('span', `${job.sizeText}${job.size ? ` · ${job.size === 'large' ? 'large: recruiters, HR, team leads' : job.size === 'small' ? 'small: founders, heads' : 'mid-size'}` : ''}`, 'chip'));
+    if (job.waiting) {
+      // The one question per company: people already known may be enough.
+      const ask = node('div', '', 'callout');
+      ask.append(node('span', `You already know ${job.known ?? 'some'} ${job.known === 1 ? 'person' : 'people'} here. Ask only them, or also look for people whose referral carries more weight?`),
+        button('Ask only them', () => act({ kind: 'network', action: 'referralDecision', url: job.url, widen: false }, `${job.company}: messaging the people you know.`), 'btn sm primary'),
+        button('Also find stronger', () => act({ kind: 'network', action: 'referralDecision', url: job.url, widen: true }, `${job.company}: looking for stronger referrers too.`), 'btn sm'));
+      body.append(ask);
+    }
     if (job.mode === 'connections' && job.finishedAt && people.some(p => p.state === 'found')) body.append(node('p', 'Nobody has been contacted. Press “Ask for a referral” on the people you want to approach; the strongest are at the top.', 'field-help'));
-    if (job.mode === 'referral' && job.finishedAt && people.length) body.append(node('p', `The strongest ${Math.min(people.length, REFERRAL_AUTO)} are contacted by themselves: people you know get a message, the others an invitation, a few seconds apart and within your daily limits. Anyone else is listed below with a button.`, 'field-help'));
+    if (job.mode === 'referral' && job.finishedAt && people.length) body.append(node('p', `People you already know here get a message. The strongest ${job.decision === 'known' ? 0 : job.perCompany ?? 3} others get an invitation. Sends are a few seconds apart and within your daily limits; everyone else is listed below with a button.`, 'field-help'));
     if (job.mode === 'referral' && !s.active && people.some(p => ['shortlisted', 'connected'].includes(p.state))) body.append(node('p', 'Outreach is paused, so nothing is being sent. Press Start outreach above to continue.', 'field-help'));
     if (!people.length) body.append(node('p', job.finishedAt ? (job.mode === 'connections' ? 'You have no 1st-degree connections at this company. On the job page, press “Ask for referrals” to find its recruiters, the team and people you share connections with.' : 'Nobody suitable was found at this company.') : 'Results appear here as each search finishes.', 'muted small'));
     for (const p of people) body.append(personCard(s, p));
@@ -265,7 +313,7 @@ function render(s: NetworkState): void {
   const peopleList = node('div'), refreshPeople = (): void => { buildPeople(s, peopleList, refreshPeople); };
   panels.people.append(peopleList);
   const toApprove = s.contacts.filter(p => p.state === 'review' && !p.approved).length, reviewCount = toApprove;
-  for (const [tab, label, n] of [['setup', 'Setup', 0], ['people', 'People', s.contacts.filter(p => p.state !== 'skipped' && p.state !== 'found').length], ['referrals', 'Referrals', (s.referralJobs ?? []).length], ['saved', 'Saved', dueReminders(s).length || (s.saved ?? []).length], ['activity', 'Activity', 0]] as const) {
+  for (const [tab, label, n] of [['setup', 'Setup', 0], ['people', 'People', s.contacts.filter(p => p.state !== 'skipped' && p.state !== 'found').length], ['referrals', 'Jobs', (s.jobSearch?.status === 'choosing' ? s.jobSearch.found.length : 0) || (s.referralJobs ?? []).length], ['saved', 'Saved', dueReminders(s).length || (s.saved ?? []).length], ['activity', 'Activity', 0]] as const) {
     const b = node('button', label, 'tab'); b.type = 'button'; b.setAttribute('role', 'tab');
     if (n) b.append(node('span', String(n), 'count'));
     b.addEventListener('click', () => setTab(tab)); tabButtons.set(tab, b); tabs.append(b);
@@ -275,12 +323,22 @@ function render(s: NetworkState): void {
   /* run card */
   const run = node('section', '', 'card run');
   run.append(node('h2', status.title, 'run-title'), node('p', status.sub, 'run-sub'));
-  if (s.active && s.scope === 'referrals') run.append(button('Also start general outreach', async () => { await setup.save().catch(() => undefined); await act({ kind: 'network', action: 'start' }, 'General outreach started as well.'); }, 'btn primary block'), node('div', '', 'gap'));
-  run.append(button(s.active ? 'Pause outreach' : 'Start outreach', async () => {
-    if (s.active) { await act({ kind: 'network', action: 'pause' }, 'Outreach paused. Your progress is kept.'); return; }
-    await setup.save();
-    await act({ kind: 'network', action: 'start' }, 'Outreach started. It works in its own window and pauses on anything uncertain.');
-  }, s.active ? 'btn block' : 'btn primary block'));
+  // The main action is the job search. General networking outreach lives in Setup.
+  const search = s.jobSearch;
+  if (search?.status === 'finding') {
+    run.append(node('p', 'Looking for jobs. You can keep using your browser; results appear in the Jobs tab.', 'field-help'),
+      button('Stop this search', () => act({ kind: 'network', action: 'cancelJobSearch' }, 'Job search stopped.'), 'btn block'));
+  } else if (search?.status === 'choosing' && search.found.length) {
+    run.append(button(`Choose companies (${search.found.length} found)`, async () => { setTab('referrals'); document.scrollingElement?.scrollTo({ top: 0 }); }, 'btn primary block'));
+  } else {
+    run.append(button('Find jobs and referrals', async () => {
+      await setup.save();
+      await act({ kind: 'network', action: 'findJobs' }, 'Job search started. First the search is planned, then LinkedIn jobs are read.');
+    }, 'btn primary block'));
+  }
+  if (s.active) run.append(node('div', '', 'gap'), button('Pause everything', () => act({ kind: 'network', action: 'pause' }, 'Paused. Your progress is kept.'), 'btn block'));
+  else if (s.contacts.some(p => p.referralJob && ['shortlisted', 'connected', 'review'].includes(p.state))) run.append(node('div', '', 'gap'),
+    button('Resume sending', () => act({ kind: 'network', action: 'resume' }, 'Sending resumed.'), 'btn block'));
   const meta = node('div', '', 'meta'); for (const text of usage(s)) meta.append(node('span', text, 'chip'));
   if (s.active && !withinActiveHours(settings)) meta.append(button('Run now anyway', async () => {
     await request({ kind: 'network', action: 'save', target: s.target, location: s.location, template: s.template, settings: { ...settings, activeHours: null } });
@@ -356,7 +414,13 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
     await request({ kind: 'network', action: 'save', target: nextRoles[0]!, location: location.input.value, template: template.input.value, settings: next });
     dirty = false;
   }
-  panel.append(who, words, advanced.box, chatGpt);
+  const general = accordion('general', 'General networking outreach (optional)', s.active && s.scope !== 'referrals' ? 'running' : '');
+  general.body.append(node('p', 'Not tied to a job: searches LinkedIn for recruiters, team leaders and founders matching your target roles and invites them, with your approval. Use it to grow your network between job searches.', 'card-sub'),
+    button(s.active && s.scope !== 'referrals' ? 'Stop general outreach' : 'Start general outreach', async () => {
+      if (s.active && s.scope !== 'referrals') { await act({ kind: 'network', action: 'pause' }, 'General outreach stopped.'); return; }
+      await save(); await act({ kind: 'network', action: 'start' }, 'General outreach started.');
+    }, 'btn block'));
+  panel.append(who, words, advanced.box, chatGpt, general.box);
   if (!s.active) panel.append(button('Save changes', async () => { await save(); await act({ kind: 'network', action: 'status' }, 'Changes saved.'); }, 'btn block'));
   else panel.append(node('p', 'Pause outreach to change settings.', 'fine'));
   for (const f of [roles, location, noteTemplate, template, outreachMode, followupMode, noteMode, hours, pace, invites, weekly, messages, pendingCap, allow, exclude, aiMode]) f.input.disabled = s.active;
