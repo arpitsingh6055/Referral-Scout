@@ -7,7 +7,7 @@ import { prepareInvitation } from '../src/background/network-ai';
 import { clearDatabase, closeDatabase } from '../src/storage/database';
 
 vi.mock('../src/background/network-ai', () => ({ clearAiJobs: vi.fn(), prepareInvitation: vi.fn().mockResolvedValue('AI note'), prepareIntroduction: vi.fn().mockResolvedValue('AI intro'), prepareDossier: vi.fn().mockResolvedValue('dossier') }));
-vi.mock('../src/background/network-browser', () => ({ networkCommand: vi.fn(), networkTab: vi.fn().mockResolvedValue(9), readyNetworkTab: vi.fn() }));
+vi.mock('../src/background/network-browser', () => ({ networkCommand: vi.fn(), networkTab: vi.fn().mockResolvedValue(9), readyNetworkTab: vi.fn(), showWorkTab: vi.fn(), openWorkTab: vi.fn().mockResolvedValue(9) }));
 
 const me = { name: 'Arpit Singh', url: 'https://www.linkedin.com/in/arpit45/', headline: 'PGDM', location: 'India', about: '' };
 const card = (slug: string, headline: string, degree = 2) => ({ name: slug.replace(/-/g, ' '), url: `https://www.linkedin.com/in/${slug}/`, headline, location: 'Pune, Maharashtra, India', about: '', degree });
@@ -76,8 +76,8 @@ it('waits quietly outside the active hours and says so', async () => {
   expect((await getNetwork()).status).toMatch(/Quiet hours: outreach resumes at 08:00/);
 });
 
-it('uses the invitation template without ChatGPT and queues it for review by default', async () => {
-  await seed({ contacts: [person('review-me', { companyName: 'Acme' })], target: 'Product Management internship' }, { noteMode: 'preferred' });
+it('uses the invitation template without ChatGPT when the person chose templates, and queues it for review', async () => {
+  await seed({ contacts: [person('review-me', { companyName: 'Acme' })], target: 'Product Management internship' }, { noteMode: 'preferred', aiMode: 'template' });
   vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'not-connected' });
   await networkTick();
   const p = (await getNetwork()).contacts[0]!;
@@ -211,4 +211,12 @@ it('says so in the activity log when ChatGPT is signed out, and still drafts fro
   expect(saved.contacts[0]).toMatchObject({ state: 'review' });
   expect(saved.contacts[0]!.invitationNote).toMatch(/^Hi alex/i);
   expect(saved.log?.some(e => e.kind === 'warn' && /ChatGPT is not signed in.*template was used for alex/.test(e.text))).toBe(true);
+});
+
+it('asks ChatGPT for each note by default, with no CV or dossier needed', async () => {
+  await seed({ contacts: [person('alex')] });
+  vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'not-connected' });
+  await networkTick();
+  expect(prepareInvitation).toHaveBeenCalledTimes(1);
+  expect((await getNetwork()).contacts[0]).toMatchObject({ state: 'review', invitationNote: 'AI note' });
 });

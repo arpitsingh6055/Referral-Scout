@@ -4,16 +4,20 @@ import { classify, normalizeCompany, planSearch, companyOf } from '../shared/tar
 import { companyFromCurrent } from '../parsers/network';
 import { read, mutate } from '../storage/state';
 import { acquire, release, renew } from './lease';
-import { networkCommand, networkTab } from './network-browser';
+import { networkCommand, networkTab, showWorkTab } from './network-browser';
 import { prepareIntroduction, prepareInvitation } from './network-ai';
 
+/** Saved settings with defaults filled in. Installs from before v0.10 are moved to ChatGPT-written messages once; a later choice is kept. */
+function settingsOf(s:NetworkState):NonNullable<NetworkState['settings']>{
+  return {...defaultSettings,...s.settings,roles:s.settings?.roles?.length?s.settings.roles:[s.target],...(s.aiDefaultV2?{}:{aiMode:'chatgpt' as const})};
+}
 export async function getNetwork(): Promise<NetworkState> {
   const old=await read<NetworkState>(networkKey);
   if(!old)return emptyNetwork();
   // In-place legacy migration removes old binary CV caches without deleting history.
   const cv=old.cv ? { ...old.cv,name:old.cv.name,type:old.cv.type,text:old.cv.text||'',characterCount:old.cv.characterCount??old.cv.text?.length??0} : null;
   if(cv && 'data' in cv)delete (cv as typeof cv & {data?:unknown}).data;
-  return {...old,cv,settings:{...defaultSettings,...old.settings,roles:old.settings?.roles?.length?old.settings.roles:[old.target]}};
+  return {...old,cv,settings:settingsOf(old)};
 }
 export async function updateNetwork(fn:(s:NetworkState)=>NetworkState):Promise<NetworkState> {
   const state=await mutate<NetworkState>(networkKey,old=>{
@@ -22,7 +26,7 @@ export async function updateNetwork(fn:(s:NetworkState)=>NetworkState):Promise<N
     const cv=base.cv?{...base.cv,name:base.cv.name,type:base.cv.type,text:base.cv.text||'',characterCount:base.cv.characterCount??base.cv.text?.length??0}:null;
     if(cv && 'data' in cv)delete (cv as typeof cv & {data?:unknown}).data;
     const before=base.status;
-    const next=fn({...base,cv,settings:{...defaultSettings,...base.settings,roles:base.settings?.roles?.length?base.settings.roles:[base.target]}});
+    const next=fn({...base,cv,settings:settingsOf(base)});next.aiDefaultV2=true;
     // Every new status line is also kept in a short activity log the side panel can show.
     if(next.status&&next.status!==before)next.log=[...(next.log??[]),{at:Date.now(),text:next.status,kind:/attention|could not|not signed in|usage limit|paused|limit reached|failed|interrupted|quiet hours|waiting/i.test(next.status)?'warn' as const:/saved|sent|started|confirmed|accepted|recovered|validated/i.test(next.status)?'ok' as const:'info' as const}].slice(-60);
     return next;
@@ -66,6 +70,7 @@ async function discover(s:NetworkState,signal:AbortSignal):Promise<void>{
   // Only 2nd and 3rd+ degree people can be invited; 1st-degree people are already connected.
   url.searchParams.set('network',JSON.stringify(['S','O']));url.searchParams.set('origin','FACETED_SEARCH');
   const label=`${KIND_LABEL[plan.combo.kind]} for ${plan.combo.role} (page ${plan.page})`;
+  await note(s,`Searching LinkedIn for ${label}…`);
   const tab=await networkTab(url.href,signal);
   const people=z.array(networkProfileSchema).parse(await networkCommand(tab,{action:'search'},signal));
   await currentRun(s.revision,signal);
@@ -87,7 +92,7 @@ async function discover(s:NetworkState,signal:AbortSignal):Promise<void>{
         state:'shortlisted',addedAt:Date.now(),requestedAt:0,checkedAt:0,messagedAt:0,message:'',...(company?{companyName:company}:{})});added++;
     }
     current.searchCursor++;
-    current.nextDiscoveryAt=Date.now()+(people.length?60000:120000)+Math.floor(Math.random()*30000);
+    current.nextDiscoveryAt=Date.now()+(people.length?20000:45000)+Math.floor(Math.random()*20000);
     current.status=`Searched ${label}: saved ${added} new ${added===1?'person':'people'}, skipped ${rejected} that did not fit.`;
     return current;
   });
@@ -101,6 +106,7 @@ const MAX_ATTEMPTS=2,STREAK_LIMIT=3;
 /** Errors raised before anything is submitted that are about this recipient only. */
 const RECIPIENT_ONLY=/Connect is unavailable on this recipient|requires a recipient email|Message button is unavailable|already have a conversation|unsent draft|already contains a draft|permits \d+ characters|open profile changed/i;
 export async function processContact(s:NetworkState,p:NetworkContact,signal:AbortSignal,approved=false):Promise<void>{
+  await note(s,`Opening ${p.name}'s profile…`);
   const tab=await networkTab(p.url,signal);
   const relation=z.object({state:z.enum(['connected','pending','not-connected','unknown'])}).parse(await networkCommand(tab,{action:'relationship',url:p.url},signal));
   await currentRun(s.revision,signal);
@@ -140,11 +146,11 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
   const me=fresh.profile!.name;
   // ChatGPT personalisation is optional. If it is off, or fails, the user's own template is used so outreach never stalls.
   const draft=async(ai:()=>Promise<string>,template:()=>string):Promise<string>=>{
-    if(settings.aiMode!=='chatgpt'||!fresh.dossier?.trim())return template();
-    try{const text=await ai();await currentRun(s.revision,signal);await chrome.tabs.update(tab,{active:true});return text;}
+    if(settings.aiMode!=='chatgpt')return template();
+    try{await note(fresh,`Asking ChatGPT to write a message for ${p.name}…`);const text=await ai();await currentRun(s.revision,signal);await showWorkTab(tab);return text;}
     catch(error){
       if(signal.aborted||/paused/i.test(String(error)))throw error;
-      await chrome.tabs.update(tab,{active:true}).catch(()=>undefined);
+      await showWorkTab(tab);
       // Never fail silently: say why ChatGPT was not used, then carry on with the template.
       const why=error instanceof Error?error.message:String(error);
       const reason=/sign in to chatgpt/i.test(why)?'ChatGPT is not signed in. Sign in at chatgpt.com to get personalised messages.':/usage limit/i.test(why)?'ChatGPT has reached its usage limit.':`ChatGPT could not write this message (${why.slice(0,160)}).`;
@@ -210,6 +216,7 @@ function idleReason(s:NetworkState,now=Date.now()):string|null {
 }
 /** Update the status line only when it changed, so idle ticks do not rewrite storage. */
 async function note(s:NetworkState,status:string):Promise<void>{if(s.status!==status)await updateNetwork(c=>({...c,status}));}
+let worked=false;
 async function run():Promise<void>{
   const owner=crypto.randomUUID();if(!await acquire(owner))return;
   const abort=new AbortController();controller=abort;
@@ -229,6 +236,7 @@ async function run():Promise<void>{
     const person=nextContact(s);
     if(person){
       if(Date.now()<s.nextActionAt)return;
+      worked=true;
       try{await processContact(s,person,abort.signal);if(s.failureStreak)await updateNetwork(c=>({...c,failureStreak:0}));}
       catch(error){
         const message=error instanceof Error?error.message:String(error);
@@ -249,8 +257,13 @@ async function run():Promise<void>{
     const why=idleReason(s);
     if(why){await note(s,why);return;}
     if(queued>=SHORTLIST_BACKLOG){await note(s,`${queued} people are queued. Searching pauses until the queue shrinks.`);return;}
-    if(Date.now()>=s.nextDiscoveryAt)await discover(s,abort.signal);
+    if(Date.now()>=s.nextDiscoveryAt){worked=true;await discover(s,abort.signal);}
   }catch(error){if(!abort.signal.aborted)await pauseNetwork(error instanceof Error?error.message:String(error));}
   finally{clearInterval(renewal);controller=null;await release(owner);}
 }
-export async function networkTick():Promise<void>{if(running)return;running=run();try{await running;}finally{running=null;}}
+export async function networkTick():Promise<void>{
+  if(running)return;worked=false;running=run();try{await running;}finally{running=null;}
+  // The alarm only fires once a minute. When a step just finished and more can be done, carry on after a short,
+  // irregular pause instead of leaving the person staring at an idle screen. Sending still obeys the pace setting.
+  if(worked&&typeof chrome!=='undefined'&&chrome.alarms?.onAlarm)setTimeout(()=>{void networkTick();},5000+Math.floor(Math.random()*7000));
+}

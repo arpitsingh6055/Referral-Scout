@@ -95,7 +95,7 @@ export function registerNetworkMessages():void{
           await clearAiJobs();
           await updateNetwork(s=>({...s,cv:null,dossier:'',dossierSavedAt:0,status:'Local extracted CV text deleted. Reprocess the owner profile before outreach.'}));
         }
-        if(req.action==='analyze'||(req.action==='start'&&current.settings?.aiMode==='chatgpt'&&!current.dossier?.trim())){
+        if(req.action==='analyze'){
           if(current.active)throw new Error('Pause outreach before reprocessing the owner dossier.');
           await updateNetwork(s=>({...s,status:'Opening visible ChatGPT and waiting for a verified dossier response…'}));
           try{
@@ -120,7 +120,7 @@ export function registerNetworkMessages():void{
         if(req.action==='prepare'){
           if(current.active)throw new Error('Pause outreach before manually preparing drafts.');
           const person=current.contacts.find(p=>p.url===req.url);
-          if(!person||!current.profile||!current.dossier)throw new Error('Save a recipient and process your dossier first.');
+          if(!person||!current.profile)throw new Error('Read your LinkedIn profile first.');
           const message=person.acceptedAt?await prepareIntroduction(current,person,signal):await prepareInvitation(current,person,200,signal);
           await updateNetwork(s=>{const p=s.contacts.find(x=>x.url===person.url);if(p)if(p.acceptedAt)p.message=message;else p.invitationNote=message;return {...s,status:`Draft prepared for ${person.name}. No LinkedIn message was sent.`};});
         }
@@ -129,8 +129,9 @@ export function registerNetworkMessages():void{
           if(!after.profile)throw new Error('Read your own LinkedIn profile first.');
           await updateNetwork(s=>{
             if(s.revision!==after.revision)throw new Error('Outreach was paused while processing; start again when ready.');
-            if(s.settings?.aiMode==='chatgpt'&&!s.dossier?.trim())throw new Error('ChatGPT personalisation needs a processed dossier. Process it, or switch to template mode.');
-            return {...s,active:true,revision:s.revision+1,status:'Outreach is active. Review and automatic modes follow the settings you selected.'};
+            // v0.9.0 read a hidden "1st" label and wrongly set people aside as already connected; give them another look.
+            for(const p of s.contacts)if(p.state==='skipped'&&/^Already connected before this campaign/.test(p.reason)&&!p.requestedAt){p.state='shortlisted';p.reason='Queued again after a wrong "already connected" reading.';}
+            return {...s,active:true,revision:s.revision+1,status:s.settings?.outreachMode==='automatic'?'Outreach started. Invitations are sent automatically within your limits.':'Outreach started. Finding people and drafting notes for you to approve.'};
           });
           await chrome.alarms.create('network-tick',{periodInMinutes:1});
         }

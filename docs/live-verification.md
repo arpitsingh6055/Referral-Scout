@@ -37,3 +37,12 @@ The extension's own page code was run on live LinkedIn with authorization forced
 | `profile` | **Bug found and fixed:** clicking "see more" controls followed a link out of the profile. The reader no longer clicks anything |
 
 Still not run live: the invitation dialog and its note field, the Pending marker, a real send, and anything on ChatGPT while signed in.
+
+## 11 November 2026, first run in Edge by the owner (v0.9.0) and fixes in v0.10.0
+
+- Profile read worked. People search queued 8 people.
+- **Every queued person was skipped as "already connected".** Cause, confirmed on the live page: the top card contains a hidden "· 1st" line before the visible "· 2nd". Fixed: only visible lines are read, a visible Connect or Pending button outranks the degree line, and people skipped this way are queued again on the next Start.
+- A bare "She/Her" line was being read as the headline. Fixed.
+- ChatGPT was never used because it was off by default and required a CV. Now on by default and works from the LinkedIn profile alone.
+- The LinkedIn tab took over the owner's window. Pages now open in a separate window that is never focused.
+- Long silent gaps between steps. Steps now follow each other after 5 to 12 seconds, and each step is announced.

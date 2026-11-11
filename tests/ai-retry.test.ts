@@ -32,7 +32,8 @@ beforeEach(() => {
     if (m.action === 'execute') { executed = true; return { ok: true, documentId: 'doc', state: 'running' }; }
     return undefined;
   });
-  vi.stubGlobal('chrome', { runtime: { id: 'abc', onMessage: { addListener: vi.fn() } }, tabs });
+  // The work window is opened once; its first tab is counted through the same tabs.create mock.
+  vi.stubGlobal('chrome', { runtime: { id: 'abc', onMessage: { addListener: vi.fn() } }, tabs, windows: { get: vi.fn().mockRejectedValue(new Error('gone')), create: vi.fn(async () => ({ id: 1, tabs: [await tabs.create()] })) } });
 });
 afterEach(async () => { await clearDatabase(); await closeDatabase(); vi.unstubAllGlobals(); });
 

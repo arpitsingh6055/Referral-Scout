@@ -242,7 +242,7 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
   const invites = num('Invitations per day', settings.dailyInvites), weekly = num('Invitations per week', settings.weeklyInvites), messages = num('Follow-ups per day', settings.dailyMessages), pendingCap = num('Max pending invitations', settings.maxPending);
   const allow = field({ label: 'Prefer these companies', value: settings.companyAllowlist.join(', '), help: 'Comma separated. Leave empty for everyone.' });
   const exclude = field({ label: 'Never contact these companies', value: settings.companyExclusions.join(', '), help: 'Comma separated.' });
-  const aiMode = choice('How messages are written', settings.aiMode, [['template', 'From my templates (recommended)'], ['chatgpt', 'Personalised by ChatGPT']], 'ChatGPT needs your CV processed below and falls back to your templates if it fails.');
+  const aiMode = choice('How messages are written', settings.aiMode, [['chatgpt', 'Written by ChatGPT for each person (default)'], ['template', 'From my templates, no ChatGPT']], 'ChatGPT uses your LinkedIn profile and theirs; no CV or API key is needed. Stay signed in at chatgpt.com. If ChatGPT is signed out or fails, your template is used and you are told.');
   const advanced = accordion('advanced', 'Pace, limits and safety', 'recommended defaults');
   const grid = node('div', '', 'grid2'); grid.append(invites.wrap, weekly.wrap, messages.wrap, pendingCap.wrap, pace.wrap);
   const behaviour = node('div'); behaviour.append(outreachMode.wrap, followupMode.wrap, noteMode.wrap, hours.wrap);

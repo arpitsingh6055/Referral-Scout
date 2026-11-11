@@ -7,7 +7,7 @@ import { clearDatabase, closeDatabase } from "../src/storage/database";
 import { registerNetworkMessages } from "../src/background/network-messages";
 import { prepareDossier } from "../src/background/network-ai";
 vi.mock("../src/background/network-ai", () => ({ clearAiJobs:vi.fn(), prepareInvitation:vi.fn().mockResolvedValue("Hi Alex, would love to connect."), prepareIntroduction: vi.fn().mockResolvedValue("Hi Alex, thanks for connecting. Could we discuss product opportunities?"), prepareDossier: vi.fn().mockResolvedValue("Saved profile") }));
-vi.mock("../src/background/network-browser", () => ({ networkCommand: vi.fn(), networkTab: vi.fn().mockResolvedValue(9), readyNetworkTab: vi.fn() }));
+vi.mock("../src/background/network-browser", () => ({ networkCommand: vi.fn(), networkTab: vi.fn().mockResolvedValue(9), readyNetworkTab: vi.fn(), showWorkTab: vi.fn(), openWorkTab: vi.fn().mockResolvedValue(9) }));
 const profile = { name: "Example Student", url: "https://www.linkedin.com/in/student/", headline: "Product analyst", location: "India", about: "" };
 function contact(patch: Partial<NetworkContact> = {}): NetworkContact {
   return { name: "Alex Example", url: "https://www.linkedin.com/in/alex/", headline: "Founder at Example", rawText: "Founder at Example", location: "India", about: "", state: "shortlisted", reason: "Founder", addedAt: 1, checkedAt: 0, requestedAt: 0, messagedAt: 0, message: "", ...patch };
@@ -144,26 +144,7 @@ it.each([null,{name:'cv.docx',type:'application/vnd.openxmlformats-officedocumen
   expect((await getNetwork()).dossierSavedAt).toBeGreaterThan(0);
 });
 
-it('keeps outreach off until ChatGPT completes, then saves before starting', async () => {
-  await updateNetwork(s => ({...s,profile,settings:{...defaultSettings,aiMode:'chatgpt'},nextActionAt:Date.now()+600000}));
-  let complete!: (text:string)=>void;
-  vi.mocked(prepareDossier).mockImplementation(()=>new Promise(resolve=>{complete=resolve;}));
-  const ask=networkUi(), pending=ask({action:'start'});
-  await vi.waitFor(()=>expect(prepareDossier).toHaveBeenCalledOnce());
-  expect((await getNetwork()).active).toBe(false);
-  complete('Detailed career evidence');
-  expect((await pending).ok).toBe(true);
-  expect(await getNetwork()).toMatchObject({active:true,dossier:'Detailed career evidence'});
-});
 
-it('does not start outreach when processing fails', async () => {
-  await updateNetwork(s => ({...s,profile,settings:{...defaultSettings,aiMode:'chatgpt'}}));
-  vi.mocked(prepareDossier).mockRejectedValueOnce(new Error('ChatGPT is signed out'));
-  const reply=await networkUi()({action:'start'});
-  expect(reply).toMatchObject({ok:false,error:'ChatGPT is signed out'});
-  expect((await getNetwork()).active).toBe(false);
-  expect(chrome.alarms.create).not.toHaveBeenCalled();
-});
 
 
 const REAL_SHAPED_REPLY = JSON.stringify({schemaVersion:2,name:'Arpit Singh',headline:'PGDM',summary:'s',targetRoleStrengths:[{detail:'d',source:'cv'}],
@@ -185,7 +166,7 @@ it('rejects a pasted reply that is not the dossier JSON and saves nothing', asyn
   expect((await getNetwork()).dossier??'').toBe('');
 });
 
-it('starts in template mode for a user whose saved settings pre-date aiMode, without touching ChatGPT', async () => {
+it('starts for a user whose saved settings pre-date aiMode, without a dossier step', async () => {
   const legacy = { roles: ['Product Management internship'], searchMode: 'both', outreachMode: 'review', noteMode: 'preferred', followupMode: 'review', paceMinutes: 2, dailyInvites: null, dailyMessages: null, maxPending: null, companyAllowlist: [], companyExclusions: [], workMode: 'any', employmentType: 'any' };
   await updateNetwork(s => ({ ...s, profile, dossier: '', settings: legacy as never }));
   const reply = await networkUi()({ action: 'start' });
