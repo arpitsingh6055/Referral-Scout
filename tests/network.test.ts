@@ -50,12 +50,13 @@ it.each(["connected", "pending"])("does not adopt pre-existing %s relationships"
   await processContact(s, s.contacts[0]!, new AbortController().signal);
   expect((await getNetwork()).contacts[0]?.state).toBe("skipped"); expect(networkCommand).toHaveBeenCalledTimes(1);
 });
-it("pauses on an uncertain send and never automatically retries it", async () => {
+it("sets one uncertain message aside without stopping outreach, and never sends it again", async () => {
   const s = await state(contact({ state: "pending", requestedAt: 1 }));
   vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'connected' }).mockResolvedValueOnce(contact()).mockRejectedValueOnce(new Error('Response lost'));
   await processContact(s, s.contacts[0]!, new AbortController().signal);
-  const stored = await getNetwork(); expect(stored.active).toBe(false); expect(stored.contacts[0]?.state).toBe("attention");
-  await networkTick(); expect(networkCommand).toHaveBeenCalledTimes(3);
+  const stored = await getNetwork(); expect(stored.active).toBe(true); expect(stored.contacts[0]?.state).toBe("attention");
+  vi.mocked(networkCommand).mockResolvedValue([]);
+  await networkTick(); expect(vi.mocked(networkCommand).mock.calls.filter(c => (c[1] as { action: string }).action === 'message')).toHaveLength(1);
 });
 it("recovers interrupted actions into attention and respects a concurrent pause", async () => {
   await state(contact({ state: "messaging" })); await recoverNetwork();

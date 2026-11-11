@@ -41,7 +41,7 @@ export type ContactState='shortlisted'|'requesting'|'pending'|'connected'|'messa
 export interface NetworkContact extends NetworkProfile {
   state:ContactState;reason:string;addedAt:number;requestedAt:number;checkedAt:number;messagedAt:number;message:string;
   nextCheckAt?:number;acceptedAt?:number;invitationNote?:string;invitationLimit?:number;
-  companyName?:string;companyUrl?:string;approvalKind?:'connect'|'message';approved?:boolean;lastError?:string;score?:number;category?:string;failures?:number;retryAfter?:number;
+  companyName?:string;companyUrl?:string;approvalKind?:'connect'|'message';approved?:boolean;attemptedAt?:number;lastError?:string;score?:number;category?:string;failures?:number;retryAfter?:number;
 }
 /** The note before v0.11.1. It asked a recruiter about "your work", which is the wrong thing to say to someone who hires. */
 export const legacyNoteTemplate='Hi {firstName}, I’m {myFirstName}, exploring {target} opportunities. Would love to connect and learn about your work at {company}.';

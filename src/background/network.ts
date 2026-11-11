@@ -49,10 +49,16 @@ export async function currentRun(revision:number,signal:AbortSignal):Promise<Net
 }
 export async function recoverNetwork():Promise<void>{
   await updateNetwork(s=>{
-    for(const p of s.contacts)if(p.state==='requesting'||p.state==='messaging'){
-      p.state='attention';p.reason='The browser stopped during this send. Inspect LinkedIn before doing anything else; no resend will occur automatically.';
+    for(const p of s.contacts){
+      if(p.state==='requesting'){
+        // Look at the profile again: Pending means it went out, otherwise it is sent then. Never twice.
+        p.attemptedAt=s.intent?.at??Date.now();p.state='review';p.approvalKind='connect';p.approved=true;p.retryAfter=Date.now()+60000;
+        p.reason='The browser stopped during this invitation. Checking whether it went out; it will not be sent twice.';
+      }else if(p.state==='messaging'){
+        p.state='attention';p.reason='The browser stopped while this message was being sent. Open the conversation to check; it will not be sent again.';
+      }
     }
-    s.intent=null;return s;
+    s.intent=null;s.status='Picked up after an interruption. Outreach continues.';return s;
   });
 }
 async function saveContact(person:NetworkContact):Promise<void>{
@@ -108,18 +114,25 @@ const ACCOUNT_LEVEL=/HALT:|sign in to linkedin|signed out|signed-in linkedin acc
 const MAX_ATTEMPTS=2,STREAK_LIMIT=3;
 /** Errors raised before anything is submitted that are about this recipient only. */
 const RECIPIENT_ONLY=/Connect is unavailable on this recipient|requires a recipient email|Message button is unavailable|already have a conversation|unsent draft|already contains a draft|permits \d+ characters|open profile changed/i;
-export async function processContact(s:NetworkState,p:NetworkContact,signal:AbortSignal,approved=false):Promise<void>{
+export async function processContact(s:NetworkState,p:NetworkContact,signal:AbortSignal,approved=false):Promise<void|false>{
+  let failed=false;void failed;
   await note(s,`Opening ${p.name}'s profile…`);
   const tab=await networkTab(p.url,signal);
   const relation=z.object({state:z.enum(['connected','pending','not-connected','unknown'])}).parse(await networkCommand(tab,{action:'relationship',url:p.url},signal));
   await currentRun(s.revision,signal);
   const now=Date.now();p.checkedAt=now;if(approved)delete p.approved;
   if(relation.state==='pending'){
-    if(!p.requestedAt){p.state='skipped';p.reason='A request existed before this campaign; it was not adopted as an extension send.';}
+    if(!p.requestedAt&&p.attemptedAt){
+      // The earlier send did go through after all.
+      p.requestedAt=p.attemptedAt;delete p.attemptedAt;delete p.approvalKind;delete p.retryAfter;p.failures=0;p.state='pending';p.nextCheckAt=now+DAY;p.reason='Invitation sent (confirmed on a second look). The first acceptance check is in 24 hours.';
+      await updateNetwork(current=>{const action=current.actions.find(a=>a.url===p.url&&a.kind==='connect'&&a.confirmed===false);if(action)action.confirmed=true;current.status=`Invitation to ${p.name} confirmed.`;return current;});
+    }
+    else if(!p.requestedAt){p.state='skipped';p.reason='A request existed before this campaign; it was not adopted as an extension send.';}
     else if(now-p.requestedAt>PENDING_EXPIRY){p.state='skipped';p.reason='No response after 30 days. LinkedIn may still show it as pending: consider withdrawing it under My Network, Manage, Sent, which also frees your pending count.';}
     else{p.state='pending';p.nextCheckAt=now+DAY;p.reason='Still pending. Next acceptance check scheduled for 24 hours later.';}
     await saveContact(p);await pace(40000,90000);return;
   }
+  if(p.attemptedAt&&relation.state==='not-connected'){delete p.attemptedAt;await updateNetwork(current=>{current.actions=current.actions.filter(a=>!(a.url===p.url&&a.kind==='connect'&&a.confirmed===false));return current;});} // it was not sent; send it now
   if(relation.state==='connected'&&!p.requestedAt){p.state='skipped';p.reason='Already connected before this campaign. No artificial acceptance event was created.';await saveContact(p);return;}
   if(p.requestedAt&&relation.state!=='connected'){
     p.state=relation.state==='unknown'||relation.state==='not-connected'?'attention':'pending';
@@ -199,10 +212,40 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
       // Nothing was submitted and the problem is this one profile: skip them and keep going.
       p.state='skipped';p.reason=`${message} Skipped; the campaign continues with the next person.`;
       await updateNetwork(current=>{current.actions=current.actions.filter(a=>!(a.at===intent.at&&a.url===p.url&&a.kind===kind));current.status=`Skipped ${p.name}: ${message}`;return current;});
+    }else if(ACCOUNT_LEVEL.test(message)){
+      // About the account or the browser, not this person: keep them approved and stop until it is sorted out.
+      p.state='review';p.approvalKind=kind;p.approved=true;p.reason='Waiting to be sent once outreach resumes.';
+      await updateNetwork(current=>{current.actions=current.actions.filter(a=>!(a.at===intent.at&&a.url===p.url&&a.kind===kind));return current;});
+      await saveContact(p);
+      await pauseNetwork(message.replace(/^HALT:\s*/,''));
+      return false;
     }else{
-      p.state='attention';
-      p.reason=`${message} This action is NOT automatically retried.`;
-      await pauseNetwork('A send attempt needs review. Inspect LinkedIn before resuming.');
+      failed=true;
+      p.failures=(p.failures??0)+1;
+      // Only errors raised before the Send click are certain. Anything else (a lost reply, a timeout) might have gone out.
+      const unsure=!/No invitation was sent|no request was submitted|was NOT sent|no longer authorized|left untouched|is unavailable|before sending|could not be verified\.$/i.test(message);
+      if(unsure&&kind==='connect'){
+        // Send was pressed but LinkedIn was slow to show Pending. Look again shortly: if it is pending it counts as sent, if not it is sent then. Never twice.
+        p.attemptedAt=intent.at;p.state='review';p.approvalKind=kind;p.approved=true;p.retryAfter=Date.now()+2*60000;
+        p.reason='LinkedIn was slow to confirm this invitation. Checking again in 2 minutes; it will not be sent twice.';
+      }else if(unsure){
+        // A message cannot be re-checked safely, so this one is left for the person. Everyone else carries on.
+        p.state='attention';p.reason=`${message} Open the conversation to check whether it was sent. It will not be sent again.`;
+      }else if(p.failures>=MAX_ATTEMPTS){
+        p.state='skipped';p.reason=`Could not be sent after ${MAX_ATTEMPTS} tries (${message}). Skipped; nothing was sent to this person.`;
+      }else{
+        // Certainly not sent: try again by itself in a few minutes, already approved.
+        p.state='review';p.approvalKind=kind;p.approved=true;p.retryAfter=Date.now()+5*60000;
+        p.reason=`Did not go through (${message}). Trying again in 5 minutes.`;
+      }
+      let streak=0;
+      await updateNetwork(current=>{
+        if(!unsure)current.actions=current.actions.filter(a=>!(a.at===intent.at&&a.url===p.url&&a.kind===kind));
+        streak=(current.failureStreak??0)+1;current.failureStreak=streak;
+        current.status=`Could not send to ${p.name}: ${message} Carrying on with the others.`;return current;});
+      await saveContact(p);
+      if(streak>=STREAK_LIMIT)await pauseNetwork(`${STREAK_LIMIT} sends in a row failed (${message}). LinkedIn may have changed something or shown a notice. Check the LinkedIn window, then press Start.`);
+      return false;
     }
   }
   await saveContact(p);
@@ -226,7 +269,8 @@ async function run():Promise<void>{
   const renewal=setInterval(()=>{void renew(owner).then(ok=>{if(!ok)abort.abort();});},20000);
   try{
     const s=await getNetwork();if(!s.active||!s.profile)return;
-    if(s.intent||s.contacts.some(p=>['requesting','messaging'].includes(p.state))){await recoverNetwork();await pauseNetwork('Interrupted send requires manual inspection.');return;}
+    // A send that was cut off (browser closed, tab crashed) is sorted out by itself and outreach carries on.
+    if(s.intent||s.contacts.some(p=>['requesting','messaging'].includes(p.state))){await recoverNetwork();worked=true;return;}
     const settings=s.settings??defaultSettings;
     if(!withinActiveHours(settings)){await note(s,`Quiet hours: outreach resumes at ${String(settings.activeHours!.from).padStart(2,'0')}:00 local time. Nothing is wrong.`);return;}
     // Confirm a few times a day that the same LinkedIn account is still signed in before acting on its behalf.
@@ -240,7 +284,7 @@ async function run():Promise<void>{
     if(person){
       if(Date.now()<s.nextActionAt)return;
       worked=true;
-      try{await processContact(s,person,abort.signal,person.state==='review'&&person.approved===true);if(s.failureStreak)await updateNetwork(c=>({...c,failureStreak:0}));}
+      try{const ok=await processContact(s,person,abort.signal,person.state==='review'&&person.approved===true);if(ok!==false&&s.failureStreak)await updateNetwork(c=>({...c,failureStreak:0}));}
       catch(error){
         const message=error instanceof Error?error.message:String(error);
         if(abort.signal.aborted||ACCOUNT_LEVEL.test(message))throw error;
