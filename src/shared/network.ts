@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { classify, suggestTarget } from './targeting';
+import type { ReferralJob } from './referral';
 export const DAY = 86400000;
 export const networkKey = 'network-v1'; // Retain old state for lossless migration; mirror entities in v2 stores.
 export function profileUrl(value:string):string|null {
@@ -37,13 +38,16 @@ export function staleRequests(s:Pick<NetworkState,'contacts'|'saved'>,now=Date.n
 }
 export const dueReminders=(s:Pick<NetworkState,'saved'>,now=Date.now()):SavedItem[]=>(s.saved??[]).filter(i=>i.remindAt!==undefined&&i.remindAt<=now);
 export const rememberMessage=z.object({kind:z.literal('network.remember'),action:z.enum(['get','save','remove']),item:savedItemSchema});
-export type ContactState='shortlisted'|'requesting'|'pending'|'connected'|'messaging'|'messaged'|'attention'|'skipped'|'review';
+/** 'found' = listed for a job's referrals but not queued for any contact until the person asks. */
+export type ContactState='found'|'shortlisted'|'requesting'|'pending'|'connected'|'messaging'|'messaged'|'attention'|'skipped'|'review';
 export interface NetworkContact extends NetworkProfile {
   state:ContactState;reason:string;addedAt:number;requestedAt:number;checkedAt:number;messagedAt:number;message:string;
   nextCheckAt?:number;acceptedAt?:number;invitationNote?:string;invitationLimit?:number;
   companyName?:string;companyUrl?:string;approvalKind?:'connect'|'message';approved?:boolean;attemptedAt?:number;
   /** Already a 1st-degree connection when found: no invitation is needed, only a message. */
-  direct?:boolean;lastError?:string;score?:number;category?:string;failures?:number;retryAfter?:number;
+  direct?:boolean;
+  /** The job (its LinkedIn address) this person was found for, when the aim is a referral. */
+  referralJob?:string;lastError?:string;score?:number;category?:string;failures?:number;retryAfter?:number;
 }
 /** The note before v0.11.1. It asked a recruiter about "your work", which is the wrong thing to say to someone who hires. */
 export const legacyNoteTemplate='Hi {firstName}, I’m {myFirstName}, exploring {target} opportunities. Would love to connect and learn about your work at {company}.';
@@ -81,7 +85,7 @@ export interface NetworkState {
   profile:NetworkProfile|null;target:string;location:string;template:string;
   cv:{name:string;type:string;text:string;textVersion?:number;pages?:number;warnings?:string[];savedAt?:number;characterCount?:number}|null;
   dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
-  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;nextSweepAt?:number;saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;
+  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;nextSweepAt?:number;referralJobs?:ReferralJob[];saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;
   settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;
   actions:{at:number;kind:'connect'|'message'|'check';url:string;confirmed?:boolean;idempotencyKey?:string}[];
   intent:{id:string;tabId:number;url:string;kind:'connect'|'message';at:number;body:string;revision:number;claimed:boolean}|null;
@@ -179,6 +183,8 @@ export const networkRequest=z.discriminatedUnion('action',[
   z.object({kind:z.literal('network'),action:z.literal('prepare'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('skip'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('forget'),url:z.string()}),
+  z.object({kind:z.literal('network'),action:z.literal('askReferral'),url:z.string()}),
+  z.object({kind:z.literal('network'),action:z.literal('removeReferralJob'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('updateSaved'),url:z.string(),status:z.enum(jobStatuses).optional(),remindDays:z.number().min(0).max(365).nullable().optional(),note:z.string().max(300).optional()}),
   z.object({kind:z.literal('network'),action:z.literal('editDraft'),url:z.string(),text:z.string().trim().min(1).max(2000)}),
   z.object({kind:z.literal('network'),action:z.literal('templateDraft'),url:z.string()}),

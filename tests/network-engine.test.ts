@@ -276,3 +276,28 @@ it('messages an existing 1st-degree connection directly, with wording that does 
   expect(p).toMatchObject({ state: 'review', approvalKind: 'message' });
   expect(p.message).toBe('Hi alex, hope you’re doing well. I’m Arpit, currently exploring Product Management internship opportunities. Are there any relevant openings at Acme I could apply for, or someone I should speak to?');
 });
+
+it('a referral search runs even while outreach is paused, keeps only people at that company, and queues them best first', async () => {
+  const jobUrl = 'https://www.linkedin.com/jobs/view/123/';
+  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Product Manager', company: 'Acme', location: '', mode: 'referral', addedAt: 1, cursor: 0, found: 0 }] });
+  vi.mocked(networkCommand).mockResolvedValueOnce([card('rec', 'Senior Recruiter at Acme', 2), card('friend', 'Analyst at Acme', 1), card('stranger', 'Analyst at Acme', 3), card('elsewhere', 'Recruiter at Other Co', 2)]);
+  await networkTick();
+  const url = urls()[0]!;
+  expect(url.searchParams.get('keywords')).toContain('"Acme"');
+  const saved = await getNetwork();
+  expect(saved.contacts.sort((a, b) => b.score! - a.score!).map(c => [c.name, c.state, c.referralJob === jobUrl])).toEqual([['rec', 'shortlisted', true], ['friend', 'connected', true]]);
+  expect(saved.contacts.find(c => c.name === 'friend')).toMatchObject({ direct: true, category: 'employee' });
+  expect(saved.referralJobs![0]).toMatchObject({ cursor: 1, found: 2 });
+  expect(saved.active).toBe(false);
+});
+
+it('"My connections here" only lists people; nobody is queued until asked', async () => {
+  await seed({ active: false, referralJobs: [{ url: 'https://www.linkedin.com/jobs/view/9/', title: 'Sales Lead', company: 'TBX', location: '', mode: 'connections', addedAt: 1, cursor: 3, found: 0 }] });
+  vi.mocked(networkCommand).mockResolvedValueOnce([card('pal', 'Account Executive at TBX', 1)]);
+  await networkTick();
+  expect(JSON.parse(urls()[0]!.searchParams.get('network')!)).toEqual(['F']);
+  const saved = await getNetwork();
+  expect(saved.contacts[0]).toMatchObject({ name: 'pal', state: 'found' });
+  expect(saved.referralJobs![0]!.finishedAt).toBeGreaterThan(0);
+  expect(saved.status).toMatch(/TBX: found 1 person/);
+});

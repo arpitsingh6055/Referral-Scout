@@ -1,9 +1,10 @@
 import { z } from 'zod';
-import { legacyNoteTemplate, ACCEPTANCE_SWEEP, directMessage, DAY, MAX_REVIEW_QUEUE, SHORTLIST_BACKLOG, defaultSettings, emptyNetwork, networkKey, networkProfileSchema, nextContact, renderNote, introduction, withinActiveHours, type NetworkState, type NetworkContact } from '../shared/network';
+import { legacyNoteTemplate, fitNote, ACCEPTANCE_SWEEP, directMessage, DAY, MAX_REVIEW_QUEUE, SHORTLIST_BACKLOG, defaultSettings, emptyNetwork, networkKey, networkProfileSchema, nextContact, renderNote, introduction, withinActiveHours, type NetworkState, type NetworkContact } from '../shared/network';
 import { classify, normalizeCompany, planSearch, companyOf } from '../shared/targeting';
 import { companyFromCurrent } from '../parsers/network';
 import { read, mutate } from '../storage/state';
 import { acquire, release, renew } from './lease';
+import { referralAsk, referralNote, referralPlan, rankReferral, type ReferralJob } from '../shared/referral';
 import { networkCommand, networkTab, showWorkTab } from './network-browser';
 import { prepareIntroduction, prepareInvitation } from './network-ai';
 
@@ -108,6 +109,47 @@ async function discover(s:NetworkState,signal:AbortSignal):Promise<void>{
   });
 }
 const PENDING_EXPIRY=30*DAY,OWNER_RECHECK=6*3600000;
+/** One search of a job's referral plan per turn; the next follows a few seconds later. */
+async function referralScan(s:NetworkState,job:ReferralJob,signal:AbortSignal):Promise<void>{
+  const plan=referralPlan(job),step=plan[job.cursor];
+  let people:z.infer<typeof networkProfileSchema>[]=[],failed='';
+  if(step){
+    await note(s,`${job.company}: searching ${step.label} (step ${job.cursor+1} of ${plan.length})…`);
+    try{
+      const url=new URL('https://www.linkedin.com/search/results/people/');
+      url.searchParams.set('keywords',step.keywords);url.searchParams.set('network',JSON.stringify(step.network));url.searchParams.set('origin','FACETED_SEARCH');
+      const tab=await networkTab(url.href,signal);
+      people=z.array(networkProfileSchema).parse(await networkCommand(tab,{action:'search'},signal));
+    }catch(error){
+      failed=error instanceof Error?error.message:String(error);
+      if(signal.aborted||ACCOUNT_LEVEL.test(failed))throw error; // signed out or a security check: stop and say so
+    }
+  }
+  await updateNetwork(current=>{
+    const saved=current.referralJobs?.find(j=>j.url===job.url);if(!saved)return current; // removed while searching
+    const queue=saved.mode==='referral';let added=0;
+    for(const person of people){
+      if(person.url===current.profile?.url)continue;
+      const verdict=rankReferral(person,saved);if(!verdict)continue;
+      const direct=person.degree===1,state=queue?(direct?'connected' as const:'shortlisted' as const):'found' as const;
+      const existing=current.contacts.find(c=>c.url===person.url);
+      if(existing){
+        // Someone already on the list is tied to this job only if nothing has been sent to them yet.
+        if(existing.referralJob||existing.requestedAt||existing.messagedAt||!['found','shortlisted','skipped','connected','review'].includes(existing.state))continue;
+        Object.assign(existing,{referralJob:saved.url,score:verdict.score,reason:verdict.reason,category:verdict.kind,companyName:saved.company,message:'',state,...(direct?{direct:true}:{})});
+        delete existing.invitationNote;delete existing.approvalKind;delete existing.approved;added++;continue;
+      }
+      current.contacts.push({...person,reason:verdict.reason,score:verdict.score,category:verdict.kind,companyName:saved.company,referralJob:saved.url,
+        ...(direct?{direct:true}:{}),state,addedAt:Date.now(),requestedAt:0,checkedAt:0,messagedAt:0,message:''});added++;
+    }
+    saved.cursor++;saved.found+=added;
+    if(saved.cursor>=plan.length){
+      saved.finishedAt=Date.now();
+      current.status=saved.found?`${saved.company}: found ${saved.found} ${saved.found===1?'person':'people'} who can help with ${saved.title}. See the Referrals tab.`:`${saved.company}: nobody suitable was found for ${saved.title}. LinkedIn may be showing few people from this company.`;
+    }else current.status=failed?`${saved.company}: one search could not be read (${failed.slice(0,120)}). Carrying on.`:`${saved.company}: ${added} found in ${step?.label??'this search'}. Next search in a few seconds.`;
+    return current;
+  });
+}
 async function sweepAcceptances(s:NetworkState,signal:AbortSignal):Promise<void>{
   await note(s,'Checking your connections list for people who accepted…');
   const tab=await networkTab('https://www.linkedin.com/mynetwork/invite-connect/connections/',signal);
@@ -179,6 +221,8 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
     Object.assign(p,facts);
   }
   const me=fresh.profile!.name;
+  // Found for a specific job: the wording is about that job and a referral, not general networking.
+  const job=p.referralJob?fresh.referralJobs?.find(j=>j.url===p.referralJob):undefined;
   // ChatGPT personalisation is optional. If it is off, or fails, the user's own template is used so outreach never stalls.
   const draft=async(ai:()=>Promise<string>,template:()=>string):Promise<string>=>{
     if(settings.aiMode!=='chatgpt')return template();
@@ -194,9 +238,9 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
     }
   };
   if(kind==='connect'&&settings.noteMode!=='none'&&!p.invitationNote)
-    p.invitationNote=await draft(()=>prepareInvitation(fresh,p,200,signal),()=>renderNote(settings,fresh.target,p,me));
+    p.invitationNote=job?fitNote(referralNote(job,p,me)):await draft(()=>prepareInvitation(fresh,p,200,signal),()=>renderNote(settings,fresh.target,p,me));
   if(kind==='message'&&!p.message)
-    p.message=p.direct?directMessage(fresh,p,me):await draft(()=>prepareIntroduction(fresh,p,signal),()=>introduction(fresh,p,me));
+    p.message=job?referralAsk(job,p,me,!p.direct):p.direct?directMessage(fresh,p,me):await draft(()=>prepareIntroduction(fresh,p,signal),()=>introduction(fresh,p,me));
   const review=kind==='connect'?settings.outreachMode==='review':settings.followupMode==='review';
   if(review&&!approved){
     p.state='review';p.approvalKind=kind;p.reason=kind==='connect'?'Invitation ready. Approve to send.':p.direct?'Already your connection. Message ready; approve to send.':'They accepted. Follow-up message ready; approve to send.';
@@ -287,7 +331,11 @@ async function run():Promise<void>{
   const abort=new AbortController();controller=abort;
   const renewal=setInterval(()=>{void renew(owner).then(ok=>{if(!ok)abort.abort();});},20000);
   try{
-    const s=await getNetwork();if(!s.active||!s.profile)return;
+    const s=await getNetwork();if(!s.profile)return;
+    // A referral search was asked for by a click on a job page, so it runs straight away, even while outreach is paused or outside active hours. It only reads.
+    const scan=(s.referralJobs??[]).find(j=>j.finishedAt===undefined);
+    if(scan){worked=true;await referralScan(s,scan,abort.signal);return;}
+    if(!s.active)return;
     // A send that was cut off (browser closed, tab crashed) is sorted out by itself and outreach carries on.
     if(s.intent||s.contacts.some(p=>['requesting','messaging'].includes(p.state))){await recoverNetwork();worked=true;return;}
     const settings=s.settings??defaultSettings;

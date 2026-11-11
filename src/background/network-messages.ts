@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { rememberMessage, type SavedItem, networkRequest, networkProfileSchema, profileUrl, networkKey, suggestedTarget, defaultSettings, type NetworkState, DAY, introduction, renderNote , directMessage } from '../shared/network';
 import { trustedExtension, trustedSite } from '../validators/security';
+import { referralMessage, referralAsk, referralNote } from '../shared/referral';
+import { fitNote } from '../shared/network';
 import { getNetwork, updateNetwork, pauseNetwork, networkTick } from './network';
 import { networkCommand, networkTab } from './network-browser';
 import { acquire, release, renew } from './lease';
@@ -48,6 +50,31 @@ export function registerNetworkMessages():void{
           return s;
         });return allowed;
       })().then(allowed=>respond({allowed})).catch(()=>respond({allowed:false}));return true;
+    }
+    const referral=referralMessage.safeParse(input);
+    if(referral.success){
+      // Sent by the two referral buttons on a LinkedIn job page.
+      if(!trustedSite(sender,chrome.runtime.id)){respond({ok:false});return false;}
+      if(sender.tab?.id!==undefined)void chrome.sidePanel?.open?.({tabId:sender.tab.id}).catch(()=>undefined); // show progress where the person can see it
+      const {mode,job}=referral.data;
+      void (async()=>{
+        if(!(await getNetwork()).profile)return {ok:false,message:'Open Cold Contact and read your LinkedIn profile first.'};
+        let message='';
+        await updateNetwork(s=>{
+          const list=s.referralJobs??(s.referralJobs=[]),old=list.find(j=>j.url===job.url);
+          if(!old){list.unshift({...job,mode,addedAt:Date.now(),cursor:0,found:0});s.referralJobs=list.slice(0,100);message='Searching. See the Referrals tab.';}
+          else if(old.mode==='connections'&&mode==='referral'){
+            // Already listed the connections; now also look wider and reach out.
+            old.mode='referral';old.cursor=0;delete old.finishedAt;
+            for(const p of s.contacts)if(p.referralJob===job.url&&p.state==='found')p.state=p.direct?'connected':'shortlisted';
+            message='Reaching out. See the Referrals tab.';
+          }else message=old.finishedAt?'Already done. See the Referrals tab.':'Already searching. See the Referrals tab.';
+          s.status=`${job.company}: ${mode==='referral'?'looking for people who can refer you for':'listing your connections for'} ${job.title}.`;
+          return s;
+        });
+        void networkTick();
+        return {ok:true,message};
+      })().then(respond).catch(()=>respond({ok:false,message:'Something went wrong. Open Cold Contact for details.'}));return true;
     }
     const remember=rememberMessage.safeParse(input);
     if(remember.success){
@@ -203,9 +230,21 @@ export function registerNetworkMessages():void{
           const p=s.contacts.find(x=>x.url===req.url);
           if(!p||!s.profile||['pending','messaged','requesting','messaging'].includes(p.state))throw new Error('This message can no longer be changed.');
           const forMessage=!!p.acceptedAt||!!p.direct;
-          const text=req.action==='editDraft'?req.text:p.direct?directMessage(s,p,s.profile.name):forMessage?introduction(s,p,s.profile.name):renderNote(s.settings??defaultSettings,s.target,p,s.profile.name);
+          const job=p.referralJob?s.referralJobs?.find(j=>j.url===p.referralJob):undefined;
+          const text=req.action==='editDraft'?req.text:job?(forMessage?referralAsk(job,p,s.profile.name,!p.direct):fitNote(referralNote(job,p,s.profile.name))):p.direct?directMessage(s,p,s.profile.name):forMessage?introduction(s,p,s.profile.name):renderNote(s.settings??defaultSettings,s.target,p,s.profile.name);
           if(!forMessage&&text.length>200)throw new Error(`LinkedIn allows 200 characters in an invitation note; this is ${text.length}.`);
           if(forMessage)p.message=text;else p.invitationNote=text;
+          return s;
+        });
+        if(req.action==='askReferral')await updateNetwork(s=>{
+          const p=s.contacts.find(x=>x.url===req.url);if(!p||p.state!=='found')throw new Error('This person is already queued or has been contacted.');
+          p.state=p.direct?'connected':'shortlisted';s.status=`${p.name} queued. ${s.active?'A draft will be ready shortly.':'Press Start outreach to prepare the message.'}`;return s;
+        });
+        if(req.action==='removeReferralJob')await updateNetwork(s=>{
+          s.referralJobs=(s.referralJobs??[]).filter(j=>j.url!==req.url);
+          // People only listed for this job go with it; anyone already queued or contacted stays on the People list.
+          s.contacts=s.contacts.filter(p=>!(p.referralJob===req.url&&p.state==='found'));
+          for(const p of s.contacts)if(p.referralJob===req.url&&!p.requestedAt&&!p.messagedAt&&['shortlisted','connected','review'].includes(p.state)){p.state='skipped';p.reason='The job was removed from Referrals.';delete p.approved;}
           return s;
         });
         if(req.action==='forget')await updateNetwork(s=>({...s,saved:(s.saved??[]).filter(x=>x.url!==req.url)}));

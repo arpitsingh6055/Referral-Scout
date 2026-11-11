@@ -44,7 +44,23 @@ const row = make("div", "display:flex;justify-content:space-between;align-items:
 const forget = make("button", `${FONT};border:0;background:transparent;color:#b3261e;cursor:pointer;padding:6px 4px`, "Forget"); forget.type = "button";
 const save = make("button", `${FONT};border:0;border-radius:999px;background:#0a66c2;color:#fff;cursor:pointer;padding:7px 16px;font-weight:600`, "Save"); save.type = "button";
 const pill = make("button", `${FONT};display:inline-flex;align-items:center;gap:6px;border:0;border-radius:999px;background:#0a66c2;color:#fff;cursor:pointer;padding:10px 16px;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.3)`); pill.type = "button";
-row.append(forget, save); box.append(who, sub, field, status, row); ui.append(box, pill); root.append(ui);
+// Job pages only: two more buttons. The search runs in the extension's own window; these only ask for it.
+const PILL2 = `${FONT};display:block;border:1px solid #0a66c2;border-radius:999px;background:#fff;color:#0a66c2;cursor:pointer;padding:8px 14px;font-weight:600;margin-bottom:6px;box-shadow:0 4px 14px rgba(0,0,0,.2)`;
+const jobRow = make("div", "display:none");
+const referralButton = (mode: "referral" | "connections", label: string): HTMLButtonElement => {
+  const b = make("button", PILL2, label); b.type = "button";
+  b.addEventListener("click", () => {
+    const job = current; if (!job || job.type !== "job" || !job.subtitle) return;
+    b.textContent = "Starting…";
+    void chrome.runtime.sendMessage({ kind: "network.referral", mode, job: { url: job.url, title: job.title, company: job.subtitle, location: "" } })
+      .then((reply: { message?: string } | undefined) => { b.textContent = reply?.message ?? "Open Cold Contact to see progress."; })
+      .catch(() => { b.textContent = "Refresh this LinkedIn tab and try again."; })
+      .finally(() => setTimeout(() => { b.textContent = label; }, 6000));
+  });
+  return b;
+};
+jobRow.append(referralButton("referral", "Ask for referrals"), referralButton("connections", "My connections here"));
+row.append(forget, save); box.append(who, sub, field, status, row); ui.append(box, jobRow, pill); root.append(ui);
 // LinkedIn listens for keys on the whole page (for example "/" jumps to search). Typing a note must stay inside the box.
 for (const type of ["keydown", "keyup", "keypress"]) box.addEventListener(type, e => e.stopPropagation());
 
@@ -54,6 +70,7 @@ function paint(): void {
   ui.style.display = current ? "block" : "none";
   if (!current) { box.style.display = "none"; return; }
   const noun = current.type === "job" ? "job" : "person";
+  jobRow.style.display = current.type === "job" && current.subtitle ? "block" : "none";
   pill.textContent = saved ? "✓ Remembered · edit note" : `＋ Remember this ${noun}`;
   pill.style.background = saved ? "#1a7f4b" : "#0a66c2";
   who.textContent = current.title; sub.textContent = current.subtitle;

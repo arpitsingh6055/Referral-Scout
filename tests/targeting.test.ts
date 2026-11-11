@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classify, companyMatches, companyOf, functionWords, locationFits, normalizeCompany, planSearch, searchCombos, MAX_SEARCH_PAGES, suggestTarget } from '../src/shared/targeting';
+import { rankReferral, referralAsk, referralNote, referralPlan } from '../src/shared/referral';
 import { DAY, defaultNoteTemplate, defaultSettings, emptyNetwork, fitNote, nextContact, renderNote, withinActiveHours, type NetworkContact } from '../src/shared/network';
 
 const product = { roles: ['Product Management internship'], location: 'India' };
@@ -194,5 +195,35 @@ describe('the closing line of the first note fits who is being contacted', () =>
   });
   it('stays within LinkedIn’s 200 characters for a long company name', () => {
     expect(renderNote(settings, 'Product Management internship', { name: 'Sreekanth R.', companyName: 'Tenarai India Private Limited Technologies', category: 'recruiter' }, 'Arpit').length).toBeLessThanOrEqual(200);
+  });
+});
+
+describe('referrals for one job', () => {
+  const job = { url: 'https://www.linkedin.com/jobs/view/123/', title: 'Software Engineer', company: 'Barclays', mode: 'referral' as const };
+  it('plans four company searches, the last one only among people already known', () => {
+    const plan = referralPlan(job);
+    expect(plan).toHaveLength(4);
+    expect(plan.every(step => step.keywords.startsWith('"Barclays"'))).toBe(true);
+    expect(plan[3]).toMatchObject({ keywords: '"Barclays"', network: ['F'] });
+    expect(referralPlan({ ...job, mode: 'connections' }).every(step => step.network.join() === 'F')).toBe(true);
+  });
+  it('ranks by whose word counts: recruiter, hiring team, founder, then a known colleague; known people first within a group', () => {
+    const score = (headline: string, degree: number, current?: string) => rankReferral({ headline, degree, current }, job)?.score ?? null;
+    const order = [score('Talent Acquisition at Barclays', 1), score('Senior Recruiter at Barclays', 2), score('Engineering Manager at Barclays', 2), score('Software Developer', 1, 'Analyst at Barclays')];
+    expect(order).toEqual([...order].sort((a, b) => b! - a!));
+    expect(order.every(Boolean)).toBe(true);
+  });
+  it('leaves out people who cannot help: other companies, former staff, students, and strangers who merely work there', () => {
+    expect(rankReferral({ headline: 'Recruiter at HSBC', degree: 2 }, job)).toBeNull();
+    expect(rankReferral({ headline: 'Ex-Barclays | Recruiter', degree: 1 }, job)).toBeNull();
+    expect(rankReferral({ headline: 'Software Engineer at Barclays', degree: 2 }, job)).toBeNull();
+    expect(rankReferral({ headline: 'Software Engineer at Barclays', degree: 1 }, job)).toMatchObject({ kind: 'employee' });
+  });
+  it('writes about the job, fits the invitation in 200 characters, and puts the job link in the message', () => {
+    const note = fitNote(referralNote(job, { name: 'Asha Rao', category: 'recruiter' }, 'Arpit Singh'));
+    expect(note).toBe('Hi Asha, I’m Arpit. I’m applying for the Software Engineer role at Barclays. Would love to connect about it.');
+    expect(note.length).toBeLessThanOrEqual(200);
+    expect(referralAsk(job, { name: 'Dev K', category: 'employee' }, 'Arpit Singh', false)).toBe('Hi Dev, hope you’re doing well. I’m Arpit, and I’m applying for the Software Engineer role at Barclays: https://www.linkedin.com/jobs/view/123/ Would you be open to referring me, or pointing me to the right person? Happy to share my CV.');
+    expect(referralAsk(job, { name: 'Dev K', category: 'recruiter' }, 'Arpit', true)).toMatch(/^Hi Dev, thanks for connecting!.*best way to be considered/);
   });
 });

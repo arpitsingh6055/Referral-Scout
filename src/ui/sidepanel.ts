@@ -4,8 +4,8 @@ import { DAY, defaultSettings, introduction, renderNote, withinActiveHours, type
 import { completeCvText } from './cv-text';
 import { createToaster, type ToastKind } from './toast';
 
-type Tab = 'setup' | 'people' | 'saved' | 'activity';
-const ui = { tab: 'setup' as Tab, filter: 'all', open: new Set<string>() };
+type Tab = 'setup' | 'people' | 'referrals' | 'saved' | 'activity';
+const ui = { tab: 'setup' as Tab, filter: 'all', open: new Set<string>(), touched: false };
 const root = appRoot();
 let busy = false, dirty = false, spoke = false, opened = false, last: NetworkState | null = null, signature = '', uid = 0;
 const alertBox = element('div'); alertBox.hidden = true;
@@ -107,8 +107,8 @@ const bubble = (label: string, text: string, over = false, counter = ''): HTMLEl
   wrap.append(head, node('div', text, 'bubble')); return wrap;
 };
 
-const stateLabels: Record<ContactState, string> = { shortlisted: 'Queued', requesting: 'Inviting', pending: 'Invited', connected: 'Accepted', messaging: 'Sending', messaged: 'Introduced', attention: 'Needs you', skipped: 'Skipped', review: 'Needs approval' };
-const categoryLabels: Record<string, string> = { recruiter: 'Recruiter', leader: 'Team leader', founder: 'Founder' };
+const stateLabels: Record<ContactState, string> = { found: 'Not contacted', shortlisted: 'Queued', requesting: 'Inviting', pending: 'Invited', connected: 'Accepted', messaging: 'Sending', messaged: 'Introduced', attention: 'Needs you', skipped: 'Skipped', review: 'Needs approval' };
+const categoryLabels: Record<string, string> = { recruiter: 'Recruiter', leader: 'Team leader', founder: 'Founder', employee: 'Works there' };
 
 /* ---------- derived status ---------- */
 function runStatus(s: NetworkState): { tone: 'ok' | 'warn' | 'idle'; pill: string; title: string; sub: string } {
@@ -201,6 +201,33 @@ function buildSaved(s: NetworkState): HTMLElement {
   }
   return panel;
 }
+/* Referrals: one card per job, with the people who can help in order of how much their word counts. */
+function buildReferrals(s: NetworkState): HTMLElement {
+  const panel = node('div'), jobs = s.referralJobs ?? [];
+  if (!jobs.length) {
+    const e = node('div', '', 'empty'); e.append(node('b', 'No referral searches yet'),
+      node('span', 'Open a job on LinkedIn. At the bottom left of the page, press “Ask for referrals” to find and contact the people who can help, or “My connections here” to see who you already know at that company.'));
+    panel.append(e); return panel;
+  }
+  for (const job of jobs) {
+    const people = s.contacts.filter(p => p.referralJob === job.url).sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    const { box, body } = accordion(`ref:${job.url}`, `${job.title} · ${job.company}`, job.finishedAt ? String(people.length) : 'searching…');
+    if (jobs[0] === job && !ui.open.has(`ref:${job.url}`) && !ui.touched) box.open = true;
+    const meta = node('div', '', 'meta');
+    meta.append(link('Open job', job.url, 'chip'), node('span', job.mode === 'referral' ? 'Reaching out' : 'Listing only', 'chip'));
+    if (!job.finishedAt) meta.append(node('span', `Searching: step ${Math.min(job.cursor + 1, 4)} of 4`, 'badge review'));
+    const first = people.filter(p => p.degree === 1).length;
+    if (people.length) meta.append(node('span', `${first} you know · ${people.length - first} to invite`, 'chip'));
+    body.append(meta);
+    if (job.mode === 'connections' && job.finishedAt && people.some(p => p.state === 'found')) body.append(node('p', 'Nobody has been contacted. Press “Ask for a referral” on the people you want to approach; the strongest are at the top.', 'field-help'));
+    if (job.mode === 'referral' && !s.active && people.some(p => ['shortlisted', 'connected'].includes(p.state))) body.append(node('p', 'Press Start outreach above: the messages are then drafted for your approval.', 'field-help'));
+    if (!people.length) body.append(node('p', job.finishedAt ? 'Nobody suitable was found at this company.' : 'Results appear here as each search finishes.', 'muted small'));
+    for (const p of people) body.append(personCard(s, p));
+    body.append(button('Remove this job', async () => { if (confirm(`Remove ${job.title} at ${job.company} from Referrals? People already contacted stay on the People list.`)) await act({ kind: 'network', action: 'removeReferralJob', url: job.url }, 'Job removed from Referrals.'); }, 'btn sm ghost danger'));
+    panel.append(box);
+  }
+  return panel;
+}
 function render(s: NetworkState): void {
   announcedUpTo = Math.max(announcedUpTo, (s.log ?? []).at(-1)?.at ?? 0);
   last = s; signature = JSON.stringify(s); dirty = false; uid = 0;
@@ -221,7 +248,7 @@ function render(s: NetworkState): void {
 
   /* the setup form exists in every tab so Start can always save it */
   const setup = buildSetup(s, settings);
-  const panels: Record<Tab, HTMLElement> = { setup: setup.panel, people: node('div'), saved: buildSaved(s), activity: buildActivity(s) };
+  const panels: Record<Tab, HTMLElement> = { setup: setup.panel, people: node('div'), referrals: buildReferrals(s), saved: buildSaved(s), activity: buildActivity(s) };
   const tabs = node('div', '', 'tabs'), tabButtons = new Map<Tab, HTMLButtonElement>();
   const setTab = (tab: Tab): void => {
     ui.tab = tab;
@@ -231,7 +258,7 @@ function render(s: NetworkState): void {
   const peopleList = node('div'), refreshPeople = (): void => { buildPeople(s, peopleList, refreshPeople); };
   panels.people.append(peopleList);
   const toApprove = s.contacts.filter(p => p.state === 'review' && !p.approved).length, reviewCount = toApprove;
-  for (const [tab, label, n] of [['setup', 'Setup', 0], ['people', 'People', s.contacts.filter(p => p.state !== 'skipped').length], ['saved', 'Saved', dueReminders(s).length || (s.saved ?? []).length], ['activity', 'Activity', 0]] as const) {
+  for (const [tab, label, n] of [['setup', 'Setup', 0], ['people', 'People', s.contacts.filter(p => p.state !== 'skipped' && p.state !== 'found').length], ['referrals', 'Referrals', (s.referralJobs ?? []).length], ['saved', 'Saved', dueReminders(s).length || (s.saved ?? []).length], ['activity', 'Activity', 0]] as const) {
     const b = node('button', label, 'tab'); b.type = 'button'; b.setAttribute('role', 'tab');
     if (n) b.append(node('span', String(n), 'count'));
     b.addEventListener('click', () => setTab(tab)); tabButtons.set(tab, b); tabs.append(b);
@@ -265,7 +292,7 @@ function render(s: NetworkState): void {
   const attention = count('attention');
   if (attention) { const c = node('div', '', 'callout bad'); c.append(node('span', `${attention} ${attention === 1 ? 'person needs' : 'people need'} your attention.`), button('Show', async () => openPeople('attention'), 'btn sm')); page.append(c); }
 
-  page.append(tabs, panels.setup, panels.people, panels.saved, panels.activity);
+  page.append(tabs, panels.setup, panels.people, panels.referrals, panels.saved, panels.activity);
   refreshPeople(); setTab(ui.tab);
   document.scrollingElement?.scrollTo({ top: scroll });
 }
@@ -358,7 +385,7 @@ function buildChatGpt(s: NetworkState): HTMLElement {
 function buildPeople(s: NetworkState, list: HTMLElement, redraw: () => void): void {
   list.replaceChildren();
   const filters: [string, string, (p: NetworkContact) => boolean][] = [
-    ['all', 'All', p => p.state !== 'skipped'], ['review', 'To approve', p => p.state === 'review'], ['shortlisted', 'Queued', p => p.state === 'shortlisted'],
+    ['all', 'All', p => p.state !== 'skipped' && p.state !== 'found'], ['review', 'To approve', p => p.state === 'review'], ['shortlisted', 'Queued', p => p.state === 'shortlisted'],
     ['pending', 'Invited', p => p.state === 'pending'], ['connected', 'Accepted', p => p.state === 'connected'], ['messaged', 'Introduced', p => p.state === 'messaged'],
     ['attention', 'Needs you', p => p.state === 'attention'], ['skipped', 'Skipped', p => p.state === 'skipped']];
   const bar = node('div', '', 'filters');
@@ -382,6 +409,7 @@ function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
   info.append(link(p.name, p.url, 'person-name'), node('p', p.headline, 'muted small clamp'));
   head.append(node('div', initials(p.name), `avatar ${p.category ?? ''}`), info); card.append(head);
   const badges = node('div', '', 'badges');
+  if (p.degree) badges.append(node('span', p.degree === 1 ? '1st · message' : p.degree === 2 ? '2nd · invite' : '3rd · invite', 'chip'));
   if (p.category && categoryLabels[p.category]) badges.append(node('span', categoryLabels[p.category]!, `type ${p.category}`));
   badges.append(node('span', p.state === 'review' && p.approved ? 'Sending soon' : stateLabels[p.state], `badge ${p.state === 'review' && p.approved ? 'connected' : p.state}`)); card.append(badges);
   const line = p.state === 'pending' ? `Invited ${when(p.requestedAt)} · acceptance is checked every 2 hours`
@@ -402,7 +430,7 @@ function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
     saveEdit = async () => { if (edit.value.trim() !== text.trim()) await request({ kind: 'network', action: 'editDraft', url: p.url, text: edit.value }); };
     const tools = node('div', '', 'draft-tools');
     tools.append(counter, save);
-    if (!p.direct) tools.append(
+    if (!p.direct && !p.referralJob) tools.append(
       button('Rewrite with ChatGPT', () => withProgress(`ChatGPT is rewriting the note for ${p.name}`, () => act({ kind: 'network', action: 'prepare', url: p.url }, `ChatGPT rewrote the note for ${p.name}. Read it before approving.`)), 'btn sm ghost'),
       button('Use my template', () => act({ kind: 'network', action: 'templateDraft', url: p.url }, `Back to your template for ${p.name}.`), 'btn sm ghost'));
     d.append(edit, tools); card.append(d);
@@ -415,7 +443,8 @@ function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
     await act({ kind: 'network', action: 'approve', url: p.url }, `Approved for ${p.name}. Sending shortly; you can keep approving others.`);
   }, 'btn sm primary'));
   else if (p.state === 'review' && p.approvalKind) actions.append(node('span', 'Press Start outreach to approve and send.', 'field-help'));
-  if (p.state === 'shortlisted') actions.append(button('Draft with ChatGPT', () => withProgress(`ChatGPT is drafting for ${p.name}`, () => act({ kind: 'network', action: 'prepare', url: p.url }, `Draft ready for ${p.name}. Nothing was sent.`)), 'btn sm ghost'));
+  if (p.state === 'found') actions.append(button(p.direct ? 'Ask for a referral' : 'Invite and ask', () => act({ kind: 'network', action: 'askReferral', url: p.url }, `${p.name} queued for a referral request.`), 'btn sm primary'));
+  if (p.state === 'shortlisted' && !p.referralJob) actions.append(button('Draft with ChatGPT', () => withProgress(`ChatGPT is drafting for ${p.name}`, () => act({ kind: 'network', action: 'prepare', url: p.url }, `Draft ready for ${p.name}. Nothing was sent.`)), 'btn sm ghost'));
   if (!['messaged', 'skipped', 'requesting', 'messaging'].includes(p.state)) actions.append(button('Skip', () => act({ kind: 'network', action: 'skip', url: p.url }, `${p.name} skipped. Nothing more will be sent.`), 'btn sm ghost'));
   actions.append(button('Delete', async () => { if (confirm(`Delete the saved record for ${p.name}? This does not undo anything on LinkedIn.`)) await act({ kind: 'network', action: 'removeContact', url: p.url }, `Record for ${p.name} deleted.`); }, 'btn sm ghost danger'));
   card.append(actions);

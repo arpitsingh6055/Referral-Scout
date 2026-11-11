@@ -15,6 +15,14 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.16.0
+- **Referrals.** On a LinkedIn job page, two new buttons next to Remember:
+  - **Ask for referrals** searches that company for recruiters, the hiring team, founders and people you already know there, ranks them by whose word counts, and prepares a job-specific message (1st degree) or invitation (2nd and 3rd).
+  - **My connections here** only lists your 1st-degree connections at that company, strongest first, and contacts nobody until you press Ask for a referral.
+- New **Referrals** tab: one card per job with its ranked people, kept separate from general outreach. They also appear in People once queued.
+- A referral search runs straight away, even while outreach is paused; sending still follows your approval and limits.
+- Not yet run on live LinkedIn: the company keyword search and the job-page buttons.
+
 ## 0.15.1
 - Settings no longer fail to save silently; the rejected field is named.
 - Gap between sends can be set from 5 seconds upward.
