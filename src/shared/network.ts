@@ -41,7 +41,7 @@ export type ContactState='shortlisted'|'requesting'|'pending'|'connected'|'messa
 export interface NetworkContact extends NetworkProfile {
   state:ContactState;reason:string;addedAt:number;requestedAt:number;checkedAt:number;messagedAt:number;message:string;
   nextCheckAt?:number;acceptedAt?:number;invitationNote?:string;invitationLimit?:number;
-  companyName?:string;companyUrl?:string;approvalKind?:'connect'|'message';lastError?:string;score?:number;category?:string;failures?:number;retryAfter?:number;
+  companyName?:string;companyUrl?:string;approvalKind?:'connect'|'message';approved?:boolean;lastError?:string;score?:number;category?:string;failures?:number;retryAfter?:number;
 }
 /** The note before v0.11.1. It asked a recruiter about "your work", which is the wrong thing to say to someone who hires. */
 export const legacyNoteTemplate='Hi {firstName}, I’m {myFirstName}, exploring {target} opportunities. Would love to connect and learn about your work at {company}.';
@@ -134,8 +134,11 @@ export function nextContact(s:NetworkState,now=Date.now()):NetworkContact|undefi
   const ready=(p:NetworkContact)=>(p.retryAfter??0)<=now;
   const due=s.contacts.find(p=>ready(p)&&p.state==='pending'&&p.requestedAt>0&&now>=(p.nextCheckAt??((p.checkedAt||p.requestedAt)+DAY)));
   if(due)return due;
+  // Messages the person approved go next, ahead of new drafts and searches.
+  const approved=s.contacts.find(p=>ready(p)&&p.state==='review'&&p.approved&&permit(p.approvalKind==='message'?'message':'connect'));
+  if(approved)return approved;
   // Never draft more than a handful of messages the user has not looked at yet.
-  if(s.contacts.filter(p=>p.state==='review').length>=MAX_REVIEW_QUEUE)return undefined;
+  if(s.contacts.filter(p=>p.state==='review'&&!p.approved).length>=MAX_REVIEW_QUEUE)return undefined;
   if(permit('message')){const accepted=s.contacts.find(p=>ready(p)&&p.state==='connected'&&!p.messagedAt);if(accepted)return accepted;}
   const pending=s.contacts.filter(p=>p.state==='pending').length;
   if(!permit('connect')||(settings.maxPending!==null&&pending>=settings.maxPending))return undefined;
@@ -158,6 +161,7 @@ export const networkRequest=z.discriminatedUnion('action',[
   z.object({kind:z.literal('network'),action:z.literal('clear'),confirm:z.literal(true)}),
   z.object({kind:z.literal('network'),action:z.literal('deleteCv')}),
   z.object({kind:z.literal('network'),action:z.literal('approve'),url:z.string()}),
+  z.object({kind:z.literal('network'),action:z.literal('unapprove'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('save'),target:z.string().trim().min(2).max(160),location:z.string().trim().max(160),template:z.string().trim().min(10).max(1500),settings:outreachSettingsSchema.optional()}),
   z.object({kind:z.literal('network'),action:z.literal('saveCv'),name:z.string().trim().min(1).max(200),type:z.string().max(120),text:z.string().min(1),pages:z.number().int().optional()}),
   z.object({kind:z.literal('network'),action:z.literal('prepare'),url:z.string()}),
