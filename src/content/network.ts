@@ -1,5 +1,5 @@
 import { networkPageCommand, profileUrl, type NetworkPageCommand } from "../shared/network";
-import { ownProfileEditLink, readNetworkProfile, networkPeople, profileHeader, topCardFacts, textOf } from "../parsers/network";
+import { ownProfileEditLink, readNetworkProfile, networkPeople, profileHeader, topCardFacts, textOf, recentConnections } from "../parsers/network";
 import { visible, wait, sleep, guard, insert, readEditor, sameText, queryAll } from "./dom";
 
 /*
@@ -137,7 +137,12 @@ async function connect(cmd: NetworkPageCommand, signal: AbortSignal): Promise<un
   if (profileUrl(location.href) !== cmd.url) throw new Error("The recipient changed before sending. No invitation was sent.");
   await authorize(cmd, false, signal);
   send.click();
-  await wait(() => relationship(topCard(cmd.url)) === "pending", signal, 12000).catch(() => { throw new Error("LinkedIn did not confirm Pending after Send. The invitation may have been submitted."); });
+  // Proof of sending: the button turns to Pending, or LinkedIn shows its "Invitation sent to NAME" notice
+  // (the only sign when Connect lived under More, where the top card keeps showing Follow).
+  const firstName = topCardFacts(topCard(cmd.url), visible).name.split(/\s+/)[0] ?? "";
+  const notice = new RegExp(`invitation sent to\\s+${firstName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i");
+  await wait(() => relationship(topCard(cmd.url)) === "pending" || (firstName.length > 1 && notice.test(document.body.innerText)), signal, 12000)
+    .catch(() => { throw new Error("LinkedIn did not confirm Pending after Send. The invitation may have been submitted."); });
   return { state: "pending", noteSent };
 }
 /** The chat window for exactly this recipient. It lives in LinkedIn's messaging shadow root. */
@@ -188,6 +193,14 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
   guard(signal);
   if (cmd.action === "selftest") return selfTest();
   if (cmd.action === "identity") return { url: await identity(signal) };
+  if (cmd.action === "connections") {
+    if (!location.pathname.startsWith("/mynetwork/invite-connect/connections")) throw new Error("LinkedIn did not open your connections list.");
+    await wait(() => recentConnections(document).length || /connected on|no connections/i.test(textOf(document.querySelector("main"))), signal, 12000).catch(() => undefined);
+    // The list loads more as it scrolls; three short scrolls cover the last few days of new connections.
+    const main = document.querySelector<HTMLElement>("main");
+    for (let i = 0; i < 3; i++) { window.scrollTo({ top: document.documentElement.scrollHeight }); main?.scrollTo({ top: main.scrollHeight }); main?.lastElementChild?.scrollIntoView({ block: "end" }); await sleep(900, signal); }
+    return recentConnections(document);
+  }
   if (cmd.action === "search") {
     if (!location.pathname.startsWith("/search/results/people")) throw new Error("LinkedIn did not open people search.");
     return wait(() => {

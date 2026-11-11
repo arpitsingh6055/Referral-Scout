@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { legacyNoteTemplate, DAY, MAX_REVIEW_QUEUE, SHORTLIST_BACKLOG, defaultSettings, emptyNetwork, networkKey, networkProfileSchema, nextContact, renderNote, introduction, withinActiveHours, type NetworkState, type NetworkContact } from '../shared/network';
+import { legacyNoteTemplate, ACCEPTANCE_SWEEP, directMessage, DAY, MAX_REVIEW_QUEUE, SHORTLIST_BACKLOG, defaultSettings, emptyNetwork, networkKey, networkProfileSchema, nextContact, renderNote, introduction, withinActiveHours, type NetworkState, type NetworkContact } from '../shared/network';
 import { classify, normalizeCompany, planSearch, companyOf } from '../shared/targeting';
 import { companyFromCurrent } from '../parsers/network';
 import { read, mutate } from '../storage/state';
@@ -76,8 +76,8 @@ async function discover(s:NetworkState,signal:AbortSignal):Promise<void>{
   if(!plan){await updateNetwork(c=>({...c,searchCursor:0,nextDiscoveryAt:Date.now()+6*3600000,status:'Every search for your current targets has been checked. Add roles or change the location to find more people; searching starts over in 6 hours.'}));return;}
   const url=new URL('https://www.linkedin.com/search/results/people/');
   url.searchParams.set('keywords',plan.combo.keywords);url.searchParams.set('page',String(plan.page));
-  // Only 2nd and 3rd+ degree people can be invited; 1st-degree people are already connected.
-  url.searchParams.set('network',JSON.stringify(['S','O']));url.searchParams.set('origin','FACETED_SEARCH');
+  // LinkedIn's own degree filter: 2nd and 3rd+ can be invited; 1st-degree people are already connections and can be messaged straight away.
+  url.searchParams.set('network',JSON.stringify(['F','S','O']));url.searchParams.set('origin','FACETED_SEARCH');
   const label=`${KIND_LABEL[plan.combo.kind]} for ${plan.combo.role} (page ${plan.page})`;
   await note(s,`Searching LinkedIn for ${label}…`);
   const tab=await networkTab(url.href,signal);
@@ -90,15 +90,16 @@ async function discover(s:NetworkState,signal:AbortSignal):Promise<void>{
     for(const c of current.contacts){const n=normalizeCompany(c.companyName??companyOf(c.headline)??'');if(n)perCompany.set(n,(perCompany.get(n)??0)+1);}
     for(const person of people){
       if(person.url===current.profile?.url||current.contacts.some(c=>c.url===person.url))continue;
-      const verdict=classify({headline:person.headline,location:person.location,...(person.degree?{degree:person.degree}:{})},{roles:current.settings?.roles??[current.target],location:current.location});
+      const direct=person.degree===1;
+      const verdict=classify({headline:person.headline,location:person.location,...(person.degree&&!direct?{degree:person.degree}:{})},{roles:current.settings?.roles??[current.target],location:current.location});
       if(!verdict){rejected++;continue;}
       // LinkedIn's own "Current: Recruiter at X" line is more reliable than guessing the employer from the headline.
       const company=companyFromCurrent(person.current)??verdict.company;const key=normalizeCompany(company??'');
       if(key&&(perCompany.get(key)??0)>=PER_COMPANY){rejected++;continue;}
       if(!permittedCompany(company??person.headline,current)){rejected++;continue;}
       if(key)perCompany.set(key,(perCompany.get(key)??0)+1);
-      current.contacts.push({...person,reason:verdict.reason,score:verdict.score,category:verdict.category,
-        state:'shortlisted',addedAt:Date.now(),requestedAt:0,checkedAt:0,messagedAt:0,message:'',...(company?{companyName:company}:{})});added++;
+      current.contacts.push({...person,reason:direct?`${verdict.reason}. Already your connection, so a message can go straight to them.`:verdict.reason,score:verdict.score+(direct?15:0),category:verdict.category,
+        ...(direct?{direct:true}:{}),state:direct?'connected':'shortlisted',addedAt:Date.now(),requestedAt:0,checkedAt:0,messagedAt:0,message:'',...(company?{companyName:company}:{})});added++;
     }
     current.searchCursor++;
     current.nextDiscoveryAt=Date.now()+(people.length?20000:45000)+Math.floor(Math.random()*20000);
@@ -107,6 +108,22 @@ async function discover(s:NetworkState,signal:AbortSignal):Promise<void>{
   });
 }
 const PENDING_EXPIRY=30*DAY,OWNER_RECHECK=6*3600000;
+async function sweepAcceptances(s:NetworkState,signal:AbortSignal):Promise<void>{
+  await note(s,'Checking your connections list for people who accepted…');
+  const tab=await networkTab('https://www.linkedin.com/mynetwork/invite-connect/connections/',signal);
+  const connected=new Set(z.array(z.string()).parse(await networkCommand(tab,{action:'connections'},signal)));
+  await currentRun(s.revision,signal);
+  await updateNetwork(current=>{
+    const names:string[]=[],now=Date.now();
+    for(const p of current.contacts)if(p.state==='pending'&&p.requestedAt>0&&connected.has(p.url)){
+      p.state='connected';p.acceptedAt=now;p.checkedAt=now;p.reason='Accepted your invitation. A follow-up message is next.';names.push(p.name);
+    }
+    for(const item of current.saved??[])if(item.type==='person'&&item.relation==='pending'&&connected.has(item.url)){item.relation='connected';item.acceptedAt=now;names.push(item.title);}
+    current.nextSweepAt=now+ACCEPTANCE_SWEEP+Math.floor(Math.random()*600000);
+    current.status=names.length?`${names.slice(0,3).join(', ')}${names.length>3?` and ${names.length-3} more`:''} accepted your invitation.`:'No new acceptances yet. Checking again in about 2 hours.';
+    return current;
+  });
+}
 /** Checks are spaced out too, so a laptop waking up never fires a burst of page loads. */
 async function pace(minMs:number,maxMs:number):Promise<void>{await updateNetwork(c=>({...c,nextActionAt:Math.max(c.nextActionAt,Date.now()+minMs+Math.floor(Math.random()*(maxMs-minMs)))}));}
 /** Account-level signals pause everything. Anything else is about one contact. */
@@ -124,22 +141,24 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
   if(relation.state==='pending'){
     if(!p.requestedAt&&p.attemptedAt){
       // The earlier send did go through after all.
-      p.requestedAt=p.attemptedAt;delete p.attemptedAt;delete p.approvalKind;delete p.retryAfter;p.failures=0;p.state='pending';p.nextCheckAt=now+DAY;p.reason='Invitation sent (confirmed on a second look). The first acceptance check is in 24 hours.';
+      p.requestedAt=p.attemptedAt;delete p.attemptedAt;delete p.approvalKind;delete p.retryAfter;p.failures=0;p.state='pending';p.nextCheckAt=now+3*DAY;p.reason='Invitation sent (confirmed on a second look). The first acceptance check is in 24 hours.';
       await updateNetwork(current=>{const action=current.actions.find(a=>a.url===p.url&&a.kind==='connect'&&a.confirmed===false);if(action)action.confirmed=true;current.status=`Invitation to ${p.name} confirmed.`;return current;});
     }
     else if(!p.requestedAt){p.state='skipped';p.reason='A request existed before this campaign; it was not adopted as an extension send.';}
     else if(now-p.requestedAt>PENDING_EXPIRY){p.state='skipped';p.reason='No response after 30 days. LinkedIn may still show it as pending: consider withdrawing it under My Network, Manage, Sent, which also frees your pending count.';}
-    else{p.state='pending';p.nextCheckAt=now+DAY;p.reason='Still pending. Next acceptance check scheduled for 24 hours later.';}
+    else{p.state='pending';p.nextCheckAt=now+3*DAY;p.reason='Invitation sent. Your connections list is checked every 2 hours for an acceptance.';}
     await saveContact(p);await pace(40000,90000);return;
   }
   if(p.attemptedAt&&relation.state==='not-connected'){delete p.attemptedAt;await updateNetwork(current=>{current.actions=current.actions.filter(a=>!(a.url===p.url&&a.kind==='connect'&&a.confirmed===false));return current;});} // it was not sent; send it now
-  if(relation.state==='connected'&&!p.requestedAt){p.state='skipped';p.reason='Already connected before this campaign. No artificial acceptance event was created.';await saveContact(p);return;}
+  if(relation.state!=='connected'&&p.direct&&!p.requestedAt){delete p.direct;p.state='shortlisted';} // not a connection after all: invite them like anyone else
+  if(relation.state==='connected'&&!p.requestedAt&&!p.direct){p.state='skipped';p.reason='Already connected before this campaign. No artificial acceptance event was created.';await saveContact(p);return;}
   if(p.requestedAt&&relation.state!=='connected'){
     p.state=relation.state==='unknown'||relation.state==='not-connected'?'attention':'pending';
     p.reason='A known invitation is not visibly pending or accepted. Check it manually; do not invite again.';
     p.nextCheckAt=now+DAY;await saveContact(p);return;
   }
-  if(p.requestedAt&&relation.state==='connected'&&!p.acceptedAt){
+  if(p.requestedAt&&relation.state==='connected'&&p.state==='connected'&&p.acceptedAt){/* already recorded by the connections check */}
+  else if(p.requestedAt&&relation.state==='connected'&&!p.acceptedAt){
     p.acceptedAt=now;p.state='connected';p.reason='First-degree connection confirmed after this campaign’s tracked invitation.';
     await saveContact(p);
   }
@@ -177,10 +196,10 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
   if(kind==='connect'&&settings.noteMode!=='none'&&!p.invitationNote)
     p.invitationNote=await draft(()=>prepareInvitation(fresh,p,200,signal),()=>renderNote(settings,fresh.target,p,me));
   if(kind==='message'&&!p.message)
-    p.message=await draft(()=>prepareIntroduction(fresh,p,signal),()=>introduction(fresh,p,me));
+    p.message=p.direct?directMessage(fresh,p,me):await draft(()=>prepareIntroduction(fresh,p,signal),()=>introduction(fresh,p,me));
   const review=kind==='connect'?settings.outreachMode==='review':settings.followupMode==='review';
   if(review&&!approved){
-    p.state='review';p.approvalKind=kind;p.reason=`${kind==='connect'?'Invitation note':'Post-acceptance thank-you'} drafted. Confirm the exact recipient and approve before sending.`;
+    p.state='review';p.approvalKind=kind;p.reason=kind==='connect'?'Invitation ready. Approve to send.':p.direct?'Already your connection. Message ready; approve to send.':'They accepted. Follow-up message ready; approve to send.';
     await saveContact(p);return;
   }
   if(approved&&p.approvalKind!==kind)throw new Error('Approval does not match the intended action.');
@@ -197,7 +216,7 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
     const result=z.object({state:z.enum(['pending','connected','messaged']),noteSent:z.boolean().optional()}).parse(await networkCommand(tab,{action:kind,url:p.url,intentId:intent.id,body:intent.body,noteMode:settings.noteMode},signal));
     if(kind==='connect'&&result.state!=='pending')throw new Error('The invitation did not produce a confirmed Pending indicator.');
     if(kind==='message'&&result.state!=='messaged')throw new Error('The sent message bubble could not be confirmed.');
-    if(kind==='connect'){p.requestedAt=Date.now();p.nextCheckAt=p.requestedAt+DAY;p.state='pending';p.reason=`Invitation confirmed Pending${result.noteSent===false&&settings.noteMode!=='none'?' (sent without a note: LinkedIn did not offer one)':''}. The first acceptance check is in 24 hours.`;}
+    if(kind==='connect'){p.requestedAt=Date.now();p.nextCheckAt=p.requestedAt+3*DAY;p.state='pending';p.reason=`Invitation confirmed Pending${result.noteSent===false&&settings.noteMode!=='none'?' (sent without a note: LinkedIn did not offer one)':''}. The first acceptance check is in 24 hours.`;}
     else{p.messagedAt=Date.now();p.state='messaged';p.reason='New follow-up bubble verified in the correct LinkedIn conversation.';}
     await updateNetwork(current=>{const action=current.actions.find(a=>a.at===intent.at&&a.url===p.url&&a.kind===kind);if(action)action.confirmed=true;return current;});
   }catch(error){
@@ -280,6 +299,9 @@ async function run():Promise<void>{
       if(url!==s.profile.url)throw new Error('A different LinkedIn account is signed in. Sign in as the account you set up, or clear saved data and read the new profile.');
       await updateNetwork(c=>({...c,ownerVerifiedAt:Date.now()}));return;
     }
+    // Every 2 hours, one look at the connections list shows everyone who accepted, however many invitations are out.
+    const waiting=s.contacts.some(p=>p.state==='pending'&&p.requestedAt>0)||(s.saved??[]).some(i=>i.type==='person'&&i.relation==='pending');
+    if(waiting&&Date.now()>=(s.nextSweepAt??0)){worked=true;await sweepAcceptances(s,abort.signal);return;}
     const person=nextContact(s);
     if(person){
       if(Date.now()<s.nextActionAt)return;

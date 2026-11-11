@@ -384,7 +384,7 @@ function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
   const badges = node('div', '', 'badges');
   if (p.category && categoryLabels[p.category]) badges.append(node('span', categoryLabels[p.category]!, `type ${p.category}`));
   badges.append(node('span', p.state === 'review' && p.approved ? 'Sending soon' : stateLabels[p.state], `badge ${p.state === 'review' && p.approved ? 'connected' : p.state}`)); card.append(badges);
-  const line = p.state === 'pending' ? `Invited ${when(p.requestedAt)} · next check ${when(p.nextCheckAt ?? ((p.checkedAt || p.requestedAt) + DAY))}`
+  const line = p.state === 'pending' ? `Invited ${when(p.requestedAt)} · acceptance is checked every 2 hours`
     : p.acceptedAt ? `Accepted ${when(p.acceptedAt)}${p.messagedAt ? ` · introduced ${when(p.messagedAt)}` : ''}` : p.reason;
   card.append(node('p', line, 'reason'));
   let saveEdit: (() => Promise<unknown>) | null = null; // an unsaved rewording is saved before Approve sends anything
@@ -401,7 +401,8 @@ function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
     edit.addEventListener('input', () => { dirty = true; count(); }); count();
     saveEdit = async () => { if (edit.value.trim() !== text.trim()) await request({ kind: 'network', action: 'editDraft', url: p.url, text: edit.value }); };
     const tools = node('div', '', 'draft-tools');
-    tools.append(counter, save,
+    tools.append(counter, save);
+    if (!p.direct) tools.append(
       button('Rewrite with ChatGPT', () => withProgress(`ChatGPT is rewriting the note for ${p.name}`, () => act({ kind: 'network', action: 'prepare', url: p.url }, `ChatGPT rewrote the note for ${p.name}. Read it before approving.`)), 'btn sm ghost'),
       button('Use my template', () => act({ kind: 'network', action: 'templateDraft', url: p.url }, `Back to your template for ${p.name}.`), 'btn sm ghost'));
     d.append(edit, tools); card.append(d);

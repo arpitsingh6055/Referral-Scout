@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { rememberMessage, type SavedItem, networkRequest, networkProfileSchema, profileUrl, networkKey, suggestedTarget, defaultSettings, type NetworkState, DAY, introduction, renderNote } from '../shared/network';
+import { rememberMessage, type SavedItem, networkRequest, networkProfileSchema, profileUrl, networkKey, suggestedTarget, defaultSettings, type NetworkState, DAY, introduction, renderNote , directMessage } from '../shared/network';
 import { trustedExtension, trustedSite } from '../validators/security';
 import { getNetwork, updateNetwork, pauseNetwork, networkTick } from './network';
 import { networkCommand, networkTab } from './network-browser';
@@ -149,6 +149,7 @@ export function registerNetworkMessages():void{
         if(req.action==='prepare'){
           const person=current.contacts.find(p=>p.url===req.url);
           if(!person||!current.profile)throw new Error('Read your LinkedIn profile first.');
+          if(person.direct)throw new Error('ChatGPT rewriting is for invitations and follow-ups. Edit this message directly instead.');
           const message=person.acceptedAt?await prepareIntroduction(current,person,signal):await prepareInvitation(current,person,200,signal);
           await updateNetwork(s=>{const p=s.contacts.find(x=>x.url===person.url);if(p)if(p.acceptedAt)p.message=message;else p.invitationNote=message;return {...s,status:`Draft prepared for ${person.name}. No LinkedIn message was sent.`};});
         }
@@ -194,8 +195,8 @@ export function registerNetworkMessages():void{
         if(req.action==='editDraft'||req.action==='templateDraft')await updateNetwork(s=>{
           const p=s.contacts.find(x=>x.url===req.url);
           if(!p||!s.profile||['pending','messaged','requesting','messaging'].includes(p.state))throw new Error('This message can no longer be changed.');
-          const forMessage=!!p.acceptedAt;
-          const text=req.action==='editDraft'?req.text:forMessage?introduction(s,p,s.profile.name):renderNote(s.settings??defaultSettings,s.target,p,s.profile.name);
+          const forMessage=!!p.acceptedAt||!!p.direct;
+          const text=req.action==='editDraft'?req.text:p.direct?directMessage(s,p,s.profile.name):forMessage?introduction(s,p,s.profile.name):renderNote(s.settings??defaultSettings,s.target,p,s.profile.name);
           if(!forMessage&&text.length>200)throw new Error(`LinkedIn allows 200 characters in an invitation note; this is ${text.length}.`);
           if(forMessage)p.message=text;else p.invitationNote=text;
           return s;

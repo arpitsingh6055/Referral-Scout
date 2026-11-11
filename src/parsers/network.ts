@@ -104,6 +104,12 @@ export function networkPeople(doc: ParentNode): NetworkProfile[] {
     seen.add(url); return [parsed.data];
   });
 }
+/** Profile addresses on "My Network > Connections", newest first. One page shows everyone who accepted recently. */
+export function recentConnections(doc: ParentNode): string[] {
+  const main = mainOf(doc) ?? doc, found = new Set<string>();
+  for (const a of main.querySelectorAll<HTMLAnchorElement>('a[href*="/in/"]')) { const url = profileUrl(a.getAttribute("href") ?? ""); if (url) found.add(url); }
+  return [...found];
+}
 /** "Recruiter at LotusFlare" -> "LotusFlare". */
 export function companyFromCurrent(current: string | undefined): string | undefined {
   const match = /\bat\s+(.+?)(?:\s+-\s+.*)?$/i.exec(current ?? "");
