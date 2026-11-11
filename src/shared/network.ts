@@ -61,7 +61,7 @@ export const outreachSettingsSchema=z.object({
   outreachMode:z.enum(['automatic','review']),
   noteMode:z.enum(['require','preferred','none']),
   followupMode:z.enum(['automatic','review']),
-  paceMinutes:z.number().min(0.25).max(1440), // minutes between sends; fractions allowed (0.5 = 30 seconds)
+  paceMinutes:z.number().min(0.08).max(1440), // minutes between sends; fractions allowed (0.5 = 30 seconds)
   dailyInvites:z.number().int().positive().nullable(),dailyMessages:z.number().int().positive().nullable(),maxPending:z.number().int().positive().nullable(),
   companyAllowlist:z.array(z.string()).default([]),companyExclusions:z.array(z.string()).default([]),
   workMode:z.enum(['any','remote','hybrid','onsite']).default('any'),
