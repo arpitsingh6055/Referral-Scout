@@ -21,6 +21,7 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
   - **My connections here** only lists your 1st-degree connections at that company, strongest first, and contacts nobody until you press Ask for a referral.
 - New **Referrals** tab: one card per job with its ranked people, kept separate from general outreach. They also appear in People once queued.
 - A referral search runs straight away, even while outreach is paused; sending still follows your approval and limits.
+- Checked against two saved LinkedIn pages (a Barclays job and its suggested people): 9 of LinkedIn's 10 suggestions worked somewhere else, which the company check now filters out. The result rows match the people-search reader.
 - Not yet run on live LinkedIn: the company keyword search and the job-page buttons.
 
 ## 0.15.1

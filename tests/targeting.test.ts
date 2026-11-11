@@ -227,3 +227,23 @@ describe('referrals for one job', () => {
     expect(referralAsk(job, { name: 'Dev K', category: 'recruiter' }, 'Arpit', true)).toMatch(/^Hi Dev, thanks for connecting!.*best way to be considered/);
   });
 });
+
+describe('referral ranking against real LinkedIn result lines (saved search page, November 2026)', () => {
+  const at = (company: string) => ({ url: 'https://www.linkedin.com/jobs/view/1/', title: 'Software engineer', company });
+  it.each([
+    ['Software Engineer at Barclays', 'Barclays', 1, 'employee'],
+    ['Senior Software Engineer @ Visa', 'Visa', 1, 'employee'],
+    ['SDE II @Amazon', 'Amazon', 1, 'employee'],
+    ['Senior Software Engineer at HSBC Technology India', 'HSBC', 1, 'employee'],
+    ['Senior Software Engineer @ Nomura | Backend Development, Cloud Technologies', 'Nomura', 1, 'employee'],
+    ['HR at BNY', 'BNY', 2, 'recruiter'],
+    ['Specialist, People & Talent at Fresh Gravity', 'Fresh Gravity', 2, 'recruiter'],
+    ['Executive Director at UBS', 'UBS', 2, 'senior'],
+  ])('%s counts as working at %s', (headline, company, degree, kind) => {
+    expect(rankReferral({ headline, degree }, at(company))).toMatchObject({ kind });
+  });
+  it('LinkedIn’s own suggestions for a Barclays job were mostly people elsewhere; only the Barclays person is kept', () => {
+    const suggested = ['Senior Software Engineer @ Visa', 'Software Engineer at Barclays', 'Senior Software Engineer at HSBC Technology India', 'Founder | CTO', 'SDE II @Amazon', 'HR at BNY', 'Executive Director at UBS', 'Assistant Manager| MBA (BA)-SCMHRD | Mentor | Ex Aditya Birla Capital'];
+    expect(suggested.filter(headline => rankReferral({ headline, degree: 1 }, at('Barclays')))).toEqual(['Software Engineer at Barclays']);
+  });
+});

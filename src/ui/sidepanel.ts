@@ -108,7 +108,7 @@ const bubble = (label: string, text: string, over = false, counter = ''): HTMLEl
 };
 
 const stateLabels: Record<ContactState, string> = { found: 'Not contacted', shortlisted: 'Queued', requesting: 'Inviting', pending: 'Invited', connected: 'Accepted', messaging: 'Sending', messaged: 'Introduced', attention: 'Needs you', skipped: 'Skipped', review: 'Needs approval' };
-const categoryLabels: Record<string, string> = { recruiter: 'Recruiter', leader: 'Team leader', founder: 'Founder', employee: 'Works there' };
+const categoryLabels: Record<string, string> = { recruiter: 'Recruiter', leader: 'Team leader', founder: 'Founder', senior: 'Senior', employee: 'Works there' };
 
 /* ---------- derived status ---------- */
 function runStatus(s: NetworkState): { tone: 'ok' | 'warn' | 'idle'; pill: string; title: string; sub: string } {

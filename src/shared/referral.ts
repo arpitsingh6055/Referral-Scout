@@ -39,10 +39,14 @@ export function referralPlan(job: Pick<ReferralJob, 'company' | 'title' | 'mode'
   ];
 }
 
-export type ReferralKind = 'recruiter' | 'leader' | 'founder' | 'employee';
+export type ReferralKind = 'recruiter' | 'leader' | 'founder' | 'senior' | 'employee';
 export interface ReferralVerdict { kind: ReferralKind; score: number; reason: string }
-const WEIGHT: Record<ReferralKind, number> = { recruiter: 300, leader: 260, founder: 220, employee: 150 };
-const WHY: Record<ReferralKind, string> = { recruiter: 'Recruiter', leader: 'On the hiring team', founder: 'Founder', employee: 'Works there' };
+const WEIGHT: Record<ReferralKind, number> = { recruiter: 300, leader: 260, founder: 220, senior: 200, employee: 150 };
+const WHY: Record<ReferralKind, string> = { recruiter: 'Recruiter', leader: 'On the hiring team', founder: 'Founder', senior: 'Senior person', employee: 'Works there' };
+// For a referral the test is wider than for general outreach: anyone in hiring or people teams, and anyone senior
+// at the company, can put a name forward even when their own function differs from the job's.
+const HIRING = /recruit|talent|\bhr\b|human resources|people\s*(?:&|and|ops|operations|partner|team|\bculture)|hiring|staffing/i;
+const SENIOR = /\b(?:head|director|vp|vice president|president|chief|c[tfoepm]o|manager|lead|principal|partner|avp|svp|evp)\b/i;
 
 /**
  * Whether this person can help with a referral at this company, and how much.
@@ -53,7 +57,8 @@ export function rankReferral(person: { headline: string; current?: string | unde
   const evidence = `${person.current ?? ''} | ${person.headline}`;
   if (!companyMatches(evidence, job.company)) return null;
   if (/\b(former|ex[- ]|previously|retired|student|intern\b|aspiring|open to work|seeking)/i.test(person.headline)) return null;
-  const kind: ReferralKind = classify({ headline: person.headline }, { roles: [job.title] })?.category ?? 'employee';
+  const kind: ReferralKind = classify({ headline: person.headline }, { roles: [job.title] })?.category
+    ?? (HIRING.test(person.headline) ? 'recruiter' : SENIOR.test(person.headline) ? 'senior' : 'employee');
   const degree = person.degree ?? 3;
   if (kind === 'employee' && degree !== 1) return null;
   const score = WEIGHT[kind] + (degree === 1 ? 60 : degree === 2 ? 20 : 0);
