@@ -175,12 +175,12 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
   await wait(() => profileHeader(document), signal, 15000);
   topCard(cmd.url);
   if (cmd.action === "profile") {
-    // Profile sections load as you scroll. Scroll to the end until the page stops growing, expanding "see more" on the way.
+    // Profile sections load as you scroll. Scroll to the end until the page stops growing. Nothing is clicked:
+    // on the live site a "…more" control inside Featured or Activity is a link that leaves the profile.
     const main = document.querySelector<HTMLElement>('main, [role="main"]');
     let previous = -1, stable = 0;
     for (let i = 0; main && i < 14 && stable < 2; i++) {
       guard(signal); topCard(cmd.url);
-      for (const more of [...main.querySelectorAll<HTMLElement>('button, [role="button"]')].filter(e => visible(e) && /^(?:…\s*)?(?:see more|show more|more)$/i.test(label(e)) && !e.closest('aside')).slice(0, 20)) more.click();
       // On the live site the scrolling element is <main>, not the window; do both so either layout works.
       window.scrollTo({ top: document.documentElement.scrollHeight }); main.scrollTo({ top: main.scrollHeight });
       main.lastElementChild?.scrollIntoView({ block: "end" });

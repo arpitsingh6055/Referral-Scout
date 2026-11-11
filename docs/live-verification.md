@@ -23,3 +23,17 @@ LinkedIn now serves generated class names (for example `i87k8o`). No `artdeco`, 
 | Jobs search | Removed | The jobs page has no stable hooks and every v0.8.0 selector returned zero cards. People search already gives the employer |
 
 No invitation or message has been sent by the extension or during testing.
+
+## 11 November 2026, dry run of the real page code
+
+The extension's own page code was run on live LinkedIn with authorization forced to "denied", so nothing could be sent.
+
+| Step | Result |
+|---|---|
+| `identity` on `/in/me/` | Returned the owner's profile address |
+| `search` with a boolean query, 2nd/3rd filter and `page=2` | 10 people, all with degree and location, 8 with a current employer; LinkedIn honoured the page number |
+| `relationship` on a 1st-degree profile | `connected` |
+| `message` on a 1st-degree profile | Opened the window, matched the recipient, found no history, typed and verified the text, found Send enabled, asked for authorization, was refused and stopped. The draft was then deleted |
+| `profile` | **Bug found and fixed:** clicking "see more" controls followed a link out of the profile. The reader no longer clicks anything |
+
+Still not run live: the invitation dialog and its note field, the Pending marker, a real send, and anything on ChatGPT while signed in.
