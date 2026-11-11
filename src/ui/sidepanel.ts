@@ -122,7 +122,7 @@ function usage(s: NetworkState): string[] {
   const settings = s.settings ?? defaultSettings, now = Date.now();
   const sent = (span: number) => s.actions.filter(a => a.kind === 'connect' && a.confirmed !== false && now - a.at < span).length;
   const chips = [`Today ${sent(DAY)}/${settings.dailyInvites ?? '∞'} invitations`, `This week ${sent(7 * DAY)}/${settings.weeklyInvites ?? '∞'}`];
-  if (s.active && s.nextActionAt > now) chips.push(`Next action in ${Math.max(1, Math.round((s.nextActionAt - now) / 60000))} min`);
+  if (s.active && s.nextActionAt > now) { const wait = Math.round((s.nextActionAt - now) / 1000); chips.push(wait < 90 ? `Next send in ${Math.max(1, wait)} s` : `Next send in ${Math.round(wait / 60)} min`); }
   return chips;
 }
 
@@ -238,7 +238,7 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
   const noteMode = choice('Connection note', settings.noteMode, [['preferred', 'Add a note when LinkedIn allows'], ['require', 'Always add a note (skip if not possible)'], ['none', 'Never add a note']]);
   const hours = choice('When to act', settings.activeHours ? 'on' : 'off', [['on', `Only ${pad(settings.activeHours?.from ?? 8)}:00 to ${pad(settings.activeHours?.to ?? 22)}:00 (recommended)`], ['off', 'Any time of day']]);
   const num = (label: string, value: number | null) => field({ label, value: value?.toString() ?? '', type: 'number', min: '1' });
-  const pace = field({ label: 'Minutes between actions', value: String(settings.paceMinutes), type: 'number', min: '1', max: '1440' });
+  const pace = field({ label: 'Seconds between sends', value: String(Math.round(settings.paceMinutes * 60)), type: 'number', min: '15', max: '86400' });
   const invites = num('Invitations per day', settings.dailyInvites), weekly = num('Invitations per week', settings.weeklyInvites), messages = num('Follow-ups per day', settings.dailyMessages), pendingCap = num('Max pending invitations', settings.maxPending);
   const allow = field({ label: 'Prefer these companies', value: settings.companyAllowlist.join(', '), help: 'Comma separated. Leave empty for everyone.' });
   const exclude = field({ label: 'Never contact these companies', value: settings.companyExclusions.join(', '), help: 'Comma separated.' });
@@ -255,7 +255,7 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
     const next: OutreachSettings = { ...settings, roles: nextRoles, aiMode: aiMode.input.value as OutreachSettings['aiMode'], noteTemplate: noteTemplate.input.value.trim() || settings.noteTemplate,
       weeklyInvites: optional(weekly.input.value), activeHours: hours.input.value === 'on' ? (settings.activeHours ?? { from: 8, to: 22 }) : null,
       outreachMode: outreachMode.input.value as OutreachSettings['outreachMode'], noteMode: noteMode.input.value as OutreachSettings['noteMode'],
-      followupMode: followupMode.input.value as OutreachSettings['followupMode'], paceMinutes: Number(pace.input.value), dailyInvites: optional(invites.input.value), dailyMessages: optional(messages.input.value),
+      followupMode: followupMode.input.value as OutreachSettings['followupMode'], paceMinutes: Number(pace.input.value) / 60, dailyInvites: optional(invites.input.value), dailyMessages: optional(messages.input.value),
       maxPending: optional(pendingCap.input.value), companyAllowlist: csv(allow.input.value), companyExclusions: csv(exclude.input.value) };
     await request({ kind: 'network', action: 'save', target: nextRoles[0]!, location: location.input.value, template: template.input.value, settings: next });
     dirty = false;

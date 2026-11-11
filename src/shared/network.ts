@@ -31,7 +31,7 @@ export const outreachSettingsSchema=z.object({
   outreachMode:z.enum(['automatic','review']),
   noteMode:z.enum(['require','preferred','none']),
   followupMode:z.enum(['automatic','review']),
-  paceMinutes:z.number().int().min(1).max(1440),
+  paceMinutes:z.number().min(0.25).max(1440), // minutes between sends; fractions allowed (0.5 = 30 seconds)
   dailyInvites:z.number().int().positive().nullable(),dailyMessages:z.number().int().positive().nullable(),maxPending:z.number().int().positive().nullable(),
   companyAllowlist:z.array(z.string()).default([]),companyExclusions:z.array(z.string()).default([]),
   workMode:z.enum(['any','remote','hybrid','onsite']).default('any'),
@@ -44,14 +44,14 @@ export const outreachSettingsSchema=z.object({
 export type OutreachSettings=z.infer<typeof outreachSettingsSchema>;
 export const defaultSettings:OutreachSettings={
   roles:['Product Management internship'],outreachMode:'review',noteMode:'preferred',followupMode:'review',
-  paceMinutes:3,dailyInvites:15,dailyMessages:20,maxPending:100,companyAllowlist:[],companyExclusions:[],workMode:'any',employmentType:'any',
+  paceMinutes:0.5,dailyInvites:15,dailyMessages:20,maxPending:100,companyAllowlist:[],companyExclusions:[],workMode:'any',employmentType:'any',
   aiMode:'chatgpt',noteTemplate:defaultNoteTemplate,weeklyInvites:80,activeHours:{from:8,to:22}
 };
 export interface NetworkState {
   profile:NetworkProfile|null;target:string;location:string;template:string;
   cv:{name:string;type:string;text:string;textVersion?:number;pages?:number;warnings?:string[];savedAt?:number;characterCount?:number}|null;
   dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
-  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;aiDefaultV2?:boolean;
+  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;aiDefaultV2?:boolean;paceV2?:boolean;
   settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;
   actions:{at:number;kind:'connect'|'message'|'check';url:string;confirmed?:boolean;idempotencyKey?:string}[];
   intent:{id:string;tabId:number;url:string;kind:'connect'|'message';at:number;body:string;revision:number;claimed:boolean}|null;
