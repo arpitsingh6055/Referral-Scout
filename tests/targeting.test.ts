@@ -164,7 +164,7 @@ describe('who goes next', () => {
     expect(nextContact(base([person(1)], sent.slice(0, 10)), now)?.name).toBe('P1');
   });
   it('ships safe defaults that protect a public user’s LinkedIn account', () => {
-    expect(defaultSettings).toMatchObject({ dailyInvites: 15, weeklyInvites: 80, maxPending: 100, aiMode: 'template', outreachMode: 'review', followupMode: 'review', activeHours: { from: 8, to: 22 } });
+    expect(defaultSettings).toMatchObject({ dailyInvites: 15, weeklyInvites: 80, maxPending: 100, aiMode: 'chatgpt', outreachMode: 'review', followupMode: 'review', activeHours: { from: 8, to: 22 } });
     expect(defaultSettings.paceMinutes).toBeGreaterThanOrEqual(3);
   });
 });

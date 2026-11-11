@@ -15,6 +15,7 @@ export const textOf = (node: Element | null | undefined): string =>
 const mainOf = (doc: ParentNode): Element | null => doc.querySelector('main, [role="main"]');
 const DEGREE = /^[·•]?\s*(1st|2nd|3rd)\+?$/i;
 const SEPARATOR = /^[·•|]$/;
+const PRONOUNS = /^\(?(?:he|she|they|ze|xe)\s*\/\s*[a-z/ ]+\)?$/i;
 
 /** The card at the top of a profile: name, headline, location and the Connect / Message / More controls. */
 export function profileHeader(doc: ParentNode): HTMLElement | null {
@@ -40,12 +41,13 @@ export function ownProfileEditLink(doc: ParentNode, expected: string, usable: (e
 export interface TopCardFacts { name: string; headline: string; location: string; degree?: number; company?: string }
 
 /** Reads the top card as ordered lines: [degree] headline, location, "Contact info", company, school, ... */
-export function topCardFacts(top: ParentNode): TopCardFacts {
+/** `usable` must be a visibility test on the live page: LinkedIn keeps hidden lines in the card, such as a "· 1st" that only shows once you are connected. */
+export function topCardFacts(top: ParentNode, usable: (e: Element) => boolean = () => true): TopCardFacts {
   const name = textOf(top.querySelector("h1, h2"));
-  const lines = [...top.querySelectorAll("p")].map(textOf).filter(Boolean);
+  const lines = [...top.querySelectorAll("p")].filter(usable).map(textOf).filter(Boolean);
   const degreeLine = lines.find(l => DEGREE.test(l));
   const degree = degreeLine ? Number(DEGREE.exec(degreeLine)![1]![0]) : undefined;
-  const body = lines.filter(l => !DEGREE.test(l) && !SEPARATOR.test(l) && l !== name && !/^\((?:he|she|they)\b[^)]*\)$/i.test(l));
+  const body = lines.filter(l => !DEGREE.test(l) && !SEPARATOR.test(l) && l !== name && !PRONOUNS.test(l));
   const contact = body.findIndex(l => /^contact info$/i.test(l));
   const before = contact >= 0 ? body.slice(0, contact) : body.slice(0, 2);
   const after = contact >= 0 ? body.slice(contact + 1) : [];
@@ -57,12 +59,12 @@ export function topCardFacts(top: ParentNode): TopCardFacts {
 
 const SECTION = /^(about|experience|education|skills|projects|licenses|certifications|volunteering|honors|languages|publications)/i;
 
-export function readNetworkProfile(doc: ParentNode, url: string): NetworkProfile {
+export function readNetworkProfile(doc: ParentNode, url: string, usable: (e: Element) => boolean = () => true): NetworkProfile {
   const canonical = profileUrl(url); if (!canonical) throw new Error("Open a LinkedIn personal profile.");
   const main = mainOf(doc); if (!main) throw new Error("LinkedIn has not loaded the profile yet.");
   const top = profileHeader(doc);
   if (!top) throw new Error("Could not find the top of this profile. LinkedIn may have changed its layout.");
-  const facts = topCardFacts(top);
+  const facts = topCardFacts(top, usable);
   if (!facts.name) throw new Error("Could not read the name on this profile.");
   if (!facts.headline) throw new Error("Could not read the profile headline. Refresh LinkedIn and try again.");
   // Each profile section is the text between one heading and the next.

@@ -65,3 +65,9 @@ it("takes the employer from LinkedIn's Current line", () => {
   expect(companyFromCurrent("Freelance recruiter")).toBeUndefined();
   expect(companyFromCurrent(undefined)).toBeUndefined();
 });
+
+it("ignores LinkedIn's hidden \"1st\" line and a bare pronoun line (the bug that skipped everyone as already connected)", () => {
+  const doc = parse(`<main><div componentkey="xTopcard"><h2>Soundharya Example</h2><p>She/Her</p><p hidden>· 1st</p><p>· 2nd</p><p>Talent Acquisition Specialist</p><p>Bengaluru, Karnataka, India</p><p>·</p><p><a href="/in/s/overlay/contact-info/">Contact info</a></p></div></main>`);
+  const visible = (e: Element) => !e.hasAttribute("hidden");
+  expect(topCardFacts(profileHeader(doc)!, visible)).toMatchObject({ degree: 2, headline: "Talent Acquisition Specialist", location: "Bengaluru, Karnataka, India" });
+});

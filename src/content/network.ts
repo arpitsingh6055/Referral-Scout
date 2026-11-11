@@ -34,10 +34,10 @@ function topCard(expected: string): HTMLElement {
   return top;
 }
 export function relationship(top: ParentNode): "connected" | "pending" | "not-connected" | "unknown" {
-  if (topCardFacts(top).degree === 1) return "connected";
+  // A visible Pending or Connect control is the strongest evidence; the degree line only decides when neither is shown.
   if (control(top, PENDING)) return "pending";
   if (control(top, CONNECT)) return "not-connected";
-  return "unknown";
+  return topCardFacts(top, visible).degree === 1 ? "connected" : "unknown";
 }
 const openMenus = () => queryAll('[role="menu"]').filter(visible);
 /** Some profiles show Follow first and keep Connect under More. Opens that menu and returns it. */
@@ -150,7 +150,7 @@ function selfTest(): { page: string; found?: number; sample?: unknown[]; problem
   if (url) {
     let relation = "unknown", name = "", headline = "";
     try { relation = relationship(topCard(url)); } catch (e) { problems.push(e instanceof Error ? e.message : String(e)); }
-    try { const p = readNetworkProfile(document, url); name = p.name; headline = p.headline; } catch (e) { problems.push(e instanceof Error ? e.message : String(e)); }
+    try { const p = readNetworkProfile(document, url, visible); name = p.name; headline = p.headline; } catch (e) { problems.push(e instanceof Error ? e.message : String(e)); }
     if (relation === "unknown" && !ownProfileEditLink(document, url, visible)) problems.push("No Connect, Pending or 1st-degree marker is on the top card. Connect may be under More, which this check does not open.");
     return { page: "Profile", sample: [{ name, headline: headline.slice(0, 80), relationship: relation }], problems };
   }
@@ -189,7 +189,7 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
       stable = size === previous ? stable + 1 : 0; previous = size;
     }
     window.scrollTo({ top: 0 }); main?.scrollTo({ top: 0 });
-    return wait(() => { try { return readNetworkProfile(document, cmd.url); } catch { return null; } }, signal, 15000)
+    return wait(() => { try { return readNetworkProfile(document, cmd.url, visible); } catch { return null; } }, signal, 15000)
       .catch(error => { if (signal.aborted) throw error; throw new Error("This profile could not be read. Keep the LinkedIn tab open and try again."); });
   }
   if (cmd.action === "relationship") return { state: await inspectRelationship(cmd.url, signal) };

@@ -27,14 +27,32 @@ export async function readyNetworkTab(tabId: number, signal: AbortSignal): Promi
   }
   throw new Error("LinkedIn did not finish loading. Refresh LinkedIn and try again.");
 }
+/**
+ * Pages are opened in one separate "work" window that is never brought to the front, so the
+ * person can keep using their own window and tabs while outreach runs.
+ */
+export async function openWorkTab(url: string): Promise<number> {
+  let windowId = await read<number>("work-window");
+  if (windowId !== undefined) { try { await chrome.windows.get(windowId); } catch { windowId = undefined; } }
+  if (windowId === undefined) {
+    const created = await chrome.windows.create({ url, focused: false, type: "normal", width: 1180, height: 860 });
+    const tabId = created?.tabs?.[0]?.id;
+    if (created?.id === undefined || tabId === undefined) throw new Error("Could not open the Cold Contact work window.");
+    await write("work-window", created.id);
+    return tabId;
+  }
+  const tab = await chrome.tabs.create({ windowId, url, active: true });
+  if (tab.id === undefined) throw new Error("Could not open a tab in the work window.");
+  return tab.id;
+}
+/** Shows a tab inside the work window without focusing that window. */
+export async function showWorkTab(tabId: number): Promise<void> { await chrome.tabs.update(tabId, { active: true }).catch(() => undefined); }
 export async function networkTab(url: string, signal: AbortSignal): Promise<number> {
   signal.throwIfAborted();
   let id = await read<number>("network-tab");
-  if (id !== undefined) { try { await chrome.tabs.get(id); } catch { id = undefined; } }
-  if (id === undefined) {
-    const tab = await chrome.tabs.create({ url, active: true }); id = tab.id;
-    if (id === undefined) throw new Error("Could not open LinkedIn.");
-    await write("network-tab", id);
-  } else { await chrome.tabs.update(id, { url, active: true }); } // visible in its own window, but never pulls that window in front of your work
+  // Only reuse a tab that lives in the work window. A tab left in the person's own window (from an older version) is never taken over.
+  if (id !== undefined) { try { if ((await chrome.tabs.get(id)).windowId !== await read<number>("work-window")) id = undefined; } catch { id = undefined; } }
+  if (id === undefined) { id = await openWorkTab(url); await write("network-tab", id); }
+  else await chrome.tabs.update(id, { url, active: true }); // active inside the work window only; the window itself is never focused
   await readyNetworkTab(id, signal); return id;
 }
