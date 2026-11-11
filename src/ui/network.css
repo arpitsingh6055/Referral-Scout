@@ -238,3 +238,11 @@ textarea.draft:focus{outline:2px solid var(--primary);outline-offset:1px}
 .live-steps .now b{color:var(--primary)}
 .live-expect{font-size:13.5px;color:var(--muted);background:var(--surface-2);border-radius:var(--r-sm);padding:10px 12px;margin-top:8px}
 .live-foot{font-size:13px;color:var(--faint);margin-top:10px}
+
+/* the target, large enough to find at a glance */
+.target{display:flex;align-items:center;gap:12px;margin-top:10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;box-shadow:var(--shadow)}
+.target>div{flex:1;min-width:0;display:flex;flex-direction:column}
+.target-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.target-role{font-size:18px;line-height:1.3;font-weight:700;overflow-wrap:anywhere}
+.target-place{font-size:14.5px;color:var(--muted)}
+.target .btn{flex:none;color:var(--primary);border-color:var(--primary)}

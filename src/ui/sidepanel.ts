@@ -424,10 +424,13 @@ function render(s: NetworkState): void {
   const openPeople = (filter: string): void => { ui.filter = filter; refreshPeople(); setTab('people', true); };
 
   /* ----- home ----- */
-  const hello = node('div', '', 'view-head'), looking = node('p', '', 'view-sub'), change = node('button', 'Change', 'linkish'); change.type = 'button';
+  // What is being searched for is the most important setting, so it is shown large, with its own Edit button.
+  const hello = node('div', '', 'view-head'), target = node('div', '', 'target'), targetText = node('div'), change = node('button', 'Edit', 'btn sm'); change.type = 'button';
   change.addEventListener('click', () => setTab('setup', true));
-  looking.append(node('span', `Looking for ${settings.roles[0] ?? s.target}${settings.roles.length > 1 ? ` +${settings.roles.length - 1} more` : ''}${s.location ? ` · ${s.location}` : ''} `), change);
-  hello.append(node('h1', `Hi ${s.profile.name.split(/\s+/)[0] ?? ''}`, 'view-title'), looking);
+  targetText.append(node('span', 'You are looking for', 'target-label'), node('b', `${settings.roles[0] ?? s.target}${settings.roles.length > 1 ? ` +${settings.roles.length - 1} more` : ''}`, 'target-role'));
+  if (s.location) targetText.append(node('span', `in ${s.location}`, 'target-place'));
+  target.append(targetText, change);
+  hello.append(node('h1', `Hi ${s.profile.name.split(/\s+/)[0] ?? ''}`, 'view-title'), target);
 
   const run = node('section', '', `card run ${status.tone}`), stage = journey(s), stepper = node('ol', '', 'journey');
   ['Find jobs', 'Choose', 'Find people', 'Reach out'].forEach((label, i) => {
