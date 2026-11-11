@@ -114,12 +114,12 @@ export function registerNetworkMessages():void{
           await clearAiJobs();
           await updateNetwork(s=>({...s,cv:{name:req.name,type:req.type,text:req.text,textVersion:2,savedAt:Date.now(),characterCount:req.text.length,...(req.pages?{pages:req.pages}:{})},
             dossier:'',dossierSavedAt:0,contacts:s.contacts.map(p=>{if(p.messagedAt)return p;const {invitationNote:oldNote,...rest}=p;void oldNote;return {...rest,message:''};}),
-            status:`Extracted ${req.text.length.toLocaleString()} readable characters locally from ${req.name}; no binary file retained.`}));
+            status:`CV saved (${req.text.length.toLocaleString()} characters, text only). ChatGPT will use it when you ask it to rewrite a message.`}));
         }
         if(req.action==='deleteCv'){
           if(current.active)throw new Error('Pause outreach before deleting your CV.');
           await clearAiJobs();
-          await updateNetwork(s=>({...s,cv:null,dossier:'',dossierSavedAt:0,status:'Local extracted CV text deleted. Reprocess the owner profile before outreach.'}));
+          await updateNetwork(s=>({...s,cv:null,dossier:'',dossierSavedAt:0,status:'CV text deleted from this device.'}));
         }
         if(req.action==='analyze'){
           if(current.active)throw new Error('Pause outreach before reprocessing the owner dossier.');

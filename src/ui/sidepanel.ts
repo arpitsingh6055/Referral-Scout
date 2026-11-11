@@ -330,8 +330,8 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
 
 /* optional ChatGPT personalisation: CV, dossier and recovery */
 function buildChatGpt(s: NetworkState): HTMLElement {
-  const { box, body } = accordion('chatgpt', 'Personalise with ChatGPT (optional)', s.dossier ? 'dossier ready' : '');
-  body.append(node('p', s.dossier ? 'Your career dossier is saved. Choose "Personalised by ChatGPT" in Pace, limits and safety to use it.' : 'Only needed if you want ChatGPT to write each note. Your templates work without it.', 'card-sub'));
+  const { box, body } = accordion('chatgpt', 'Your CV (optional)', s.cv ? 'added' : '');
+  body.append(node('p', 'Outreach works without a CV. Add one only if you use “Rewrite with ChatGPT”: ChatGPT then knows your background and can mention one relevant thing in the message after someone accepts. There is nothing else to set up.', 'card-sub'));
   const cv = node('input', '', 'input'); cv.type = 'file'; cv.disabled = s.active;
   cv.accept = '.pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain';
   const cvField = node('div', '', 'field'); cvField.append(node('span', s.cv ? `CV: ${s.cv.name} · ${(s.cv.characterCount ?? 0).toLocaleString()} characters` : 'Your CV (PDF, DOCX or TXT)', 'field-label'), cv, node('p', 'Read inside the extension. Only text is used, no file is attached or uploaded.', 'field-help'));
@@ -342,28 +342,14 @@ function buildChatGpt(s: NetworkState): HTMLElement {
     void file.arrayBuffer().then(async buffer => {
       const extracted = await completeCvText(buffer, file.name), pages = (extracted.match(/^\[Page \d+\]/gm) || []).length;
       const saved = await request({ kind: 'network', action: 'saveCv', name: file.name, type: file.type || 'text/plain', text: extracted, ...(pages ? { pages } : {}) });
-      render(saved); notify('success', `CV saved: ${extracted.length.toLocaleString()} characters. Next: press Process with ChatGPT.`);
+      render(saved); notify('success', `CV saved: ${extracted.length.toLocaleString()} characters. It is used the next time ChatGPT rewrites a message.`);
     }).catch(e => notify('error', `The CV could not be read: ${errorText(e)}`)).finally(() => { busy = false; cv.disabled = false; });
   });
   body.append(cvField);
   if (s.cv) {
     const preview = node('pre', '', 'source-preview');
     body.append(button('View CV text', async () => { preview.textContent = (await request({ kind: 'network', action: 'ownerData' })).cv?.text || 'No CV text available.'; }, 'btn sm'),
-      button('Delete CV', async () => { if (confirm('Delete the CV text and invalidate your dossier?')) await act({ kind: 'network', action: 'deleteCv' }, 'CV deleted. Process with ChatGPT again to refresh your dossier.'); }, 'btn sm ghost danger'), preview);
-  }
-  if (!s.active) body.append(node('div', '', 'gap'), button(s.dossier ? 'Reprocess with ChatGPT' : 'Process with ChatGPT', async () => {
-    await withProgress('Processing with ChatGPT', () => act({ kind: 'network', action: 'analyze' }, 'Dossier validated and saved. You can now choose ChatGPT personalisation.'));
-  }, 'btn primary block'));
-  if (s.dossier) { const d = node('details', '', 'inline'); d.append(node('summary', 'Inspect dossier'), node('pre', s.dossier, 'source-preview')); body.append(d); }
-  if (!s.active) {
-    const rescue = node('details', '', 'inline'); rescue.append(node('summary', 'Stuck? Recover a ChatGPT reply'),
-      node('p', 'Use this if ChatGPT answered but nothing was saved. Recovering and pasting never send anything to ChatGPT.', 'field-help'));
-    const pasted = node('textarea', '', 'input'); pasted.placeholder = 'Paste ChatGPT’s JSON reply here'; pasted.rows = 4;
-    rescue.append(button('Recover from the open ChatGPT tab', () => act({ kind: 'network', action: 'recoverAi' }, 'Reply recovered and saved as your dossier.'), 'btn sm'),
-      pasted,
-      button('Save pasted reply', async () => { if (!pasted.value.trim()) throw new Error('Paste the JSON reply from ChatGPT first.'); await act({ kind: 'network', action: 'importDossier', text: pasted.value }, 'Pasted reply validated and saved as your dossier.'); }, 'btn sm'),
-      button('Clear stuck tasks', () => act({ kind: 'network', action: 'resetAi' }, 'Stuck ChatGPT tasks cleared.'), 'btn sm ghost'));
-    body.append(rescue);
+      button('Delete CV', async () => { if (confirm('Delete your CV text from this device?')) await act({ kind: 'network', action: 'deleteCv' }, 'CV deleted.'); }, 'btn sm ghost danger'), preview);
   }
   return box;
 }
