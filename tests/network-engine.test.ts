@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { defaultSettings, emptyNetwork, type NetworkContact, type NetworkJob } from '../src/shared/network';
+import { defaultSettings, emptyNetwork, type NetworkContact } from '../src/shared/network';
 import { getNetwork, networkTick, updateNetwork } from '../src/background/network';
 import { networkCommand, networkTab } from '../src/background/network-browser';
 import { prepareInvitation } from '../src/background/network-ai';
@@ -12,9 +12,8 @@ vi.mock('../src/background/network-browser', () => ({ networkCommand: vi.fn(), n
 const me = { name: 'Arpit Singh', url: 'https://www.linkedin.com/in/arpit45/', headline: 'PGDM', location: 'India', about: '' };
 const card = (slug: string, headline: string, degree = 2) => ({ name: slug.replace(/-/g, ' '), url: `https://www.linkedin.com/in/${slug}/`, headline, location: 'Pune, Maharashtra, India', about: '', degree });
 const person = (slug: string, patch: Partial<NetworkContact> = {}): NetworkContact => ({ ...card(slug, 'Recruiter at Acme'), rawText: 'Recruiter at Acme', state: 'shortlisted', reason: 'Recruiting / people team', score: 100, addedAt: 1, checkedAt: 0, requestedAt: 0, messagedAt: 0, message: '', ...patch });
-const job = (patch: Partial<NetworkJob> = {}): NetworkJob => ({ id: '111', url: 'https://www.linkedin.com/jobs/view/111/', title: 'Product Management Intern', companyName: 'Razorpay Software Pvt Ltd', location: 'Bengaluru', sourceCapturedAt: 1, captureStatus: 'detail', matchingReasons: ['x'], peopleSearches: 0, ...patch });
 async function seed(patch: Partial<ReturnType<typeof emptyNetwork>> = {}, settings: Partial<typeof defaultSettings> = {}) {
-  return updateNetwork(() => ({ ...emptyNetwork(), active: true, profile: me, dossier: '', location: 'India', ...patch, settings: { ...defaultSettings, roles: ['Product Management internship'], ...settings } }));
+  return updateNetwork(() => ({ ...emptyNetwork(), active: true, profile: me, ownerVerifiedAt: Date.now(), dossier: '', location: 'India', ...patch, settings: { ...defaultSettings, roles: ['Product Management internship'], ...settings } }));
 }
 const urls = () => vi.mocked(networkTab).mock.calls.map(c => new URL(String(c[0])));
 
@@ -26,7 +25,7 @@ beforeEach(() => {
 afterEach(async () => { vi.useRealTimers(); await clearDatabase(); await closeDatabase(); vi.unstubAllGlobals(); });
 
 it('searches with a boolean query and the 2nd/3rd-degree filter, then saves only people worth contacting', async () => {
-  await seed({}, { searchMode: 'people' });
+  await seed({}, {});
   vi.mocked(networkCommand).mockResolvedValueOnce([
     card('good-recruiter', 'Talent Acquisition at Razorpay'),
     card('already-connected', 'Recruiter at Razorpay', 1),
@@ -48,22 +47,12 @@ it('searches with a boolean query and the 2nd/3rd-degree filter, then saves only
 });
 
 it('never piles more than three people from one company onto the shortlist', async () => {
-  await seed({}, { searchMode: 'people' });
+  await seed({}, {});
   vi.mocked(networkCommand).mockResolvedValueOnce(['a', 'b', 'c', 'd', 'e'].map(n => card(`rec-${n}`, 'Recruiter at Acme')));
   await networkTick();
   expect((await getNetwork()).contacts).toHaveLength(3);
 });
 
-it('jobs-only mode still finds the recruiters and leaders behind each job (it used to find nobody)', async () => {
-  await seed({ jobs: [job()] }, { searchMode: 'jobs' });
-  vi.mocked(networkCommand).mockResolvedValueOnce([card('rec', 'Senior Recruiter at Razorpay'), card('stranger', 'Recruiter at Someone Else')]);
-  await networkTick();
-  expect(urls()[0]!.searchParams.get('keywords')).toContain('Razorpay');
-  const saved = await getNetwork();
-  expect(saved.contacts.map(c => c.name)).toEqual(['rec']);
-  expect(saved.contacts[0]).toMatchObject({ companyName: 'Razorpay Software Pvt Ltd', jobIds: ['111'] });
-  expect(saved.jobs![0]!.peopleSearches).toBe(1);
-});
 
 it('explains itself and does not search when the daily limit is reached', async () => {
   const sent = Array.from({ length: 15 }, (_, i) => ({ at: Date.now() - 1000 * (i + 1), kind: 'connect' as const, url: `https://www.linkedin.com/in/s${i}/`, confirmed: true }));
@@ -132,20 +121,6 @@ it('pauses, without losing the person, when LinkedIn reports the weekly invitati
 // ---- audit follow-ups: cursors, failure isolation, pacing, expiry
 const at = (minutes: number) => vi.setSystemTime(new Date(2026, 10, 9, 11, 0, 0).getTime() + minutes * 60000);
 
-it('Jobs + People mode uses every kind of people search, not just every other one (cursor parity bug)', async () => {
-  await seed({}, { searchMode: 'both' });
-  vi.mocked(networkCommand).mockResolvedValue([]);
-  for (let i = 0; i < 8; i++) { at(i * 10); await networkTick(); }
-  const searches = urls();
-  const people = searches.filter(u => u.pathname.startsWith('/search/results/people'));
-  const jobs = searches.filter(u => u.pathname.startsWith('/jobs/search'));
-  expect(jobs.length).toBe(4); expect(people.length).toBe(4);
-  const kinds = people.map(u => u.searchParams.get('keywords')!);
-  expect(new Set(kinds).size).toBe(4);                                  // recruiter, campus, leader, founder
-  expect(kinds.some(k => k.includes('campus'))).toBe(true);
-  expect(kinds.some(k => k.includes('founder'))).toBe(true);
-  expect(jobs.map(u => u.searchParams.get('start'))).toEqual(['0', '25', '50', '75']);
-});
 
 it('a page that cannot be read does not stop the campaign; the person is retried later, then set aside', async () => {
   await seed({ contacts: [person('flaky', { score: 100 }), person('fine', { score: 50 })] });
@@ -207,4 +182,22 @@ it('prunes action history older than 35 days', async () => {
   expect((await getNetwork()).actions).toHaveLength(2);        // reading does not prune
   await updateNetwork(s => ({ ...s, status: 'x' }));
   expect((await getNetwork()).actions.map(a => a.url)).toEqual(['https://www.linkedin.com/in/new/']);
+});
+
+it('prefers LinkedIn\'s own "Current: role at company" line over guessing the employer from the headline', async () => {
+  await seed();
+  vi.mocked(networkCommand).mockResolvedValueOnce([{ ...card('scout', 'Tech Recruiter | Product & Engineering Hiring'), current: 'Recruiter at LotusFlare' }]);
+  await networkTick();
+  expect((await getNetwork()).contacts[0]).toMatchObject({ name: 'scout', companyName: 'LotusFlare' });
+});
+
+it('re-confirms the signed-in account before acting, and stops if it is a different person', async () => {
+  await seed({ ownerVerifiedAt: Date.now() - 7 * 3600000, contacts: [person('alex')] });
+  vi.mocked(networkCommand).mockResolvedValueOnce({ url: 'https://www.linkedin.com/in/somebody-else/' });
+  await networkTick();
+  expect(String(vi.mocked(networkTab).mock.calls[0]![0])).toBe('https://www.linkedin.com/in/me/');
+  const saved = await getNetwork();
+  expect(saved.active).toBe(false);
+  expect(saved.status).toMatch(/different LinkedIn account/);
+  expect(vi.mocked(networkCommand)).toHaveBeenCalledTimes(1);
 });

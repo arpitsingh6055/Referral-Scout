@@ -1,22 +1,22 @@
-import type { Records, Store } from "../shared/types";
-const stores: Store[] = ["company", "person", "email", "role", "draft", "send", "event", "meta", "owners", "searches", "outreachJobs", "outreachCompanies", "contacts", "aiJobs", "actions", "outreachSettings"];
-export const DB_NAME = "cold-contact-pro";
+/*
+ * Local storage for the extension, using the browser's built-in IndexedDB. Nothing leaves the computer.
+ *   meta   - small named values; the whole outreach state lives under one key
+ *   aiJobs - one record per ChatGPT task, so an interrupted task can be recovered
+ */
+export interface Meta { id: string; value: unknown }
+export interface AiJobRecord { id: string; owner: string; createdAt: number; [key: string]: unknown }
+export interface Records { meta: Meta; aiJobs: AiJobRecord }
+export type Store = keyof Records;
+const stores: Store[] = ["meta", "aiJobs"];
+export const DB_NAME = "cold-contact";
 let pending: Promise<IDBDatabase> | undefined;
 
 export function openDatabase(): Promise<IDBDatabase> {
   if (pending) return pending;
   pending = new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 2);
+    const request = indexedDB.open(DB_NAME, 1);
     request.onupgradeneeded = () => {
-      for (const name of stores) {
-        if (request.result.objectStoreNames.contains(name)) continue;
-        const store = request.result.createObjectStore(name, { keyPath: "id" });
-        if (name !== "meta") store.createIndex("createdAt", "createdAt");
-        if (!["meta", "event"].includes(name)) store.createIndex("stage", "stage");
-        if (["person", "role", "send"].includes(name)) store.createIndex("companyId", "companyId");
-        if (["owners", "searches", "outreachJobs", "outreachCompanies", "contacts", "aiJobs", "actions", "outreachSettings"].includes(name)) store.createIndex("owner", "owner");
-        if (["email", "draft", "send"].includes(name)) store.createIndex("personId", "personId");
-      }
+      for (const name of stores) if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name, { keyPath: "id" });
     };
     request.onsuccess = () => {
       const db = request.result;
@@ -24,7 +24,7 @@ export function openDatabase(): Promise<IDBDatabase> {
       resolve(db);
     };
     request.onerror = () => { pending = undefined; reject(request.error); };
-    request.onblocked = () => { pending = undefined; reject(new Error("Database upgrade blocked; close other extension pages")); };
+    request.onblocked = () => { pending = undefined; reject(new Error("Storage is busy. Close other Cold Contact windows and try again.")); };
   });
   return pending;
 }
@@ -39,9 +39,7 @@ async function operation<T>(name: Store, mode: IDBTransactionMode, run: (s: IDBO
     tx.onerror = () => reject(tx.error ?? req.error);
   });
 }
-export async function put<S extends Store>(store: S, record: Records[S]): Promise<void> {
-  await operation(store, "readwrite", s => s.put(record));
-}
+export async function put<S extends Store>(store: S, record: Records[S]): Promise<void> { await operation(store, "readwrite", s => s.put(record)); }
 export async function get<S extends Store>(store: S, id: string): Promise<Records[S] | undefined> {
   return operation(store, "readonly", s => s.get(id) as IDBRequest<Records[S] | undefined>);
 }

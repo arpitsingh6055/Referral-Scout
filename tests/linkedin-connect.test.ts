@@ -8,7 +8,9 @@ let sendClicks = 0;
 /** A minimal LinkedIn profile: Connect opens a dialog; Send flips the page to Pending. */
 function page(dialogBody: string): void {
   sendClicks = 0;
-  document.body.innerHTML = `<header><nav><a aria-label="View profile" href="${OWNER}"></a></nav></header><main><section id="top"><h1>Alex Example</h1><p class="text-body-medium break-words">Recruiter at Acme</p><div id="actions"><button id="connect">Connect</button></div></section></main>`;
+  // Shaped like the live page: generated class names, an h2 name, and LinkedIn's componentkey marker on the top card.
+  document.body.innerHTML = `<main><section><div componentkey="com.linkedin.sdui.profile.card.refXYZTopcard" class="i87k8o"><h2>Alex Example</h2><p>· 2nd</p><p>Recruiter at Acme</p><p>Pune, India</p><p>·</p><p><a href="/in/alex/overlay/contact-info/">Contact info</a></p><div id="actions"><a id="connect" href="${URL_}" aria-label="Invite Alex Example to connect">Connect</a><button>More</button></div></div><h2>People you may know</h2><a href="/in/other/" aria-label="Invite Other Person to connect">Connect</a></section></main>`;
+  document.getElementById('connect')!.addEventListener('click', e => e.preventDefault());
   document.getElementById('connect')!.addEventListener('click', () => {
     const dialog = document.createElement('div'); dialog.setAttribute('role', 'dialog');
     dialog.innerHTML = `<p>Invitation to connect with Alex</p>${dialogBody}`;
@@ -16,7 +18,7 @@ function page(dialogBody: string): void {
     dialog.querySelectorAll('button').forEach(b => {
       if (/^send/i.test(b.textContent ?? '')) b.addEventListener('click', () => {
         sendClicks++; dialog.remove();
-        document.getElementById('actions')!.innerHTML = '<button>Pending</button>';
+        document.getElementById('actions')!.innerHTML = '<button aria-label="Pending, click to withdraw invitation sent to Alex Example">Pending</button>';
       });
     });
   });

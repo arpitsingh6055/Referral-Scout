@@ -14,24 +14,20 @@ export const networkProfileSchema=z.object({
   name:z.string().min(1).max(150),url:z.string().refine(v=>profileUrl(v)===v),headline:z.string().max(500),
   location:z.string().max(200),about:z.string(),degree:z.number().int().min(1).max(3).optional(),rawText:z.string().optional(),
   sections:z.record(z.string(),z.string()).optional(),sourceCapturedAt:z.number().optional(),
-  completeness:z.record(z.string(),z.boolean()).optional()
+  completeness:z.record(z.string(),z.boolean()).optional(),
+  /** LinkedIn's own "Current: Recruiter at X" line from search results, or the company shown on the profile. */
+  current:z.string().max(300).optional()
 });
 export type NetworkProfile=z.infer<typeof networkProfileSchema>;
-export interface NetworkJob {
-  id:string;url:string;title:string;companyName:string;companyUrl?:string;location:string;
-  workMode?:string;employmentType?:string;postedAt?:string;descriptionText?:string;seniority?:string;
-  sourceCapturedAt:number;captureStatus:'list'|'detail'|'unknown';matchingReasons:string[];peopleSearches?:number;
-}
 export type ContactState='shortlisted'|'requesting'|'pending'|'connected'|'messaging'|'messaged'|'attention'|'skipped'|'review';
 export interface NetworkContact extends NetworkProfile {
   state:ContactState;reason:string;addedAt:number;requestedAt:number;checkedAt:number;messagedAt:number;message:string;
-  nextCheckAt?:number;acceptedAt?:number;invitationNote?:string;invitationLimit?:number;jobIds?:string[];
+  nextCheckAt?:number;acceptedAt?:number;invitationNote?:string;invitationLimit?:number;
   companyName?:string;companyUrl?:string;approvalKind?:'connect'|'message';lastError?:string;score?:number;category?:string;failures?:number;retryAfter?:number;
 }
 export const defaultNoteTemplate='Hi {firstName}, I’m {myFirstName}, exploring {target} opportunities. Would love to connect and learn about your work at {company}.';
 export const outreachSettingsSchema=z.object({
   roles:z.array(z.string().trim().min(2).max(140)).min(1).max(30),
-  searchMode:z.enum(['both','jobs','people']),
   outreachMode:z.enum(['automatic','review']),
   noteMode:z.enum(['require','preferred','none']),
   followupMode:z.enum(['automatic','review']),
@@ -47,7 +43,7 @@ export const outreachSettingsSchema=z.object({
 });
 export type OutreachSettings=z.infer<typeof outreachSettingsSchema>;
 export const defaultSettings:OutreachSettings={
-  roles:['Product Management internship'],searchMode:'both',outreachMode:'review',noteMode:'preferred',followupMode:'review',
+  roles:['Product Management internship'],outreachMode:'review',noteMode:'preferred',followupMode:'review',
   paceMinutes:3,dailyInvites:15,dailyMessages:20,maxPending:100,companyAllowlist:[],companyExclusions:[],workMode:'any',employmentType:'any',
   aiMode:'template',noteTemplate:defaultNoteTemplate,weeklyInvites:80,activeHours:{from:8,to:22}
 };
@@ -55,15 +51,15 @@ export interface NetworkState {
   profile:NetworkProfile|null;target:string;location:string;template:string;
   cv:{name:string;type:string;text:string;textVersion?:number;pages?:number;warnings?:string[];savedAt?:number;characterCount?:number}|null;
   dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
-  active:boolean;revision:number;status:string;contacts:NetworkContact[];jobs?:NetworkJob[];
-  settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;jobCursor?:number;discoveryTurn?:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;
+  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;
+  settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;
   actions:{at:number;kind:'connect'|'message'|'check';url:string;confirmed?:boolean;idempotencyKey?:string}[];
   intent:{id:string;tabId:number;url:string;kind:'connect'|'message';at:number;body:string;revision:number;claimed:boolean}|null;
 }
 export const defaultTemplate='Hi {firstName}, thanks for connecting! I’m exploring {target} opportunities and would love to hear about your team. Would you be open to a brief chat?';
 export function suggestedTarget(headline:string,experienceText=''):string {return suggestTarget(headline,experienceText);}
 export function emptyNetwork():NetworkState {
-  return {profile:null,target:'Product Management internship',location:'India',template:defaultTemplate,cv:null,active:false,revision:0,status:'',contacts:[],jobs:[],settings:{...defaultSettings,roles:[...defaultSettings.roles]},searchCursor:0,nextDiscoveryAt:0,nextActionAt:0,actions:[],intent:null};
+  return {profile:null,target:'Product Management internship',location:'India',template:defaultTemplate,cv:null,active:false,revision:0,status:'',contacts:[],settings:{...defaultSettings,roles:[...defaultSettings.roles]},searchCursor:0,nextDiscoveryAt:0,nextActionAt:0,actions:[],intent:null};
 }
 /** Several versions can be written, separated by a line containing only ---. Each person gets one, so messages are not identical. */
 export function pickVariant(text:string,seed:string):string {
@@ -143,8 +139,8 @@ export const networkRequest=z.discriminatedUnion('action',[
 export type NetworkRequest=z.infer<typeof networkRequest>;
 export const networkPageCommand=z.object({
   kind:z.literal('network.page'),requestId:z.uuid(),deadline:z.number(),
-  action:z.enum(['identity','profile','search','jobs','job','company','invitationLimit','relationship','connect','message','selftest']),
-  url:z.string().default(''),owner:z.string().default(''),intentId:z.string().default(''),
+  action:z.enum(['identity','profile','search','relationship','connect','message','selftest']),
+  url:z.string().default(''),intentId:z.string().default(''),
   body:z.string().default(''),noteMode:z.enum(['require','preferred','none']).default('preferred')
 });
 export type NetworkPageCommand=z.infer<typeof networkPageCommand>;

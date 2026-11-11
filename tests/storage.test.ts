@@ -7,9 +7,9 @@ it("persists records across database reconnects", async () => {
   expect(await get("meta", "job")).toEqual({ id: "job", value: { state: "awaiting_reply" } });
 });
 it("updates by key without duplicates and clears every store", async () => {
-  await put("event", { id: "event1", createdAt: 1, level: "info", message: "a", jobId: null });
-  await put("event", { id: "event1", createdAt: 2, level: "warning", message: "b", jobId: null });
-  expect(await all("event")).toHaveLength(1);
+  await put("aiJobs", { id: "job1", owner: "me", createdAt: 1, stage: "queued" });
+  await put("aiJobs", { id: "job1", owner: "me", createdAt: 1, stage: "done" });
+  expect(await all("aiJobs")).toEqual([{ id: "job1", owner: "me", createdAt: 1, stage: "done" }]);
   await put("meta", { id: "test", value: true }); await clearDatabase();
-  expect(await all("event")).toEqual([]); expect(await get("meta", "test")).toBeUndefined();
+  expect(await all("aiJobs")).toEqual([]); expect(await get("meta", "test")).toBeUndefined();
 });
