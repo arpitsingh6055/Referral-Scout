@@ -32,7 +32,17 @@ export interface NetworkContact extends NetworkProfile {
   nextCheckAt?:number;acceptedAt?:number;invitationNote?:string;invitationLimit?:number;
   companyName?:string;companyUrl?:string;approvalKind?:'connect'|'message';lastError?:string;score?:number;category?:string;failures?:number;retryAfter?:number;
 }
-export const defaultNoteTemplate='Hi {firstName}, I’m {myFirstName}, exploring {target} opportunities. Would love to connect and learn about your work at {company}.';
+/** The note before v0.11.1. It asked a recruiter about "your work", which is the wrong thing to say to someone who hires. */
+export const legacyNoteTemplate='Hi {firstName}, I’m {myFirstName}, exploring {target} opportunities. Would love to connect and learn about your work at {company}.';
+/** {ask} is the closing line, chosen by who the person is: a recruiter, a team leader or a founder. */
+export const defaultNoteTemplate='Hi {firstName}, I’m {myFirstName}, exploring {target} opportunities. {ask}';
+export function askFor(category:string|undefined,company:string|undefined):string {
+  const at=company?` at ${company}`:'';
+  if(category==='leader')return `Would love to connect and learn about your team’s work${at}.`;
+  if(category==='founder')return `Would love to connect and learn about what you’re building${at}.`;
+  // Recruiters and anyone unclassified: ask about openings, never about "their work".
+  return company?`Would love to connect in case there are relevant openings at ${company}.`:'Would love to connect in case you’re hiring for relevant roles.';
+}
 export const outreachSettingsSchema=z.object({
   roles:z.array(z.string().trim().min(2).max(140)).min(1).max(30),
   outreachMode:z.enum(['automatic','review']),
@@ -58,7 +68,7 @@ export interface NetworkState {
   profile:NetworkProfile|null;target:string;location:string;template:string;
   cv:{name:string;type:string;text:string;textVersion?:number;pages?:number;warnings?:string[];savedAt?:number;characterCount?:number}|null;
   dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
-  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;saved?:SavedItem[];aiDefaultV3?:boolean;paceV2?:boolean;
+  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;
   settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;
   actions:{at:number;kind:'connect'|'message'|'check';url:string;confirmed?:boolean;idempotencyKey?:string}[];
   intent:{id:string;tabId:number;url:string;kind:'connect'|'message';at:number;body:string;revision:number;claimed:boolean}|null;
@@ -75,8 +85,8 @@ export function pickVariant(text:string,seed:string):string {
   let h=0;for(const c of seed)h=(h*31+c.charCodeAt(0))>>>0;
   return variants[h%variants.length]!;
 }
-export function introduction(s:Pick<NetworkState,'template'|'target'>,person:Pick<NetworkProfile,'name'>&{companyName?:string},me?:string):string {
-  return pickVariant(s.template,person.name).replace(/\{firstName\}/g,person.name.split(/\s+/)[0]||person.name).replace(/\{target\}/g,s.target)
+export function introduction(s:Pick<NetworkState,'template'|'target'>,person:Pick<NetworkProfile,'name'>&{companyName?:string;category?:string},me?:string):string {
+  return pickVariant(s.template,person.name).replace(/\{ask\}/g,askFor(person.category,person.companyName)).replace(/\{firstName\}/g,person.name.split(/\s+/)[0]||person.name).replace(/\{target\}/g,s.target)
     .replace(/\{myFirstName\}/g,me?.split(/\s+/)[0]??'').replace(/\s+at\s+\{company\}/g,person.companyName?` at ${person.companyName}`:'').replace(/\{company\}/g,person.companyName??'').replace(/\s{2,}/g,' ').trim();
 }
 /** Connection notes are limited to 200 characters. Shorten at a sentence or word boundary, never mid-word. */
@@ -89,7 +99,7 @@ export function fitNote(text:string,limit=200):string {
   }
   return note;
 }
-export function renderNote(settings:Pick<OutreachSettings,'noteTemplate'>,target:string,person:Pick<NetworkProfile,'name'>&{companyName?:string},me:string):string {
+export function renderNote(settings:Pick<OutreachSettings,'noteTemplate'>,target:string,person:Pick<NetworkProfile,'name'>&{companyName?:string;category?:string},me:string):string {
   return fitNote(introduction({template:settings.noteTemplate,target},person,me));
 }
 export function relevance(headline:string,target:string):string|null {
