@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { COMPANY_KINDS, classify, companyMatches, functionWords } from './targeting';
-import type { CompanySize } from './jobsearch';
+import type { CompanySize, CompanyStrategy } from './jobsearch';
 
 /*
  * Referrals for one job.
@@ -38,6 +38,8 @@ export interface ReferralJob extends z.infer<typeof referralJobInput> {
   perCompany?: number;
   /** People the person already knows there. When there are some, the person decides: ask only them, or also look for stronger referrers. */
   known?: number; decision?: 'known' | 'widen'; waiting?: boolean;
+  /** Who to approach at this company, decided by ChatGPT from what it knows of the company. `strategyTried` stops a second prompt. */
+  strategy?: CompanyStrategy; strategyTried?: boolean;
 }
 /** How many people one "Ask for referrals" click contacts by itself: the strongest few. A whole recruiting team is not messaged at once. */
 export const REFERRAL_AUTO = 8;
@@ -103,7 +105,7 @@ const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * A plain employee in an unrelated team only counts if the person already knows them (1st degree):
  * a stranger who merely works there is the unhelpful suggestion this is meant to avoid.
  */
-export function rankReferral(person: { headline: string; current?: string | undefined; degree?: number | undefined; alum?: boolean | undefined }, job: Pick<ReferralJob, 'company' | 'title' | 'size'>, verified = false, titles: string[] = []): ReferralVerdict | null {
+export function rankReferral(person: { headline: string; current?: string | undefined; degree?: number | undefined; alum?: boolean | undefined }, job: Pick<ReferralJob, 'company' | 'title' | 'size'>, verified = false, titles: string[] = [], avoid: string[] = []): ReferralVerdict | null {
   const headline = person.headline;
   if (!verified && !companyMatches(`${person.current ?? ''} | ${headline}`, job.company)) return null;
   // "Ex Tata Group" must not rule out someone now at this company; only "ex-<this company>" does.
@@ -117,6 +119,8 @@ export function rankReferral(person: { headline: string; current?: string | unde
   // At a large company a founder, director or VP will not answer a stranger about a referral. Keep them only if already known.
   const tooSenior = job.size === 'large' && (kind === 'founder' || /\b(?:director|vp|vice president|president|chief|c[tfoepm]o|founder|ceo|managing director)\b/i.test(headline)) && !HIRING.test(headline);
   if (tooSenior && degree !== 1) return null;
+  // Titles the plan says not to approach at this company as a stranger. People who hire are never ruled out this way.
+  if (degree !== 1 && !HIRING.test(headline) && avoid.some(t => new RegExp(`\\b${escape(t)}\\b`, 'i').test(headline))) return null;
   const planned = titles.some(t => new RegExp(`\\b${escape(t)}`, 'i').test(headline));
   if (kind === 'employee' && degree !== 1 && !planned) return null;
   if (kind === 'peer' && degree > 2) return null; // same-team peers only when there is at least a mutual connection

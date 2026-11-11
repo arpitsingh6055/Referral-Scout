@@ -281,7 +281,7 @@ it('messages an existing 1st-degree connection directly, with wording that does 
 
 it('a referral search runs even while outreach is paused, keeps only people at that company, and queues the strongest once it is complete', async () => {
   const jobUrl = 'https://www.linkedin.com/jobs/view/123/';
-  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Product Manager', company: 'Acme', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0, infoTried: true }] });
+  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Product Manager', company: 'Acme', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0, strategyTried: true, infoTried: true }] });
   vi.mocked(networkCommand).mockResolvedValueOnce([card('rec', 'Senior Recruiter at Acme', 2), card('friend', 'Analyst at Acme', 1), card('stranger', 'Analyst at Acme', 3), card('elsewhere', 'Recruiter at Other Co', 2)]);
   await networkTick();
   const url = urls()[0]!;
@@ -323,7 +323,7 @@ it('reads the company number from its page first, then searches with the Current
 
 it('messages the people already known and invites only the chosen number of others (3 unless set), leaving the rest listed', async () => {
   const jobUrl = 'https://www.linkedin.com/jobs/view/77/';
-  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Technology analyst', company: 'Infosys', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0, infoTried: true }] });
+  await seed({ active: false, referralJobs: [{ url: jobUrl, title: 'Technology analyst', company: 'Infosys', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0, strategyTried: true, infoTried: true }] });
   vi.mocked(networkCommand).mockResolvedValueOnce(Array.from({ length: 10 }, (_, i) => card(`rec-${i}`, 'Talent Acquisition at Infosys', i < 2 ? 1 : 2)));
   await networkTick();
   const people = (await getNetwork()).contacts;
@@ -382,7 +382,7 @@ it('falls back to built-in titles when ChatGPT is not available, and says so', a
 
 it('for a chosen company: opens the job, reads the company size, and asks before looking wider when the person already knows people there', async () => {
   const jobUrl = 'https://www.linkedin.com/jobs/view/11/';
-  await seed({ scope: 'referrals', referralJobs: [{ url: jobUrl, title: 'Operations Intern', company: 'Stripe', location: '', mode: 'referral', addedAt: 1, cursor: 0, found: 0, perCompany: 4 }] });
+  await seed({ scope: 'referrals', referralJobs: [{ url: jobUrl, title: 'Operations Intern', company: 'Stripe', location: '', mode: 'referral', addedAt: 1, cursor: 0, found: 0, strategyTried: true, perCompany: 4 }] });
   vi.mocked(networkCommand).mockResolvedValueOnce({ companyUrl: 'https://www.linkedin.com/company/stripe/', location: 'Bengaluru', suggested: [] });
   await networkTick();
   vi.mocked(networkCommand).mockResolvedValueOnce({ id: '2135371', size: '5K-10K employees' });
@@ -396,4 +396,45 @@ it('for a chosen company: opens the job, reads the company size, and asks before
   vi.mocked(networkCommand).mockClear();
   await networkTick(); // nothing more is searched for this company until the person decides
   expect(vi.mocked(networkCommand).mock.calls.some(c => (c[1] as { action: string }).action === 'search')).toBe(false);
+});
+
+it('asks ChatGPT once, for every chosen company together, who can refer there, before any company is searched', async () => {
+  const { askChatGpt } = await import('../src/background/network-ai');
+  const job = (n: number, company: string, title: string) => ({ url: `https://www.linkedin.com/jobs/view/9${n}/`, title, company, location: '', mode: 'referral' as const, addedAt: n, cursor: 0, found: 0 });
+  await seed({ scope: 'referrals', referralJobs: [job(1, 'Microsoft', 'Sales Intern'), job(2, 'Tinyco', 'Operations Intern')] });
+  vi.mocked(askChatGpt).mockClear();
+  vi.mocked(askChatGpt).mockResolvedValueOnce(JSON.stringify({ companies: [
+    { company: 'Microsoft', type: 'enterprise', why: 'Referrals go through employees in sales.', searchTitles: ['CEO', 'account executive', 'sales manager'], avoid: ['CFO'],
+      ask: 'Hi {firstName}, I am applying for {title} at {company}: {jobUrl}. Would you refer me?' },
+    { company: 'Tinyco', type: 'startup', why: 'The founder hires directly.', searchTitles: ['founder', 'head of operations'], avoid: [] } ] }));
+  vi.mocked(networkCommand).mockClear();
+  await networkTick();
+  const saved = await getNetwork(), [ms, tiny] = saved.referralJobs!;
+  expect(vi.mocked(askChatGpt)).toHaveBeenCalledTimes(1);
+  const prompt = vi.mocked(askChatGpt).mock.calls[0]![0] as string;
+  expect(prompt).toContain('Microsoft'); expect(prompt).toContain('Tinyco'); expect(prompt).toContain('Sales Intern');
+  expect(vi.mocked(networkCommand)).not.toHaveBeenCalled(); // the plan comes first; LinkedIn is not touched in that turn
+  expect(ms!.strategy).toMatchObject({ type: 'enterprise', titles: ['account executive', 'sales manager'], source: 'chatgpt' }); // no CEO at an enterprise
+  expect(ms!.strategy!.avoid).toEqual(expect.arrayContaining(['CFO', 'CEO', 'founder']));
+  expect(ms!.strategy!.ask).toContain('{jobUrl}');
+  expect(tiny!.strategy).toMatchObject({ type: 'startup', titles: ['founder', 'head of operations'] });
+  expect(saved.status).toMatch(/planned who to ask at 2 companies/);
+  await networkTick(); // no second prompt
+  expect(vi.mocked(askChatGpt)).toHaveBeenCalledTimes(1);
+});
+
+it('carries on with built-in rules, and says so, when ChatGPT cannot plan the companies', async () => {
+  const { askChatGpt } = await import('../src/background/network-ai');
+  await seed({ scope: 'referrals', referralJobs: [{ url: 'https://www.linkedin.com/jobs/view/95/', title: 'Operations Intern', company: 'Stripe', location: '', mode: 'referral', addedAt: 1, cursor: 0, found: 0 }] });
+  vi.mocked(askChatGpt).mockClear();
+  vi.mocked(askChatGpt).mockRejectedValueOnce(new Error('Sign in to ChatGPT or resolve its challenge in the visible tab.'));
+  await networkTick();
+  let saved = await getNetwork();
+  expect(saved.referralJobs![0]).toMatchObject({ strategyTried: true });
+  expect(saved.referralJobs![0]!.strategy).toBeUndefined();
+  expect(saved.status).toMatch(/ChatGPT was not available.*Built-in rules/);
+  vi.mocked(networkCommand).mockResolvedValueOnce({ companyUrl: 'https://www.linkedin.com/company/stripe/', location: 'Bengaluru', suggested: [] });
+  await networkTick(); // the search itself still goes ahead
+  expect(vi.mocked(askChatGpt)).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(networkCommand).mock.calls.some(c => (c[1] as { action: string }).action === 'jobInfo')).toBe(true);
 });

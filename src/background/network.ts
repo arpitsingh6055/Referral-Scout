@@ -5,7 +5,7 @@ import { companyFromCurrent } from '../parsers/network';
 import { read, mutate } from '../storage/state';
 import { acquire, release, renew } from './lease';
 import { referralAsk, referralNote, referralPlan, referralSearchUrl, rankReferral, type ReferralJob } from '../shared/referral';
-import { fallbackTitles, fill, jobsSearchUrl, planFromReply, planPrompt, rulesPlan, scoreJob, shortlist, sizeOf } from '../shared/jobsearch';
+import { companyPlanPrompt, fallbackTitles, fill, jobsSearchUrl, planFromReply, planPrompt, rulesPlan, scoreJob, shortlist, sizeForType, sizeOf, strategiesFromReply, withRecruiters, type CompanyStrategy } from '../shared/jobsearch';
 import { extractJson } from '../parsers/json';
 import { networkCommand, networkTab, showWorkTab } from './network-browser';
 import { prepareIntroduction, prepareInvitation, askChatGpt } from './network-ai';
@@ -161,6 +161,20 @@ async function findJobsStep(s:NetworkState,signal:AbortSignal):Promise<void>{
     j.cursor++;c.status=`“${term}”: ${rows.length} ${rows.length===1?'job':'jobs'} read.`;return c;
   });
 }
+/** One ChatGPT prompt for every company still waiting for a plan: who is worth asking for a referral at each. */
+async function planCompanies(s:NetworkState,jobs:ReferralJob[],signal:AbortSignal):Promise<void>{
+  const roles=s.settings?.roles?.length?s.settings.roles:[s.target];
+  await note(s,`Asking ChatGPT who can refer you at ${jobs.length===1?jobs[0]!.company:`${jobs.length} companies`}…`);
+  let found=new Map<string,CompanyStrategy>(),why='';
+  try{found=strategiesFromReply(extractJson(await askChatGpt(companyPlanPrompt(jobs.map(j=>({company:j.company,title:j.title,size:j.sizeText})),roles,`${s.profile?.headline??''}. ${(s.cv?.text||s.profile?.about||'').slice(0,1000)}`),signal,'LEGACY',s.profile!.url)));}
+  catch(error){why=error instanceof Error?error.message:String(error);if(signal.aborted)throw error;}
+  await updateNetwork(c=>{
+    let planned=0;
+    for(const j of c.referralJobs??[])if(jobs.some(x=>x.url===j.url)){j.strategyTried=true;const st=found.get(normalizeCompany(j.company));if(st){j.strategy=st;planned++;}}
+    c.status=planned?`ChatGPT planned who to ask at ${planned} ${planned===1?'company':'companies'}.`:`ChatGPT was not available (${why.slice(0,110)||'no usable reply'}). Built-in rules by company size are used instead.`;
+    return c;
+  });
+}
 /** One search of a job's referral plan per turn; the next follows a few seconds later. */
 async function referralScan(s:NetworkState,job:ReferralJob,signal:AbortSignal):Promise<void>{
   // A job taken from a search list: open the job itself once for its company page and LinkedIn's own suggested people.
@@ -192,7 +206,9 @@ async function referralScan(s:NetworkState,job:ReferralJob,signal:AbortSignal):P
     return;
   }
   // Which titles to look for depends on the company's size: the planned list when there is one, built-in rules otherwise.
-  const titles=job.companyId&&job.size?(s.plan?.titles??fallbackTitles([job.title]))[job.size]:undefined;
+  // ChatGPT's plan for this company when there is one; otherwise the planned list for a company of this size, or built-in rules.
+  const size=job.size??(job.strategy?sizeForType[job.strategy.type]:undefined),avoid=job.strategy?.avoid??[];
+  const titles=job.companyId&&(job.strategy||size)?withRecruiters(job.strategy?.titles??(s.plan?.titles??fallbackTitles([job.title]))[size!]):undefined;
   const plan=referralPlan(job,titles),step=plan[job.cursor],verified=!!job.companyId;
   let people:z.infer<typeof networkProfileSchema>[]=[],failed='';
   if(step){
@@ -216,7 +232,7 @@ async function referralScan(s:NetworkState,job:ReferralJob,signal:AbortSignal):P
     for(const row of [...people.map(p=>({...p,alum:alumni.has(p.url),offered:false})),...offered.filter(o=>!people.some(p=>p.url===o.url))]){
       const {alum,offered:fromLinkedIn,...person}=row;
       if(person.url===current.profile?.url)continue;
-      const verdict=rankReferral({...person,alum},saved,verified&&!fromLinkedIn,titles??[]);if(!verdict)continue;
+      const verdict=rankReferral({...person,alum},{...saved,...(size?{size}:{})},verified&&!fromLinkedIn,titles??[],avoid);if(!verdict)continue;
       const direct=person.degree===1,state='found' as const; // everyone is listed first; the strongest are queued together once the search is complete
       const existing=current.contacts.find(c=>c.url===person.url);
       if(existing){
@@ -318,6 +334,8 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
   const me=fresh.profile!.name;
   // Found for a specific job: the wording is about that job and a referral, not general networking.
   const job=p.referralJob?fresh.referralJobs?.find(j=>j.url===p.referralJob):undefined;
+  // Wording written for this company comes first, then the wording planned for the whole search, then the built-in text.
+  const wording=job?{note:job.strategy?.note??fresh.plan?.note,ask:job.strategy?.ask??fresh.plan?.ask,followUp:job.strategy?.followUp??fresh.plan?.followUp}:undefined;
   const words=job?{firstName:p.name.split(/\s+/)[0]||p.name,myFirstName:me.split(/\s+/)[0]||me,title:job.title,company:job.company,jobUrl:job.url}:undefined;
   // ChatGPT personalisation is optional. If it is off, or fails, the user's own template is used so outreach never stalls.
   const draft=async(ai:()=>Promise<string>,template:()=>string):Promise<string>=>{
@@ -334,9 +352,9 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
     }
   };
   if(kind==='connect'&&settings.noteMode!=='none'&&!p.invitationNote)
-    p.invitationNote=job?fitNote(fresh.plan?.note?fill(fresh.plan.note,words!):referralNote(job,p,me)):await draft(()=>prepareInvitation(fresh,p,200,signal),()=>renderNote(settings,fresh.target,p,me));
+    p.invitationNote=job?fitNote(wording?.note?fill(wording.note,words!):referralNote(job,p,me)):await draft(()=>prepareInvitation(fresh,p,200,signal),()=>renderNote(settings,fresh.target,p,me));
   if(kind==='message'&&!p.message)
-    p.message=job?((p.direct?fresh.plan?.ask:fresh.plan?.followUp)?fill((p.direct?fresh.plan!.ask:fresh.plan!.followUp)!,words!):referralAsk(job,p,me,!p.direct)):p.direct?directMessage(fresh,p,me):await draft(()=>prepareIntroduction(fresh,p,signal),()=>introduction(fresh,p,me));
+    p.message=job?((p.direct?wording?.ask:wording?.followUp)?fill((p.direct?wording!.ask:wording!.followUp)!,words!):referralAsk(job,p,me,!p.direct)):p.direct?directMessage(fresh,p,me):await draft(()=>prepareIntroduction(fresh,p,signal),()=>introduction(fresh,p,me));
   const review=kind==='connect'?settings.outreachMode==='review':settings.followupMode==='review';
   if(review&&!approved&&!p.auto){
     p.state='review';p.approvalKind=kind;p.reason=kind==='connect'?'Invitation ready. Approve to send.':p.direct?'Already your connection. Message ready; approve to send.':'They accepted. Follow-up message ready; approve to send.';
@@ -430,6 +448,9 @@ async function run():Promise<void>{
     const s=await getNetwork();if(!s.profile)return;
     // A referral search was asked for by a click on a job page, so it runs straight away, even while outreach is paused or outside active hours. It only reads.
     if(s.jobSearch?.status==='finding'){worked=true;await findJobsStep(s,abort.signal);return;}
+    // Before any company is searched: one prompt covering every company that has no plan yet.
+    const unplanned=(s.referralJobs??[]).filter(j=>j.finishedAt===undefined&&j.mode==='referral'&&!j.strategy&&!j.strategyTried).slice(0,20);
+    if(unplanned.length){worked=true;await planCompanies(s,unplanned,abort.signal);return;}
     const scan=(s.referralJobs??[]).find(j=>j.finishedAt===undefined&&!j.waiting);
     if(scan){worked=true;await referralScan(s,scan,abort.signal);return;}
     if(!s.active)return;

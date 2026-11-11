@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { fallbackTerms, fallbackTitles, fill, jobsSearchUrl, planFromReply, scoreJob, shortlist, sizeOf, type FoundJob } from '../src/shared/jobsearch';
+import { companyPlanPrompt, strategiesFromReply, withRecruiters, fallbackTerms, fallbackTitles, fill, jobsSearchUrl, planFromReply, scoreJob, shortlist, sizeOf, type FoundJob } from '../src/shared/jobsearch';
 import { jobRows } from '../src/parsers/network';
 import { rankReferral, referralPlan } from '../src/shared/referral';
 
@@ -71,5 +71,30 @@ describe('who to ask depends on the size of the company', () => {
     expect(plan.map(s => s.network.join())).toEqual(['F', 'F', 'S,O', 'S,O']);
     expect(plan[2]!.keywords).toBe('(recruiter OR "talent acquisition" OR HR OR HRBP OR "campus recruiter")');
     expect(plan[3]!.keywords).toBe('("team lead" OR "senior consultant")');
+  });
+});
+
+describe('the per-company plan', () => {
+  it('sends every company in one prompt, with the worked examples that tell ChatGPT how to decide', () => {
+    const prompt = companyPlanPrompt([{ company: 'Microsoft', title: 'Sales Intern', size: '10K+ employees' }, { company: 'Tinyco', title: 'Operations Intern' }], ['Sales Intern'], 'MBA student');
+    for (const part of ['Microsoft', 'Tinyco', '10K+ employees', 'ENTERPRISE example', 'STARTUP example', 'searchTitles', '{jobUrl}']) expect(prompt).toContain(part);
+  });
+  it('drops top executives at an enterprise even when the reply lists them, and keeps founders at a startup', () => {
+    const plans = strategiesFromReply({ companies: [
+      { company: 'Microsoft India Pvt Ltd', type: 'enterprise', why: 'x', searchTitles: ['Chief Financial Officer', 'VP Sales', 'sales manager'], avoid: [] },
+      { company: 'Tinyco', type: 'startup', why: 'y', searchTitles: ['founder', 'chief of staff'], avoid: [], note: 'no placeholder here' } ] });
+    expect([...plans.values()][0]!.titles).toEqual(['sales manager']);
+    expect([...plans.values()][0]!.avoid).toEqual(expect.arrayContaining(['CEO', 'director']));
+    expect([...plans.values()][1]!.titles).toEqual(['founder', 'chief of staff']);
+    expect([...plans.values()][1]!.note).toBeUndefined(); // wording without {firstName} is not used
+  });
+  it('always searches for recruiters and HR first, whatever the plan lists', () => {
+    expect(withRecruiters(['sales manager', 'Recruiter']).slice(0, 4)).toEqual(['recruiter', 'talent acquisition', 'HR', 'sales manager']);
+  });
+  it('does not approach a stranger whose title the plan rules out, but still approaches recruiters and people already known', () => {
+    const job = { company: 'Microsoft', title: 'Sales Intern', size: 'mid' as const }, avoid = ['director'];
+    expect(rankReferral({ headline: 'Director of Sales at Microsoft', degree: 2 } as never, job, true, [], avoid)).toBeNull();
+    expect(rankReferral({ headline: 'Director of Talent Acquisition at Microsoft', degree: 2 } as never, job, true, [], avoid)).not.toBeNull();
+    expect(rankReferral({ headline: 'Director of Sales at Microsoft', degree: 1 } as never, job, true, [], avoid)).not.toBeNull();
   });
 });

@@ -265,6 +265,13 @@ function buildReferrals(s: NetworkState): HTMLElement {
     if (people.length) meta.append(node('span', `${first} you know · ${people.length - first} to invite`, 'chip'));
     body.append(meta);
     if (job.sizeText) meta.append(node('span', `${job.sizeText}${job.size ? ` · ${job.size === 'large' ? 'large: recruiters, HR, team leads' : job.size === 'small' ? 'small: founders, heads' : 'mid-size'}` : ''}`, 'chip'));
+    if (job.strategy) {
+      const kind: Record<string, string> = { enterprise: 'Large company', mid: 'Mid-size company', scaleup: 'Scale-up', startup: 'Startup' };
+      const plan = node('details', '', 'inline'); plan.append(node('summary', `${kind[job.strategy.type]}: who to ask (${job.strategy.source === 'chatgpt' ? 'ChatGPT' : 'built-in'})`),
+        node('p', job.strategy.why, 'field-help'), node('p', `Asking: recruiters and HR, ${job.strategy.titles.join(', ')}`, 'field-help'));
+      if (job.strategy.avoid.length) plan.append(node('p', `Not asking strangers who are: ${job.strategy.avoid.join(', ')}`, 'field-help'));
+      body.append(plan);
+    } else if (job.mode === 'referral' && !job.strategyTried && !job.finishedAt) body.append(node('p', 'Waiting for ChatGPT’s plan for this company…', 'field-help'));
     if (job.waiting) {
       // The one question per company: people already known may be enough.
       const ask = node('div', '', 'callout');

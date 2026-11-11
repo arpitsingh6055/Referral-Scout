@@ -140,3 +140,66 @@ export function shortlist(jobs: FoundJob[], alreadyPursued: string[] = []): Foun
   }
   return [...best.values()].sort((a, b) => b.score - a.score).slice(0, MAX_COMPANIES * 2).map((job, i) => ({ ...job, picked: i < PRETICKED && job.score > 0 }));
 }
+
+/* ---------- the per-company plan: ChatGPT decides who can refer at each company ---------- */
+export type CompanyType = 'startup' | 'scaleup' | 'mid' | 'enterprise';
+export interface CompanyStrategy {
+  type: CompanyType; why: string;
+  /** Titles to search for at this company, most valuable first. Recruiters are always added by the code. */
+  titles: string[];
+  /** Titles not worth contacting here as a stranger (for example CEO and CFO at an enterprise). */
+  avoid: string[];
+  note?: string; ask?: string; followUp?: string;
+  source: 'chatgpt' | 'rules';
+}
+export const sizeForType: Record<CompanyType, CompanySize> = { startup: 'small', scaleup: 'mid', mid: 'mid', enterprise: 'large' };
+/** Recruiters and HR are asked at every company, whatever else the plan says. */
+export const ALWAYS = ['recruiter', 'talent acquisition', 'HR'];
+export const withRecruiters = (titles: string[]): string[] => { const seen = new Set<string>(); return [...ALWAYS, ...titles].filter(t => !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase())).slice(0, 10); };
+
+/**
+ * One prompt for every company chosen in a run. ChatGPT knows what kind of company each one is far better than a
+ * size bucket does, so it decides who is worth asking there; the code then only executes its list.
+ */
+export function companyPlanPrompt(companies: { company: string; title: string; size?: string | undefined }[], roles: string[], about: string): string {
+  return [
+    'You are an experienced recruiter and career coach. A job seeker will ask people at specific companies for a REFERRAL for a specific job, through LinkedIn. For each company, decide WHO is worth approaching: people whose referral carries weight for that job AND who would realistically reply to a polite stranger.',
+    '',
+    'How to think about it:',
+    '- First judge what kind of company it is from your own knowledge of it: "enterprise" (a large or multinational company such as Microsoft, Infosys, Barclays, Deloitte, Unilever), "mid" (an established company of a few hundred to a few thousand people), "scaleup" (a funded, fast-growing company of roughly 100 to 1,000 people) or "startup" (under about 100 people). If you do not recognise the company, use the size hint if one is given, otherwise assume "mid" and say so in "why".',
+    '- ENTERPRISE example, a Sales Intern job at Microsoft: messaging the CEO, CFO, a VP or a director is pointless; they will not reply and do not handle hiring. Worth approaching: campus or university recruiters, talent acquisition partners, HR business partners, and people one or two levels above the role in the SAME function, such as "account executive", "senior account manager", "sales manager", "team lead". Their referral goes through the normal employee-referral process, which is what counts.',
+    '- STARTUP example, an Operations Intern job at a 40-person startup: the founder, co-founder, "head of operations" or "chief of staff" often hires directly and does reply. Approach them, plus any HR or talent person.',
+    '- SCALEUP or MID example, a Product Analyst job at a 600-person fintech: "product manager", "senior product manager", "head of product", "talent partner", "HRBP". A founder is usually too far from this hire; list founders under "avoid" unless the company is clearly small.',
+    '- Match the FUNCTION of the job. For an operations role, senior operations people; for software, engineering managers and senior engineers; for sales, senior sales people. A senior person in an unrelated function carries little weight.',
+    '- Match the LEVEL. For an internship or entry-level job, people one to three levels above (senior associate, senior consultant, assistant manager, manager, team lead) are right. Do not list interns, trainees or other entry-level staff.',
+    '- Recruiters and HR are always worth approaching; you do not need to list them, they are added automatically. Spend your list on the function-specific people.',
+    '',
+    `THE SEEKER wants: ${JSON.stringify(roles)}. About them: ${JSON.stringify(about.slice(0, 1200))}`,
+    `COMPANIES AND JOBS: ${JSON.stringify(companies.map(c => ({ company: c.company, job: c.title, ...(c.size ? { sizeHint: c.size } : {}) })))}`,
+    '',
+    'Reply with ONLY one JSON object: {"companies":[ ... ]} with one entry per company above, in the same order, each exactly:',
+    '{"company": the name exactly as given, "type": "enterprise" | "mid" | "scaleup" | "startup", "why": one short sentence on why these people, "searchTitles": 4 to 7 job titles to search for at this company, most valuable first, written as they appear in LinkedIn headlines, 1 to 3 words each, no company names, "avoid": up to 5 titles NOT to approach at this company as a stranger, "note": a connection note of at most 170 characters using {firstName}, {myFirstName}, {title}, {company}, "ask": a 40 to 70 word message to someone the seeker ALREADY knows there, using {firstName}, {myFirstName}, {title}, {company}, {jobUrl}, asking whether they would refer them or point them to the right person, "followUp": the same request for a stranger who has just accepted the connection request, opening with thanks for connecting}',
+    'Wording rules for note, ask and followUp: plain, warm, specific to the job; no flattery, no list of achievements, no invented facts, no links except {jobUrl}, no emails or phone numbers. Use the placeholders literally.',
+  ].join('\n');
+}
+const strategyReply = z.object({ companies: z.array(z.object({
+  company: z.string(), type: z.enum(['enterprise', 'mid', 'scaleup', 'startup']), why: z.string().max(400).default(''),
+  searchTitles: z.array(z.string().trim().min(2).max(50)).min(1).max(12), avoid: z.array(z.string().trim().min(2).max(50)).max(10).default([]),
+  note: z.string().max(400).optional(), ask: z.string().max(900).optional(), followUp: z.string().max(900).optional(),
+})).min(1).max(40) });
+const TOP = /founder|\bceo\b|\bcfo\b|\bcoo\b|\bcto\b|chief|vice president|\bvp\b|president|managing director/i;
+/** ChatGPT's reply, per company (keyed by the normalised name). Anything unsafe or missing is dropped, not trusted. */
+export function strategiesFromReply(json: unknown): Map<string, CompanyStrategy> {
+  const out = new Map<string, CompanyStrategy>(), tidy = (list: string[], max: number): string[] => {
+    const seen = new Set<string>(); return list.map(t => t.replace(/["()]/g, '').trim()).filter(t => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase())).slice(0, max);
+  };
+  for (const c of strategyReply.parse(json).companies) {
+    // If the model itself says "enterprise", top executives are not searched for, even if it also listed them.
+    const titles = tidy(c.searchTitles, 7).filter(t => c.type !== 'enterprise' || !TOP.test(t));
+    if (!titles.length) continue;
+    const avoid = tidy([...c.avoid, ...(c.type === 'enterprise' ? ['CEO', 'CFO', 'founder', 'vice president', 'director'] : [])], 8);
+    const note = usable(c.note, ['{firstName}'], 190), ask = usable(c.ask, ['{firstName}', '{company}'], 700), followUp = usable(c.followUp, ['{firstName}', '{company}'], 700);
+    out.set(normalizeCompany(c.company), { type: c.type, why: c.why.trim().slice(0, 300), titles, avoid, source: 'chatgpt', ...(note ? { note } : {}), ...(ask ? { ask } : {}), ...(followUp ? { followUp } : {}) });
+  }
+  return out;
+}

@@ -15,6 +15,15 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.20.0: ChatGPT decides who to ask at each company
+- After you confirm the companies, **one ChatGPT prompt covers all of them**. For each company it says what kind of company it is (enterprise, mid-size, scale-up, startup), which job titles to search for, which titles not to approach as a stranger, and how to word the note, the message to people you already know, and the follow-up.
+- The prompt carries worked examples: at Microsoft a Sales Intern applicant should reach campus recruiters and sales managers, not the CEO or CFO; at a 40-person startup the founder and head of the function are the right people.
+- Recruiters, talent acquisition and HR are searched at every company regardless of the plan.
+- The reply is checked, not trusted: top-executive titles are removed for any company ChatGPT itself calls an enterprise, and wording without the required placeholders is discarded in favour of the built-in text.
+- If ChatGPT is signed out or gives no usable reply, the status line says so and the search continues on the built-in rules by company size. ChatGPT is asked at most twice per run: once for search terms, once for the companies.
+- Each job card shows the plan (company type, who is being asked, who is not).
+- Not yet run in Edge; see `docs/live-verification.md`.
+
 ## 0.19.0: job search and referral pipeline
 The product is now built around jobs, not general outreach.
 

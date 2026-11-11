@@ -96,3 +96,9 @@ Still not run live: the invitation dialog and its note field, the Pending marker
 
 - `linkedin.com/jobs/search-results/?keywords=operations intern&geoId=102713980` checked live: 25 rows. A row is not a link; it carries `componentkey="job-card-component-ref-<id>"`, a "Dismiss <title> job" button, and lines for title, company, location and a hint such as "256 company alumni work here".
 - Not yet run through the extension in Edge: the full pipeline, and the ChatGPT plan prompt (ChatGPT has still never completed a task live in this project).
+
+## 0.20.0: per-company plan from ChatGPT (not yet run live)
+Covered by tests only (prompt contents, reply checking, one prompt per batch, fallback). Still to confirm in Edge with ChatGPT signed in:
+1. Choose two or three companies in "Find jobs and referrals". The status should read "Asking ChatGPT who can refer you at N companies…" once, then "ChatGPT planned who to ask at N companies."
+2. Each job card shows "who to ask" with a company type that matches reality (a large company must not list founders or the CEO).
+3. With ChatGPT signed out, the status says built-in rules are used and the search still runs.
