@@ -174,3 +174,23 @@ it('starts for a user whose saved settings pre-date aiMode, without a dossier st
   expect(prepareDossier).not.toHaveBeenCalled();
   expect((await getNetwork()).active).toBe(true);
 });
+
+it('remembers a person from a LinkedIn page, keeps the note, and notices when a pending request was accepted', async () => {
+  vi.stubGlobal('chrome', {runtime:{id:'abc',getURL:(p:string)=>`chrome-extension://abc/${p}`,onMessage:{addListener:vi.fn()}},tabs:{sendMessage:vi.fn()}});
+  registerNetworkMessages();
+  const listener = vi.mocked(chrome.runtime.onMessage.addListener).mock.calls[0]![0];
+  const url = 'https://www.linkedin.com/in/alex/';
+  const page = (action: string, item: object, sender: object = {id:'abc',tab:{id:4},frameId:0,url}) =>
+    new Promise<any>(resolve => listener({kind:'network.remember',action,item:{type:'person',url,title:'Alex Example',subtitle:'Recruiter at Acme',...item}}, sender as never, resolve));
+  expect((await page('get', {relation:'pending'})).saved).toBeNull();
+  expect((await page('save', {relation:'pending',note:'Message once accepted'})).saved).toMatchObject({title:'Alex Example',note:'Message once accepted',relation:'pending'});
+  expect((await page('get', {relation:'connected'})).saved).toMatchObject({relation:'connected',note:'Message once accepted'});
+  const saved = await getNetwork();
+  expect(saved.saved).toHaveLength(1);
+  expect(saved.saved![0]!.acceptedAt).toBe(Date.now());
+  expect(saved.status).toMatch(/Alex Example accepted your connection request\. Your note: Message once accepted/);
+  // A page that is not LinkedIn, or an address that is not a profile, cannot write anything.
+  expect((await page('save', {}, {id:'abc',tab:{id:4},frameId:0,url:'https://evil.example/in/alex/'})).saved).toBeNull();
+  await page('remove', {});
+  expect((await getNetwork()).saved).toEqual([]);
+});

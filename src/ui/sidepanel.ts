@@ -4,7 +4,7 @@ import { DAY, defaultSettings, introduction, renderNote, withinActiveHours, type
 import { completeCvText } from './cv-text';
 import { createToaster, type ToastKind } from './toast';
 
-type Tab = 'setup' | 'people' | 'activity';
+type Tab = 'setup' | 'people' | 'saved' | 'activity';
 const ui = { tab: 'setup' as Tab, filter: 'all', open: new Set<string>() };
 const root = appRoot();
 let busy = false, dirty = false, spoke = false, opened = false, last: NetworkState | null = null, signature = '', uid = 0;
@@ -141,6 +141,33 @@ function welcome(): HTMLElement {
   return hero;
 }
 
+/* People and jobs remembered with the button on LinkedIn pages. */
+function buildSaved(s: NetworkState): HTMLElement {
+  const panel = node('div'), items = s.saved ?? [];
+  if (!items.length) {
+    const e = node('div', '', 'empty'); e.append(node('b', 'Nothing remembered yet'), node('span', 'Open any LinkedIn profile or job and press "Remember" at the bottom left of the page. Add a note so you know why later.'));
+    panel.append(e); return panel;
+  }
+  const relation: Record<string, string> = { pending: 'Request pending', connected: 'Connected', 'not-connected': 'Not connected' };
+  for (const [type, heading] of [['person', 'People'], ['job', 'Jobs']] as const) {
+    const group = items.filter(i => i.type === type); if (!group.length) continue;
+    panel.append(node('h3', `${heading} (${group.length})`, 'card-sub'));
+    for (const item of group) {
+      const card = node('article', '', 'person'), info = node('div');
+      info.append(link(item.title, item.url, 'person-name'), node('p', item.subtitle, 'muted small clamp'));
+      card.append(info);
+      const badges = node('div', '', 'meta');
+      if (item.acceptedAt) badges.append(node('span', `Accepted ${when(item.acceptedAt)}`, 'badge connected'));
+      else if (item.relation && relation[item.relation]) badges.append(node('span', relation[item.relation]!, item.relation === 'pending' ? 'badge review' : 'badge'));
+      badges.append(node('span', `Saved ${when(item.savedAt)}`, 'chip'));
+      card.append(badges);
+      if (item.note) card.append(node('p', item.note, 'reason'));
+      card.append(button('Forget', async () => { await act({ kind: 'network', action: 'forget', url: item.url }, `${item.title} removed from Saved.`); }, 'btn sm ghost danger'));
+      panel.append(card);
+    }
+  }
+  return panel;
+}
 function render(s: NetworkState): void {
   announcedUpTo = Math.max(announcedUpTo, (s.log ?? []).at(-1)?.at ?? 0);
   last = s; signature = JSON.stringify(s); dirty = false; uid = 0;
@@ -161,7 +188,7 @@ function render(s: NetworkState): void {
 
   /* the setup form exists in every tab so Start can always save it */
   const setup = buildSetup(s, settings);
-  const panels: Record<Tab, HTMLElement> = { setup: setup.panel, people: node('div'), activity: buildActivity(s) };
+  const panels: Record<Tab, HTMLElement> = { setup: setup.panel, people: node('div'), saved: buildSaved(s), activity: buildActivity(s) };
   const tabs = node('div', '', 'tabs'), tabButtons = new Map<Tab, HTMLButtonElement>();
   const setTab = (tab: Tab): void => {
     ui.tab = tab;
@@ -171,7 +198,7 @@ function render(s: NetworkState): void {
   const peopleList = node('div'), refreshPeople = (): void => { buildPeople(s, peopleList, refreshPeople); };
   panels.people.append(peopleList);
   const reviewCount = count('review');
-  for (const [tab, label, n] of [['setup', 'Setup', 0], ['people', 'People', s.contacts.filter(p => p.state !== 'skipped').length], ['activity', 'Activity', 0]] as const) {
+  for (const [tab, label, n] of [['setup', 'Setup', 0], ['people', 'People', s.contacts.filter(p => p.state !== 'skipped').length], ['saved', 'Saved', (s.saved ?? []).length], ['activity', 'Activity', 0]] as const) {
     const b = node('button', label, 'tab'); b.type = 'button'; b.setAttribute('role', 'tab');
     if (n) b.append(node('span', String(n), 'count'));
     b.addEventListener('click', () => setTab(tab)); tabButtons.set(tab, b); tabs.append(b);
@@ -184,9 +211,7 @@ function render(s: NetworkState): void {
   run.append(button(s.active ? 'Pause outreach' : 'Start outreach', async () => {
     if (s.active) { await act({ kind: 'network', action: 'pause' }, 'Outreach paused. Your progress is kept.'); return; }
     await setup.save();
-    const needsAi = setup.aiMode.value === 'chatgpt' && !s.dossier?.trim();
-    const go = () => act({ kind: 'network', action: 'start' }, 'Outreach started. It works slowly in visible LinkedIn tabs and pauses on anything uncertain.');
-    if (needsAi) await withProgress('Processing your dossier, then starting outreach', go); else await go();
+    await act({ kind: 'network', action: 'start' }, 'Outreach started. It works in its own window and pauses on anything uncertain.');
   }, s.active ? 'btn block' : 'btn primary block'));
   const meta = node('div', '', 'meta'); for (const text of usage(s)) meta.append(node('span', text, 'chip'));
   if (s.active && !withinActiveHours(settings)) meta.append(button('Run now anyway', async () => {
@@ -204,7 +229,7 @@ function render(s: NetworkState): void {
   const attention = count('attention');
   if (attention) { const c = node('div', '', 'callout bad'); c.append(node('span', `${attention} ${attention === 1 ? 'person needs' : 'people need'} your attention.`), button('Show', async () => openPeople('attention'), 'btn sm')); page.append(c); }
 
-  page.append(tabs, panels.setup, panels.people, panels.activity);
+  page.append(tabs, panels.setup, panels.people, panels.saved, panels.activity);
   refreshPeople(); setTab(ui.tab);
   document.scrollingElement?.scrollTo({ top: scroll });
 }
