@@ -15,10 +15,11 @@ LinkedIn now serves generated class names (for example `i87k8o`). No `artdeco`, 
 | More menu | Works | `role="menu"` rendered outside the top card, items are `role="menuitem"` |
 | Message window | Found | It is inside the open shadow root of `#interop-outlet`; `document.querySelector` cannot see it. Editor, Send button and recipient link were located. Nothing was typed or sent |
 | Invitation dialog (Add a note, Send) | NOT checked | Needs a click on Connect, which can send immediately on some layouts |
-| Typing into the note and message editors | NOT checked | |
+| Typing into the message editor | Works | Text inserted inside the shadow root, Send became enabled, text deleted and the draft closed. Send was not pressed |
+| Typing into the invitation note | NOT checked | |
 | Pending marker after an invitation | NOT checked | |
 | Sent-message confirmation | NOT checked | |
-| ChatGPT personalisation | NOT checked | |
+| ChatGPT personalisation | NOT checked (signed out) | Signed-out ChatGPT marks its form `data-logged-out` and uses `textarea[name="prompt"]`; both are now recognised. The signed-in composer and reply markup are still unchecked |
 | Jobs search | Removed | The jobs page has no stable hooks and every v0.8.0 selector returned zero cards. People search already gives the employer |
 
 No invitation or message has been sent by the extension or during testing.
