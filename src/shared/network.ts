@@ -19,6 +19,13 @@ export const networkProfileSchema=z.object({
   current:z.string().max(300).optional()
 });
 export type NetworkProfile=z.infer<typeof networkProfileSchema>;
+/** A person or job the user chose to remember from a LinkedIn page, with their own note. */
+export const savedItemSchema=z.object({
+  type:z.enum(['person','job']),url:z.string().max(300),title:z.string().trim().min(1).max(200),subtitle:z.string().max(500).default(''),
+  company:z.string().max(200).optional(),relation:z.enum(['connected','pending','not-connected','unknown']).optional(),note:z.string().max(300).default('')
+}).refine(i=>i.type==='person'?profileUrl(i.url)===i.url:/^https:\/\/www\.linkedin\.com\/jobs\/view\/\d+\/$/.test(i.url));
+export type SavedItem=z.infer<typeof savedItemSchema>&{savedAt:number;acceptedAt?:number};
+export const rememberMessage=z.object({kind:z.literal('network.remember'),action:z.enum(['get','save','remove']),item:savedItemSchema});
 export type ContactState='shortlisted'|'requesting'|'pending'|'connected'|'messaging'|'messaged'|'attention'|'skipped'|'review';
 export interface NetworkContact extends NetworkProfile {
   state:ContactState;reason:string;addedAt:number;requestedAt:number;checkedAt:number;messagedAt:number;message:string;
@@ -51,7 +58,7 @@ export interface NetworkState {
   profile:NetworkProfile|null;target:string;location:string;template:string;
   cv:{name:string;type:string;text:string;textVersion?:number;pages?:number;warnings?:string[];savedAt?:number;characterCount?:number}|null;
   dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
-  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;aiDefaultV3?:boolean;paceV2?:boolean;
+  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;saved?:SavedItem[];aiDefaultV3?:boolean;paceV2?:boolean;
   settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;
   actions:{at:number;kind:'connect'|'message'|'check';url:string;confirmed?:boolean;idempotencyKey?:string}[];
   intent:{id:string;tabId:number;url:string;kind:'connect'|'message';at:number;body:string;revision:number;claimed:boolean}|null;
@@ -134,6 +141,7 @@ export const networkRequest=z.discriminatedUnion('action',[
   z.object({kind:z.literal('network'),action:z.literal('saveCv'),name:z.string().trim().min(1).max(200),type:z.string().max(120),text:z.string().min(1),pages:z.number().int().optional()}),
   z.object({kind:z.literal('network'),action:z.literal('prepare'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('skip'),url:z.string()}),
+  z.object({kind:z.literal('network'),action:z.literal('forget'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('removeContact'),url:z.string()})
 ]);
 export type NetworkRequest=z.infer<typeof networkRequest>;

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { networkRequest, networkProfileSchema, profileUrl, networkKey, suggestedTarget, defaultSettings, type NetworkState } from '../shared/network';
+import { rememberMessage, type SavedItem, networkRequest, networkProfileSchema, profileUrl, networkKey, suggestedTarget, defaultSettings, type NetworkState } from '../shared/network';
 import { trustedExtension, trustedSite } from '../validators/security';
 import { getNetwork, updateNetwork, pauseNetwork, networkTick, processContact } from './network';
 import { networkCommand, networkTab } from './network-browser';
@@ -48,6 +48,32 @@ export function registerNetworkMessages():void{
           return s;
         });return allowed;
       })().then(allowed=>respond({allowed})).catch(()=>respond({allowed:false}));return true;
+    }
+    const remember=rememberMessage.safeParse(input);
+    if(remember.success){
+      // Sent by the Remember button on a LinkedIn page. Only the top frame of a real LinkedIn tab may use it.
+      if(!trustedSite(sender,chrome.runtime.id)){respond({saved:null});return false;}
+      const {action,item}=remember.data;
+      void (async()=>{
+        let result:SavedItem|null=null;
+        const before=(await getNetwork()).saved?.find(x=>x.url===item.url);
+        if(action==='get'&&(!before||!item.relation||before.relation===item.relation))return before??null; // nothing to write
+        await updateNetwork(s=>{
+          const list=s.saved??[],old=list.find(x=>x.url===item.url);
+          if(action==='remove'){s.saved=list.filter(x=>x.url!==item.url);return s;}
+          if(action==='get'){
+            if(old&&item.relation){
+              if(old.relation==='pending'&&item.relation==='connected'){old.acceptedAt=Date.now();s.status=`${old.title} accepted your connection request.${old.note?` Your note: ${old.note}`:''}`;}
+              old.relation=item.relation;
+            }
+            result=old??null;return s;
+          }
+          result={...old,...item,note:item.note||old?.note||'',savedAt:old?.savedAt??Date.now()};
+          s.saved=[result,...list.filter(x=>x.url!==item.url)].slice(0,500);
+          return s;
+        });
+        return result;
+      })().then(saved=>respond({saved})).catch(()=>respond({saved:null}));return true;
     }
     if(!trustedExtension(sender,chrome.runtime.id))return false;
     const parsed=networkRequest.safeParse(input);if(!parsed.success)return false;
@@ -143,6 +169,7 @@ export function registerNetworkMessages():void{
           await processContact(fresh,person,signal,true);
         }
         if(req.action==='removeContact'){await updateNetwork(s=>({...s,contacts:s.contacts.filter(p=>p.url!==req.url)}));}
+        if(req.action==='forget')await updateNetwork(s=>({...s,saved:(s.saved??[]).filter(x=>x.url!==req.url)}));
         if(req.action==='skip')await updateNetwork(s=>{const p=s.contacts.find(p=>p.url===req.url);if(p){p.state='skipped';p.reason='Skipped. No future action is scheduled.';}return s;});
         if(req.action==='clear')await clearAllNetwork();
         return statusView(await getNetwork());
