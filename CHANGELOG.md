@@ -15,6 +15,14 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.17.2 (referral audit)
+- Recruiter searches and recognition now cover HR, HRBP, human resources, people partners and operations, TA, sourcers, campus and early-careers teams. The same wider wording is used in general outreach searches.
+- Interns, trainees, students and people marked open to work are left out even when they work at the company.
+- A second page of recruiters and HR is read when the first is full; a job title with no clear function no longer causes a repeated search.
+- People LinkedIn lists on the job page under "People you can reach out to" are read and ranked by the same rules; a school alum gets a boost and the reason says so.
+- The company page link is found on layouts without the About block.
+- Someone already found for another job at the same company is shown under each of those jobs.
+
 ## 0.17.1
 - General outreach now uses LinkedIn's **Locations** filter for the target country instead of typing the place as a keyword (checked live for India). The country is no longer repeated in the keywords, which had been hiding everyone who does not spell it out in their profile.
 - LinkedIn's title filter was tried and is ignored for this account, so role terms stay in the keywords.

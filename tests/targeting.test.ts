@@ -282,3 +282,27 @@ describe('location in general outreach searches', () => {
     expect(geoFor('Anywhere')).toBeUndefined();
   });
 });
+
+describe('referral audit: people who hire under other titles, and people who cannot help', () => {
+  const job = { url: 'https://www.linkedin.com/jobs/view/1/', title: 'Product Management Intern', company: 'DeHaat', mode: 'referral' as const, companyId: '1' };
+  it.each(['HRBP at DeHaat', 'HR Business Partner', 'HR', 'H.R. Executive', 'Human Resources Generalist', 'People Partner', 'People & Culture', 'People Operations Specialist',
+    'Talent Acquisition', 'TA Specialist', 'Sourcer', 'Campus Hiring', 'University Relations', 'Early Careers Programme', 'Staffing Coordinator', 'Human Capital Associate'])(
+    '%s counts as someone who hires', headline => expect(rankReferral({ headline, degree: 3 }, job, true)).toMatchObject({ kind: 'recruiter' }));
+  it.each(['Product Intern at DeHaat', 'Management Trainee', 'Summer Internship | MBA', 'Product Manager | Open to work', 'Student at IIT Delhi'])(
+    '%s is left out even though they work there', headline => expect(rankReferral({ headline, degree: 1 }, job, true)).toBeNull());
+  it('keeps a campus recruiter whose headline mentions interns', () => {
+    expect(rankReferral({ headline: 'Campus Recruiter | Intern hiring', degree: 2 }, job, true)).toMatchObject({ kind: 'recruiter' });
+  });
+  it('puts a school alum ahead of an otherwise equal person and says why', () => {
+    const plain = rankReferral({ headline: 'Sales Manager | Dehaat', degree: 2 }, job, true)!, alum = rankReferral({ headline: 'Sales Manager | Dehaat', degree: 2, alum: true }, job, true)!;
+    expect(alum.score).toBeGreaterThan(plain.score);
+    expect(alum.reason).toContain('from your school');
+  });
+  it('searches for HR and HRBP as well as recruiters, looks at a second page of them, and does not repeat a search when the job has no clear function', () => {
+    const plan = referralPlan(job);
+    expect(plan[1]!.keywords).toMatch(/HRBP/); expect(plan[1]!.keywords).toMatch(/"human resources"/);
+    expect(plan[2]).toMatchObject({ page: 2 });
+    const vague = referralPlan({ ...job, title: 'Associate' });
+    expect(new Set(vague.map(step => `${step.keywords}|${step.page ?? 1}|${step.network.join()}`)).size).toBe(vague.length);
+  });
+});

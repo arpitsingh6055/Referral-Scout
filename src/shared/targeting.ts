@@ -129,7 +129,7 @@ export function searchCombos(roles: string[], location: string): SearchCombo[] {
   return roles.flatMap(role => {
     const fn = primaryFunction(role), early = /intern|trainee|fresher|graduate|entry|campus/i.test(role);
     return [
-      { role, kind: 'recruiter' as const, keywords: `(recruiter OR "talent acquisition" OR "talent partner" OR sourcer) ${fn}${place}` },
+      { role, kind: 'recruiter' as const, keywords: `(recruiter OR "talent acquisition" OR "talent partner" OR sourcer OR HR OR HRBP OR "human resources") ${fn}${place}` },
       ...(early ? [{ role, kind: 'campus' as const, keywords: `(campus OR university OR "early careers" OR intern) (recruiter OR "talent acquisition" OR hiring)${place}` }] : []),
       { role, kind: 'leader' as const, keywords: `(head OR director OR VP OR manager OR lead) ${fn}${place}` },
       { role, kind: 'founder' as const, keywords: `(founder OR "co-founder" OR CEO) ${fn}${place}` },
@@ -143,7 +143,8 @@ export function planSearch(roles: string[], location: string, cursor: number): {
   const page = Math.floor(cursor / combos.length) + 1;
   return page > MAX_SEARCH_PAGES ? null : { combo: combos[cursor % combos.length]!, page };
 }
-export const COMPANY_KINDS = ['(recruiter OR "talent acquisition" OR hiring OR "talent partner")', '(head OR director OR manager OR lead)', '(founder OR CEO OR "co-founder")'];
+// People who hire rarely all call themselves "recruiter": HR, HRBP, people partners and campus teams are included.
+export const COMPANY_KINDS = ['(recruiter OR recruitment OR "talent acquisition" OR "talent partner" OR sourcer OR HR OR HRBP OR "human resources" OR "people partner" OR "people operations" OR campus)', '(head OR director OR manager OR lead OR VP)', '(founder OR CEO OR "co-founder")'];
 
 /** Generic target suggestion: the profile's function if it has one, otherwise an internship the user can edit. */
 export function suggestTarget(headline: string, experienceText = ''): string {

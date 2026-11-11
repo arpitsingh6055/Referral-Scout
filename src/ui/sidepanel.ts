@@ -211,7 +211,9 @@ function buildReferrals(s: NetworkState): HTMLElement {
     panel.append(e); return panel;
   }
   for (const job of jobs) {
-    const people = s.contacts.filter(p => p.referralJob === job.url).sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    // One person is tied to one job; for a second job at the same company they are still shown, so nobody looks missing.
+    const sameCompany = new Set(jobs.filter(j => j.company.toLowerCase() === job.company.toLowerCase()).map(j => j.url));
+    const people = s.contacts.filter(p => !!p.referralJob && sameCompany.has(p.referralJob)).sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
     const { box, body } = accordion(`ref:${job.url}`, `${job.title} · ${job.company}`, job.finishedAt ? String(people.length) : 'searching…');
     if (jobs[0] === job && !ui.open.has(`ref:${job.url}`) && !ui.touched) box.open = true;
     const meta = node('div', '', 'meta');

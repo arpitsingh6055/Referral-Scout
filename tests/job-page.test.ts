@@ -20,3 +20,12 @@ it('falls back to the About the company block when the line under the title is m
   doc.querySelectorAll('p').forEach(p => { if (!p.textContent?.trim()) p.remove(); });
   expect(read(doc, 'https://www.linkedin.com/jobs/search-results/?currentJobId=4483425029')).toMatchObject({ title: 'Software engineer', company: 'Barclays' });
 });
+
+it('reads the company page link and LinkedIn’s own suggested person, with the school-alum flag', () => {
+  const doc = splitView('4478433477', 'Product Management Intern', 'DeHaat • Gurugram, Haryana, India (On-site)', 'DeHaat');
+  doc.querySelector('main')!.insertAdjacentHTML('beforeend', `<div componentkey="JobDetailsPeopleWhoCanHelpSlot_4478433477"><h2>People you can reach out to</h2>
+    <div><a href="https://www.linkedin.com/in/nikhil-singh-206689268/"><p>Nikhil Singh <span>• 2nd</span></p><p>Sales Manager | MBA @ IMT Ghaziabad | Dehaat | Ex Tata Group</p><p>School alum from Institute of Management Technology, Ghaziabad</p></a><button>Connect</button></div></div>`);
+  const item = read(doc, 'https://www.linkedin.com/jobs/search-results/?currentJobId=4478433477');
+  expect(item).toMatchObject({ companyUrl: 'https://www.linkedin.com/company/x/' });
+  expect(item!.suggested).toEqual([{ url: 'https://www.linkedin.com/in/nikhil-singh-206689268/', name: 'Nikhil Singh', headline: 'Sales Manager | MBA @ IMT Ghaziabad | Dehaat | Ex Tata Group', degree: 2, alum: true }]);
+});

@@ -73,6 +73,7 @@ export function registerNetworkMessages():void{
             old.cursor=0;old.found=s.contacts.filter(p=>p.referralJob===job.url).length;delete old.finishedAt;delete old.idTried;message='Searching again. See the Referrals tab.';
           }else message='Already searching. See the Referrals tab.';
           if(old&&job.companyUrl&&!old.companyUrl)old.companyUrl=job.companyUrl;
+          if(old&&job.suggested)old.suggested=job.suggested;
           s.status=`${job.company}: ${mode==='referral'?'looking for people who can refer you for':'listing your connections for'} ${job.title}.`;
           return s;
         });

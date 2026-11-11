@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { legacyNoteTemplate, fitNote, ACCEPTANCE_SWEEP, directMessage, DAY, MAX_REVIEW_QUEUE, SHORTLIST_BACKLOG, defaultSettings, emptyNetwork, networkKey, networkProfileSchema, nextContact, renderNote, introduction, withinActiveHours, type NetworkState, type NetworkContact } from '../shared/network';
+import { legacyNoteTemplate, profileUrl, fitNote, ACCEPTANCE_SWEEP, directMessage, DAY, MAX_REVIEW_QUEUE, SHORTLIST_BACKLOG, defaultSettings, emptyNetwork, networkKey, networkProfileSchema, nextContact, renderNote, introduction, withinActiveHours, type NetworkState, type NetworkContact } from '../shared/network';
 import { classify, geoFor, normalizeCompany, planSearch, companyOf } from '../shared/targeting';
 import { companyFromCurrent } from '../parsers/network';
 import { read, mutate } from '../storage/state';
@@ -136,9 +136,15 @@ async function referralScan(s:NetworkState,job:ReferralJob,signal:AbortSignal):P
   await updateNetwork(current=>{
     const saved=current.referralJobs?.find(j=>j.url===job.url);if(!saved)return current; // removed while searching
     const queue=saved.mode==='referral';let added=0;
-    for(const person of people){
+    // LinkedIn's own suggestions from the job page are ranked by the same rules, once. They are not known to work
+    // at the company, so the company must be visible in their headline; the school flag is carried over.
+    const offered=(saved.suggested??[]).flatMap(o=>{const url=profileUrl(o.url);return url?[{url,name:o.name,headline:o.headline,location:'',about:'',...(o.degree?{degree:o.degree}:{}),alum:o.alum===true,offered:true}]:[];});
+    delete saved.suggested;
+    const alumni=new Set(offered.filter(o=>o.alum).map(o=>o.url));
+    for(const row of [...people.map(p=>({...p,alum:alumni.has(p.url),offered:false})),...offered.filter(o=>!people.some(p=>p.url===o.url))]){
+      const {alum,offered:fromLinkedIn,...person}=row;
       if(person.url===current.profile?.url)continue;
-      const verdict=rankReferral(person,saved,verified);if(!verdict)continue;
+      const verdict=rankReferral({...person,alum},saved,verified&&!fromLinkedIn);if(!verdict)continue;
       const direct=person.degree===1,state=queue?(direct?'connected' as const:'shortlisted' as const):'found' as const;
       const existing=current.contacts.find(c=>c.url===person.url);
       if(existing){

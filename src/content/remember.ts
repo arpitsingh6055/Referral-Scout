@@ -53,7 +53,7 @@ const referralButton = (mode: "referral" | "connections", label: string): HTMLBu
     const job = current; if (!job || job.type !== "job") return;
     if (!job.subtitle) { b.textContent = "Could not read the company here. Open the job on its own page and try again."; setTimeout(() => { b.textContent = label; }, 6000); return; }
     b.textContent = "Starting…";
-    void chrome.runtime.sendMessage({ kind: "network.referral", mode, job: { url: job.url, title: job.title, company: job.subtitle, location: job.location ?? "", ...(job.companyUrl ? { companyUrl: job.companyUrl } : {}) } })
+    void chrome.runtime.sendMessage({ kind: "network.referral", mode, job: { url: job.url, title: job.title, company: job.subtitle, location: job.location ?? "", ...(job.companyUrl ? { companyUrl: job.companyUrl } : {}), ...(job.suggested ? { suggested: job.suggested } : {}) } })
       .then((reply: { message?: string } | undefined) => { b.textContent = reply?.message ?? "Open Cold Contact to see progress."; })
       .catch(() => { b.textContent = "Refresh this LinkedIn tab and try again."; })
       .finally(() => setTimeout(() => { b.textContent = label; }, 6000));

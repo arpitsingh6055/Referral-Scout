@@ -8,7 +8,8 @@ import { ownProfileEditLink, profileHeader, topCardFacts } from "../parsers/netw
  * precise but can never make the button disappear.
  */
 export type Relation = "connected" | "pending" | "not-connected" | "unknown";
-export interface PageItem { type: "person" | "job"; url: string; title: string; subtitle: string; company?: string; location?: string; companyUrl?: string; relation?: Relation }
+export interface PageItem { type: "person" | "job"; url: string; title: string; subtitle: string; company?: string; location?: string; companyUrl?: string;
+  suggested?: { url: string; name: string; headline: string; degree?: number; alum?: boolean }[]; relation?: Relation }
 export interface PageDeps { visible: (e: Element) => boolean; relation: (top: HTMLElement) => Relation }
 
 const clean = (text: string | null | undefined): string => (text ?? "").replace(/\s+/g, " ").trim();
@@ -61,11 +62,25 @@ function jobItem(doc: Document, href: string): PageItem | null {
   const about = clean(doc.querySelector(`[componentkey="JobDetails_AboutTheCompany_${id}"] a[href*="/company/"]`)?.textContent).replace(/\s*[\d,.]+[KM]?\s+followers.*$/i, "");
   // The company's own page, e.g. /company/dehaat/life/ -> https://www.linkedin.com/company/dehaat/
   const slug = /\/company\/([^/?#]+)/.exec(doc.querySelector<HTMLAnchorElement>(`[componentkey="JobDetails_AboutTheCompany_${id}"] a[href*="/company/"]`)?.getAttribute("href") ?? "")?.[1];
-  const companyUrl = slug ? `https://www.linkedin.com/company/${slug}/` : "";
+  // Not every layout has the About block: fall back to a company link whose text is the company name itself.
+  const named = slug ? undefined : [...doc.querySelectorAll<HTMLAnchorElement>('main a[href*="/company/"]')].find(a => header && clean(a.textContent).toLowerCase() === header.company.toLowerCase());
+  const anySlug = slug ?? /\/company\/([^/?#]+)/.exec(named?.getAttribute("href") ?? "")?.[1];
+  const companyUrl = anySlug ? `https://www.linkedin.com/company/${anySlug}/` : "";
+  // LinkedIn's "People you can reach out to" box on the job, when it shows people inline.
+  const suggested: NonNullable<PageItem["suggested"]> = [];
+  for (const a of doc.querySelectorAll<HTMLAnchorElement>(`[componentkey="JobDetailsPeopleWhoCanHelpSlot_${id}"] a[href*="/in/"]`)) {
+    const url = profileUrl(a.getAttribute("href") ?? ""); if (!url || suggested.some(p => p.url === url)) continue;
+    let card: Element | null = a; for (let i = 0; i < 6 && card && card.querySelectorAll("p").length < 2; i++) card = card.parentElement;
+    const lines = [...(card?.querySelectorAll("p") ?? [])].map(p => clean(p.textContent)).filter(Boolean);
+    const lead = /^(.*?)\s*[•·]\s*(1st|2nd|3rd)/i.exec(lines[0] ?? "");
+    const name = (lead ? lead[1]! : lines[0] ?? clean(a.textContent)).trim(), headline = lines.slice(1).find(l => !/^[•·]|alum|mutual connection/i.test(l)) ?? "";
+    if (name && headline) suggested.push({ url, name: name.slice(0, 150), headline: headline.slice(0, 500), ...(lead ? { degree: Number(lead[2]![0]) } : {}), ...(lines.some(l => /\balum/i.test(l)) ? { alum: true } : {}) });
+    if (suggested.length >= 10) break;
+  }
   const sameJob = !!parts[0] && !!parts[1] && parts[0].toLowerCase() === title.toLowerCase();
   const company = (onJobPage && parts[1] ? parts[1] : "") || header?.company || about || (sameJob ? parts[1]! : "");
   return { type: "job", url: `https://www.linkedin.com/jobs/view/${id}/`, title: title.slice(0, 200), subtitle: company.slice(0, 500),
-    ...(company ? { company: company.slice(0, 200) } : {}), ...(companyUrl ? { companyUrl } : {}), ...(header?.location ? { location: header.location.slice(0, 200) } : {}) };
+    ...(company ? { company: company.slice(0, 200) } : {}), ...(companyUrl ? { companyUrl } : {}), ...(suggested.length ? { suggested } : {}), ...(header?.location ? { location: header.location.slice(0, 200) } : {}) };
 }
 
 export function pageItem(doc: Document, href: string, deps: PageDeps): PageItem | null {

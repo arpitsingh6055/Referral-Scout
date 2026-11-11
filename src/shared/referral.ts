@@ -19,7 +19,9 @@ export const referralJobInput = z.object({
   company: z.string().trim().min(1).max(200),
   location: z.string().max(200).default(''),
   /** The company's own LinkedIn page, when the job page links to it. Used once to read the company's number for the Current company filter. */
-  companyUrl: z.string().regex(/^https:\/\/www\.linkedin\.com\/company\/[^/?#]+\/$/).optional()
+  companyUrl: z.string().regex(/^https:\/\/www\.linkedin\.com\/company\/[^/?#]+\/$/).optional(),
+  /** People LinkedIn itself lists on the job page under "People you can reach out to". Checked and ranked like everyone else. */
+  suggested: z.array(z.object({ url: z.string().max(300), name: z.string().max(150), headline: z.string().max(500), degree: z.number().int().min(1).max(3).optional(), alum: z.boolean().optional() })).max(10).optional()
 });
 export const referralMessage = z.object({ kind: z.literal('network.referral'), mode: z.enum(['referral', 'connections']), job: referralJobInput });
 export interface ReferralJob extends z.infer<typeof referralJobInput> {
@@ -44,8 +46,10 @@ export function referralPlan(job: Pick<ReferralJob, 'company' | 'title' | 'mode'
     const known: ReferralSearch[] = [{ label: `people you already know at ${at}`, keywords: '', network: ['F'] }, { label: `more people you know at ${at}`, keywords: '', network: ['F'], page: 2 }];
     if (job.mode === 'connections') return known;
     return [known[0]!,
-      { label: `recruiters at ${at}`, keywords: COMPANY_KINDS[0]!, network: ['S', 'O'] },
-      { label: `the ${fn || 'hiring'} team at ${at}`, keywords: fn || COMPANY_KINDS[1]!, network: ['S', 'O'] },
+      { label: `recruiters and HR at ${at}`, keywords: COMPANY_KINDS[0]!, network: ['S', 'O'] },
+      { label: `more recruiters and HR at ${at}`, keywords: COMPANY_KINDS[0]!, network: ['S', 'O'], page: 2 },
+      // Without a recognisable function in the job title this would repeat the managers search below.
+      ...(fn ? [{ label: `the ${fn} team at ${at}`, keywords: fn, network: ['S', 'O'] as ('S' | 'O')[] }] : []),
       { label: `managers and leaders at ${at}`, keywords: COMPANY_KINDS[1]!, network: ['S', 'O'] },
       { label: `founders at ${at}`, keywords: COMPANY_KINDS[2]!, network: ['S', 'O'] }];
   }
@@ -74,7 +78,7 @@ const WEIGHT: Record<ReferralKind, number> = { recruiter: 300, leader: 260, foun
 const WHY: Record<ReferralKind, string> = { recruiter: 'Recruiter', leader: 'On the hiring team', founder: 'Founder', senior: 'Senior person', peer: 'Works in the same team area', employee: 'Works there' };
 // For a referral the test is wider than for general outreach: anyone in hiring or people teams, and anyone senior
 // at the company, can put a name forward even when their own function differs from the job's.
-const HIRING = /recruit|talent|\bhr\b|human resources|people\s*(?:&|and|ops|operations|partner|team|\bculture)|hiring|staffing/i;
+const HIRING = /recruit|talent|sourc(?:er|ing)|\bh\.?r\.?\b|\bhrbp\b|\bhr\s*bp\b|human\s+(?:resources?|capital)|people\s*(?:&|and|ops|operations|partner|business|team|success|experience|\bculture)|\bta\b|hiring|staffing|campus|university\s+(?:relations|recruit)|early\s+careers?|employer\s+brand/i;
 const SENIOR = /\b(?:head|director|vp|vice president|president|chief|c[tfoepm]o|manager|lead|principal|partner|avp|svp|evp)\b/i;
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -84,20 +88,22 @@ const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * A plain employee in an unrelated team only counts if the person already knows them (1st degree):
  * a stranger who merely works there is the unhelpful suggestion this is meant to avoid.
  */
-export function rankReferral(person: { headline: string; current?: string | undefined; degree?: number | undefined }, job: Pick<ReferralJob, 'company' | 'title'>, verified = false): ReferralVerdict | null {
+export function rankReferral(person: { headline: string; current?: string | undefined; degree?: number | undefined; alum?: boolean | undefined }, job: Pick<ReferralJob, 'company' | 'title'>, verified = false): ReferralVerdict | null {
   const headline = person.headline;
   if (!verified && !companyMatches(`${person.current ?? ''} | ${headline}`, job.company)) return null;
   // "Ex Tata Group" must not rule out someone now at this company; only "ex-<this company>" does.
   if (new RegExp(`\\b(?:ex|former(?:ly)?|previously)\\b[-\\s:@]*(?:at\\s+)?${escape(job.company)}`, 'i').test(headline)) return null;
-  if (/\b(?:open to work|seeking|aspiring|looking for)\b/i.test(headline) || (!verified && /\b(?:student|intern)\b/i.test(headline))) return null;
+  // Interns, trainees and job seekers cannot put a name forward, even when they do work there.
+  if (/\b(?:open to work|seeking|aspiring|looking for|intern|internship|trainee|apprentice|student)\b/i.test(headline) && !/\b(?:recruit|talent|hr|campus|early careers?)\b/i.test(headline)) return null;
   const fn = functionWords([job.title])[0];
   const kind: ReferralKind = classify({ headline }, { roles: [job.title] })?.category
     ?? (HIRING.test(headline) ? 'recruiter' : SENIOR.test(headline) ? 'senior' : fn && new RegExp(`\\b${escape(fn)}`, 'i').test(headline) ? 'peer' : 'employee');
   const degree = person.degree ?? 3;
   if (kind === 'employee' && degree !== 1) return null;
   if (kind === 'peer' && degree > 2) return null; // same-team peers only when there is at least a mutual connection
-  const score = WEIGHT[kind] + (degree === 1 ? 60 : degree === 2 ? 20 : 0);
-  return { kind, score, reason: `${WHY[kind]} at ${job.company}${degree === 1 ? ', already your connection' : ''}. For: ${job.title}` };
+  // Someone from the same school is noticeably more willing to help; LinkedIn flags them on the job page.
+  const score = WEIGHT[kind] + (degree === 1 ? 60 : degree === 2 ? 20 : 0) + (person.alum ? 25 : 0);
+  return { kind, score, reason: `${WHY[kind]} at ${job.company}${degree === 1 ? ', already your connection' : ''}${person.alum ? ', from your school' : ''}. For: ${job.title}` };
 }
 
 const first = (name: string): string => name.split(/\s+/)[0] || name;
