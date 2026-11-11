@@ -1,6 +1,6 @@
 import './network.css';
 import { appRoot, element, errorText } from './render';
-import { DAY, defaultSettings, introduction, renderNote, withinActiveHours, type ContactState, type NetworkContact, type NetworkRequest, type NetworkState, type OutreachSettings } from '../shared/network';
+import { DAY, defaultSettings, introduction, renderNote, withinActiveHours, type ContactState, type NetworkContact, type NetworkRequest, type NetworkState, type OutreachSettings, dueReminders, staleRequests, jobStatuses, type JobStatus, type SavedItem } from '../shared/network';
 import { completeCvText } from './cv-text';
 import { createToaster, type ToastKind } from './toast';
 
@@ -141,30 +141,63 @@ function welcome(): HTMLElement {
   return hero;
 }
 
-/* People and jobs remembered with the button on LinkedIn pages. */
+/* People and jobs remembered with the button on LinkedIn pages: reminders, job progress and old requests. */
+const jobLabels: Record<JobStatus, string> = { saved: 'Saved', applied: 'Applied', interviewing: 'Interviewing', offer: 'Offer', rejected: 'Rejected' };
+const dayLabel = (t: number): string => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+function savedCard(item: SavedItem, due: boolean): HTMLElement {
+  const card = node('article', '', due ? 'person due' : 'person'), info = node('div');
+  info.append(link(item.title, item.url, 'person-name'), node('p', item.subtitle, 'muted small clamp'));
+  card.append(info);
+  const badges = node('div', '', 'meta');
+  const relation: Record<string, string> = { pending: 'Request pending', connected: 'Connected', 'not-connected': 'Not connected' };
+  if (item.type === 'job' && item.status && item.status !== 'saved') badges.append(node('span', `${jobLabels[item.status]} ${dayLabel(item.statusAt ?? item.savedAt)}`, `badge ${item.status === 'rejected' ? '' : item.status === 'applied' ? 'review' : 'connected'}`));
+  if (item.acceptedAt) badges.append(node('span', `Accepted ${dayLabel(item.acceptedAt)}`, 'badge connected'));
+  else if (item.type === 'person' && item.relation && relation[item.relation]) badges.append(node('span', relation[item.relation]!, item.relation === 'pending' ? 'badge review' : 'badge'));
+  if (item.remindAt) badges.append(node('span', due ? 'Reminder due' : `Reminder ${dayLabel(item.remindAt)}`, due ? 'badge attention' : 'chip'));
+  badges.append(node('span', `Saved ${dayLabel(item.savedAt)}`, 'chip'));
+  card.append(badges);
+  if (item.note) card.append(node('p', item.note, 'reason'));
+  const update = (patch: object, done: string) => act({ kind: 'network', action: 'updateSaved', url: item.url, ...patch }, done);
+  const controls = node('div', '', 'saved-controls');
+  const pick = (label: string, options: [string, string][], value: string, onPick: (v: string) => Promise<void>): void => {
+    const wrap = node('label', '', 'mini'), select = node('select'); wrap.append(node('span', label), select);
+    for (const [v, text] of options) { const o = node('option', text); o.value = v; select.append(o); }
+    select.value = value; select.addEventListener('change', () => { void onPick(select.value); }); controls.append(wrap);
+  };
+  if (item.type === 'job') pick('Progress', jobStatuses.map(st => [st, jobLabels[st]] as [string, string]), item.status ?? 'saved',
+    v => update({ status: v }, `${item.title}: marked ${jobLabels[v as JobStatus].toLowerCase()}.`));
+  pick('Remind me', [['', item.remindAt ? `On ${dayLabel(item.remindAt)}` : 'No reminder'], ['1', 'Tomorrow'], ['3', 'In 3 days'], ['5', 'In 5 days'], ['7', 'In a week'], ['14', 'In 2 weeks'], ...(item.remindAt ? [['off', 'Turn off'] as [string, string]] : [])], '',
+    v => v === '' ? Promise.resolve() : update({ remindDays: v === 'off' ? null : Number(v) }, v === 'off' ? 'Reminder turned off.' : `Reminder set for ${item.title}.`));
+  card.append(controls);
+  const noteBox = node('details', '', 'inline'), noteEdit = node('textarea', '', 'draft'); noteEdit.value = item.note; noteEdit.rows = 2; noteEdit.maxLength = 300;
+  noteEdit.placeholder = 'Why are you keeping this? What do you want to do next?'; noteEdit.addEventListener('input', () => { dirty = true; });
+  noteBox.append(node('summary', item.note ? 'Edit note' : 'Add a note'), noteEdit, button('Save note', () => update({ note: noteEdit.value }, 'Note saved.'), 'btn sm'));
+  const actions = node('div', '', 'person-actions');
+  if (due) actions.append(button('Done', () => update({ remindDays: null }, 'Reminder cleared.'), 'btn sm primary'));
+  actions.append(button('Forget', async () => { if (confirm(`Remove ${item.title} from Saved?`)) await act({ kind: 'network', action: 'forget', url: item.url }, `${item.title} removed from Saved.`); }, 'btn sm ghost danger'));
+  card.append(noteBox, actions);
+  return card;
+}
 function buildSaved(s: NetworkState): HTMLElement {
-  const panel = node('div'), items = s.saved ?? [];
+  const panel = node('div'), items = s.saved ?? [], due = dueReminders(s), stale = staleRequests(s);
+  const section = (title: string, help: string): void => { panel.append(node('h3', title, 'section-title')); if (help) panel.append(node('p', help, 'field-help section-help')); };
+  if (due.length) { section(`Due now (${due.length})`, 'You asked to be reminded about these.'); for (const item of due) panel.append(savedCard(item, true)); }
+  if (stale.length) {
+    section(`Requests unanswered for over 3 weeks (${stale.length})`, 'They are unlikely to be accepted now and count against LinkedIn’s limit on pending invitations. Withdraw them on LinkedIn’s own page.');
+    const box = node('article', '', 'person');
+    for (const r of stale) { const row = node('p', '', 'stale-row'); row.append(link(r.name, r.url, 'person-name'), node('span', `sent ${dayLabel(r.since)}`, 'muted small')); box.append(row); }
+    box.append(link('Open my sent invitations on LinkedIn', 'https://www.linkedin.com/mynetwork/invitation-manager/sent/', 'btn sm'));
+    panel.append(box);
+  }
   if (!items.length) {
-    const e = node('div', '', 'empty'); e.append(node('b', 'Nothing remembered yet'), node('span', 'Open any LinkedIn profile or job and press "Remember" at the bottom left of the page. Add a note so you know why later.'));
+    const e = node('div', '', 'empty'); e.append(node('b', 'Nothing remembered yet'), node('span', 'Open any LinkedIn profile or job and press "Remember" at the bottom left of the page. Add a note, set a reminder, and track jobs you applied to here.'));
     panel.append(e); return panel;
   }
-  const relation: Record<string, string> = { pending: 'Request pending', connected: 'Connected', 'not-connected': 'Not connected' };
-  for (const [type, heading] of [['person', 'People'], ['job', 'Jobs']] as const) {
-    const group = items.filter(i => i.type === type); if (!group.length) continue;
-    panel.append(node('h3', `${heading} (${group.length})`, 'card-sub'));
-    for (const item of group) {
-      const card = node('article', '', 'person'), info = node('div');
-      info.append(link(item.title, item.url, 'person-name'), node('p', item.subtitle, 'muted small clamp'));
-      card.append(info);
-      const badges = node('div', '', 'meta');
-      if (item.acceptedAt) badges.append(node('span', `Accepted ${when(item.acceptedAt)}`, 'badge connected'));
-      else if (item.relation && relation[item.relation]) badges.append(node('span', relation[item.relation]!, item.relation === 'pending' ? 'badge review' : 'badge'));
-      badges.append(node('span', `Saved ${when(item.savedAt)}`, 'chip'));
-      card.append(badges);
-      if (item.note) card.append(node('p', item.note, 'reason'));
-      card.append(button('Forget', async () => { await act({ kind: 'network', action: 'forget', url: item.url }, `${item.title} removed from Saved.`); }, 'btn sm ghost danger'));
-      panel.append(card);
-    }
+  for (const [type, heading] of [['job', 'Jobs'], ['person', 'People']] as const) {
+    const group = items.filter(i => i.type === type && !due.includes(i)); if (!group.length) continue;
+    const counts = type === 'job' ? jobStatuses.map(st => [st, group.filter(i => (i.status ?? 'saved') === st).length] as const).filter(([, n]) => n).map(([st, n]) => `${n} ${jobLabels[st].toLowerCase()}`).join(' · ') : '';
+    section(`${heading} (${group.length})`, counts);
+    for (const item of group) panel.append(savedCard(item, false));
   }
   return panel;
 }
@@ -198,7 +231,7 @@ function render(s: NetworkState): void {
   const peopleList = node('div'), refreshPeople = (): void => { buildPeople(s, peopleList, refreshPeople); };
   panels.people.append(peopleList);
   const reviewCount = count('review');
-  for (const [tab, label, n] of [['setup', 'Setup', 0], ['people', 'People', s.contacts.filter(p => p.state !== 'skipped').length], ['saved', 'Saved', (s.saved ?? []).length], ['activity', 'Activity', 0]] as const) {
+  for (const [tab, label, n] of [['setup', 'Setup', 0], ['people', 'People', s.contacts.filter(p => p.state !== 'skipped').length], ['saved', 'Saved', dueReminders(s).length || (s.saved ?? []).length], ['activity', 'Activity', 0]] as const) {
     const b = node('button', label, 'tab'); b.type = 'button'; b.setAttribute('role', 'tab');
     if (n) b.append(node('span', String(n), 'count'));
     b.addEventListener('click', () => setTab(tab)); tabButtons.set(tab, b); tabs.append(b);
@@ -226,6 +259,9 @@ function render(s: NetworkState): void {
   }
   page.append(kpis);
   if (reviewCount) { const c = node('div', '', 'callout'); c.append(node('span', `${reviewCount} ${reviewCount === 1 ? 'message needs' : 'messages need'} your approval before anything is sent.`), button('Review', async () => openPeople('review'), 'btn sm primary')); page.append(c); }
+  const dueCount = dueReminders(s).length, staleCount = staleRequests(s).length;
+  if (dueCount) { const c = node('div', '', 'callout'); c.append(node('span', `${dueCount} ${dueCount === 1 ? 'reminder is' : 'reminders are'} due.`), button('Show', async () => { setTab('saved'); }, 'btn sm')); page.append(c); }
+  if (staleCount) { const c = node('div', '', 'callout'); c.append(node('span', `${staleCount} connection ${staleCount === 1 ? 'request has' : 'requests have'} been unanswered for over 3 weeks.`), button('Show', async () => { setTab('saved'); }, 'btn sm')); page.append(c); }
   const attention = count('attention');
   if (attention) { const c = node('div', '', 'callout bad'); c.append(node('span', `${attention} ${attention === 1 ? 'person needs' : 'people need'} your attention.`), button('Show', async () => openPeople('attention'), 'btn sm')); page.append(c); }
 
@@ -365,15 +401,32 @@ function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
   const line = p.state === 'pending' ? `Invited ${when(p.requestedAt)} · next check ${when(p.nextCheckAt ?? ((p.checkedAt || p.requestedAt) + DAY))}`
     : p.acceptedAt ? `Accepted ${when(p.acceptedAt)}${p.messagedAt ? ` · introduced ${when(p.messagedAt)}` : ''}` : p.reason;
   card.append(node('p', line, 'reason'));
+  let saveEdit: (() => Promise<unknown>) | null = null; // an unsaved rewording is saved before Approve sends anything
   for (const [text, label] of [[p.invitationNote, 'Invitation note'], [p.message, p.messagedAt ? 'Message sent' : 'Message prepared']] as const) {
-    if (!text) continue; const d = node('details', '', 'inline'); d.append(node('summary', label), node('div', text, 'bubble')); card.append(d);
+    if (!text) continue; const d = node('details', '', 'inline'); d.append(node('summary', label));
+    const isDraft = p.state === 'review' && (label === 'Invitation note' ? p.approvalKind === 'connect' : p.approvalKind === 'message');
+    if (!isDraft) { d.append(node('div', text, 'bubble')); card.append(d); continue; }
+    // A draft waiting for approval can be reworded right here before it is sent.
+    d.open = true;
+    const limit = p.approvalKind === 'connect' ? 200 : 2000, edit = node('textarea', '', 'draft'), counter = node('span', '', 'field-help');
+    edit.value = text; edit.rows = p.approvalKind === 'connect' ? 4 : 6; edit.maxLength = 2000; edit.setAttribute('aria-label', `${label} for ${p.name}`);
+    const save = button('Save changes', () => act({ kind: 'network', action: 'editDraft', url: p.url, text: edit.value }, `Your wording for ${p.name} is saved.`), 'btn sm');
+    const count = (): void => { const n = edit.value.trim().length; counter.textContent = `${n}/${limit}`; counter.classList.toggle('over', n > limit); save.hidden = edit.value.trim() === text.trim(); save.disabled = n > limit || n === 0; };
+    edit.addEventListener('input', () => { dirty = true; count(); }); count();
+    saveEdit = async () => { if (edit.value.trim() !== text.trim()) await request({ kind: 'network', action: 'editDraft', url: p.url, text: edit.value }); };
+    const tools = node('div', '', 'draft-tools');
+    tools.append(counter, save,
+      button('Rewrite with ChatGPT', () => withProgress(`ChatGPT is rewriting the note for ${p.name}`, () => act({ kind: 'network', action: 'prepare', url: p.url }, `ChatGPT rewrote the note for ${p.name}. Read it before approving.`)), 'btn sm ghost'),
+      button('Use my template', () => act({ kind: 'network', action: 'templateDraft', url: p.url }, `Back to your template for ${p.name}.`), 'btn sm ghost'));
+    d.append(edit, tools); card.append(d);
   }
   const actions = node('div', '', 'person-actions');
   if (p.state === 'review' && p.approvalKind && s.active) actions.append(button(`Approve ${p.approvalKind === 'connect' ? 'invitation' : 'message'}`, async () => {
     if (!confirm(`Send the saved ${p.approvalKind === 'connect' ? 'invitation' : 'message'} to ${p.name}?`)) return;
+    await saveEdit?.();
     await act({ kind: 'network', action: 'approve', url: p.url }, `Approval processed for ${p.name}. Check the card for the verified result.`);
   }, 'btn sm primary'));
-  if (!s.active && s.settings?.aiMode === 'chatgpt' && !['pending', 'messaged', 'skipped'].includes(p.state)) actions.append(button('Draft with ChatGPT', () => withProgress(`Drafting for ${p.name}`, () => act({ kind: 'network', action: 'prepare', url: p.url })), 'btn sm'));
+  if (p.state === 'shortlisted') actions.append(button('Draft with ChatGPT', () => withProgress(`ChatGPT is drafting for ${p.name}`, () => act({ kind: 'network', action: 'prepare', url: p.url }, `Draft ready for ${p.name}. Nothing was sent.`)), 'btn sm ghost'));
   if (!['messaged', 'skipped', 'requesting', 'messaging'].includes(p.state)) actions.append(button('Skip', () => act({ kind: 'network', action: 'skip', url: p.url }, `${p.name} skipped. Nothing more will be sent.`), 'btn sm ghost'));
   actions.append(button('Delete', async () => { if (confirm(`Delete the saved record for ${p.name}? This does not undo anything on LinkedIn.`)) await act({ kind: 'network', action: 'removeContact', url: p.url }, `Record for ${p.name} deleted.`); }, 'btn sm ghost danger'));
   card.append(actions);

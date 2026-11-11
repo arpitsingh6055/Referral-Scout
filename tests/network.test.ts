@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { DAY, defaultSettings, emptyNetwork, introduction, nextContact, profileUrl, relevance, suggestedTarget, type NetworkContact, type NetworkState } from "../src/shared/network";
+import { DAY, defaultSettings, dueReminders, staleRequests, emptyNetwork, introduction, nextContact, profileUrl, relevance, suggestedTarget, type NetworkContact, type NetworkState } from "../src/shared/network";
 import { getNetwork, updateNetwork, processContact, recoverNetwork, pauseNetwork, networkTick } from "../src/background/network";
 import { networkCommand, networkTab } from "../src/background/network-browser";
 import { clearDatabase, closeDatabase } from "../src/storage/database";
@@ -193,4 +193,31 @@ it('remembers a person from a LinkedIn page, keeps the note, and notices when a 
   expect((await page('save', {}, {id:'abc',tab:{id:4},frameId:0,url:'https://evil.example/in/alex/'})).saved).toBeNull();
   await page('remove', {});
   expect((await getNetwork()).saved).toEqual([]);
+});
+
+it('tracks a saved job through applied, sets a reminder for the morning of the day, and lists old requests', async () => {
+  const send = networkUi();
+  const job = { type: 'job' as const, url: 'https://www.linkedin.com/jobs/view/123/', title: 'APM Intern', subtitle: 'Acme', note: '', savedAt: Date.now() };
+  const oldAsk = { type: 'person' as const, url: 'https://www.linkedin.com/in/old/', title: 'Old Request', subtitle: '', note: '', relation: 'pending' as const, savedAt: Date.now() - 25 * DAY };
+  await updateNetwork(s => ({ ...s, profile, saved: [job, oldAsk], contacts: [contact({ state: 'pending', requestedAt: Date.now() - 22 * DAY }), contact({ url: 'https://www.linkedin.com/in/fresh/', state: 'pending', requestedAt: Date.now() - DAY })] }));
+  expect((await send({ action: 'updateSaved', url: job.url, status: 'applied', remindDays: 5, note: 'Follow up with recruiter' })).ok).toBe(true);
+  const saved = (await getNetwork()).saved!.find(i => i.url === job.url)!;
+  expect(saved).toMatchObject({ status: 'applied', statusAt: Date.now(), note: 'Follow up with recruiter' });
+  const due = new Date(saved.remindAt!);
+  expect([due.getHours(), Math.round((saved.remindAt! - Date.now()) / DAY)]).toEqual([8, 5]);
+  expect(dueReminders(await getNetwork())).toHaveLength(0);
+  expect(dueReminders(await getNetwork(), Date.now() + 6 * DAY).map(i => i.title)).toEqual(['APM Intern']);
+  expect(staleRequests(await getNetwork()).map(r => r.name)).toEqual(['Old Request', 'Alex Example']); // oldest first; the 1-day-old request is not listed
+  await send({ action: 'updateSaved', url: job.url, remindDays: null });
+  expect((await getNetwork()).saved!.find(i => i.url === job.url)!.remindAt).toBeUndefined();
+});
+
+it('lets the person reword a draft or go back to their template, and refuses an invitation note over 200 characters', async () => {
+  const send = networkUi();
+  await updateNetwork(s => ({ ...s, profile, target: 'Product Management', contacts: [contact({ state: 'review', approvalKind: 'connect', invitationNote: 'old', category: 'founder', companyName: 'Example' })] }));
+  expect((await send({ action: 'editDraft', url: contact().url, text: 'Hi Alex, my own words.' })).ok).toBe(true);
+  expect((await getNetwork()).contacts[0]!.invitationNote).toBe('Hi Alex, my own words.');
+  expect(await send({ action: 'editDraft', url: contact().url, text: 'x'.repeat(201) })).toMatchObject({ ok: false, error: expect.stringMatching(/200 characters/) });
+  await send({ action: 'templateDraft', url: contact().url });
+  expect((await getNetwork()).contacts[0]!.invitationNote).toMatch(/^Hi Alex, I’m Example, exploring Product Management opportunities\. .*what you’re building at Example\.$/);
 });

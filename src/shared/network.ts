@@ -24,7 +24,18 @@ export const savedItemSchema=z.object({
   type:z.enum(['person','job']),url:z.string().max(300),title:z.string().trim().min(1).max(200),subtitle:z.string().max(500).default(''),
   company:z.string().max(200).optional(),relation:z.enum(['connected','pending','not-connected','unknown']).optional(),note:z.string().max(300).default('')
 }).refine(i=>i.type==='person'?profileUrl(i.url)===i.url:/^https:\/\/www\.linkedin\.com\/jobs\/view\/\d+\/$/.test(i.url));
-export type SavedItem=z.infer<typeof savedItemSchema>&{savedAt:number;acceptedAt?:number};
+export const jobStatuses=['saved','applied','interviewing','offer','rejected'] as const;
+export type JobStatus=typeof jobStatuses[number];
+export type SavedItem=z.infer<typeof savedItemSchema>&{savedAt:number;acceptedAt?:number;status?:JobStatus;statusAt?:number;remindAt?:number};
+/** Requests still unanswered after this long are worth withdrawing: they count against LinkedIn's pending limit. */
+export const STALE_REQUEST=21*86400000;
+export interface StaleRequest {name:string;url:string;since:number}
+export function staleRequests(s:Pick<NetworkState,'contacts'|'saved'>,now=Date.now()):StaleRequest[] {
+  const tracked=s.contacts.filter(p=>p.state==='pending'&&p.requestedAt>0&&now-p.requestedAt>STALE_REQUEST).map(p=>({name:p.name,url:p.url,since:p.requestedAt}));
+  const remembered=(s.saved??[]).filter(i=>i.type==='person'&&i.relation==='pending'&&!i.acceptedAt&&now-i.savedAt>STALE_REQUEST&&!tracked.some(t=>t.url===i.url)).map(i=>({name:i.title,url:i.url,since:i.savedAt}));
+  return [...tracked,...remembered].sort((a,b)=>a.since-b.since);
+}
+export const dueReminders=(s:Pick<NetworkState,'saved'>,now=Date.now()):SavedItem[]=>(s.saved??[]).filter(i=>i.remindAt!==undefined&&i.remindAt<=now);
 export const rememberMessage=z.object({kind:z.literal('network.remember'),action:z.enum(['get','save','remove']),item:savedItemSchema});
 export type ContactState='shortlisted'|'requesting'|'pending'|'connected'|'messaging'|'messaged'|'attention'|'skipped'|'review';
 export interface NetworkContact extends NetworkProfile {
@@ -152,6 +163,9 @@ export const networkRequest=z.discriminatedUnion('action',[
   z.object({kind:z.literal('network'),action:z.literal('prepare'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('skip'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('forget'),url:z.string()}),
+  z.object({kind:z.literal('network'),action:z.literal('updateSaved'),url:z.string(),status:z.enum(jobStatuses).optional(),remindDays:z.number().min(0).max(365).nullable().optional(),note:z.string().max(300).optional()}),
+  z.object({kind:z.literal('network'),action:z.literal('editDraft'),url:z.string(),text:z.string().trim().min(1).max(2000)}),
+  z.object({kind:z.literal('network'),action:z.literal('templateDraft'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('removeContact'),url:z.string()})
 ]);
 export type NetworkRequest=z.infer<typeof networkRequest>;
