@@ -201,3 +201,14 @@ it('re-confirms the signed-in account before acting, and stops if it is a differ
   expect(saved.status).toMatch(/different LinkedIn account/);
   expect(vi.mocked(networkCommand)).toHaveBeenCalledTimes(1);
 });
+
+it('says so in the activity log when ChatGPT is signed out, and still drafts from the template', async () => {
+  await seed({ dossier: 'd', contacts: [person('alex')] }, { aiMode: 'chatgpt' });
+  vi.mocked(networkCommand).mockResolvedValueOnce({ state: 'not-connected' });
+  vi.mocked(prepareInvitation).mockRejectedValueOnce(new Error('Sign in to ChatGPT or resolve its challenge in the visible tab.'));
+  await networkTick();
+  const saved = await getNetwork();
+  expect(saved.contacts[0]).toMatchObject({ state: 'review' });
+  expect(saved.contacts[0]!.invitationNote).toMatch(/^Hi alex/i);
+  expect(saved.log?.some(e => e.kind === 'warn' && /ChatGPT is not signed in.*template was used for alex/.test(e.text))).toBe(true);
+});

@@ -142,6 +142,7 @@ function welcome(): HTMLElement {
 }
 
 function render(s: NetworkState): void {
+  announcedUpTo = Math.max(announcedUpTo, (s.log ?? []).at(-1)?.at ?? 0);
   last = s; signature = JSON.stringify(s); dirty = false; uid = 0;
   const scroll = document.scrollingElement?.scrollTop ?? 0;
   page.replaceChildren();
@@ -386,7 +387,16 @@ async function refresh(): Promise<void> {
   const typing = page.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName ?? '');
   if (busy || dirty || typing) return; // never throw away what the user is typing
   const current = await request({ kind: 'network', action: 'status' });
+  announce(current);
   if (JSON.stringify(current) !== signature) render(current);
+}
+/* Work done in the background (a search, a draft, a send, a ChatGPT fallback) is announced as a notification too,
+   not only written to the Activity tab. Actions the user just pressed already notify on their own. */
+let announcedUpTo = -1;
+function announce(s: NetworkState): void {
+  const log = s.log ?? [], newest = log.at(-1)?.at ?? 0;
+  if (announcedUpTo >= 0) for (const entry of log.filter(e => e.at > announcedUpTo).slice(-3)) toaster.show(entry.kind === 'ok' ? 'success' : entry.kind === 'warn' ? 'error' : 'info', entry.text);
+  announcedUpTo = Math.max(announcedUpTo, newest);
 }
 const showLoadError = (e: unknown): void => { if (!last) notify('error', errorText(e)); };
 void refresh().catch(showLoadError);

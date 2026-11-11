@@ -24,7 +24,7 @@ export async function updateNetwork(fn:(s:NetworkState)=>NetworkState):Promise<N
     const before=base.status;
     const next=fn({...base,cv,settings:{...defaultSettings,...base.settings,roles:base.settings?.roles?.length?base.settings.roles:[base.target]}});
     // Every new status line is also kept in a short activity log the side panel can show.
-    if(next.status&&next.status!==before)next.log=[...(next.log??[]),{at:Date.now(),text:next.status,kind:/attention|could not|paused|limit reached|failed|interrupted|quiet hours|waiting/i.test(next.status)?'warn' as const:/saved|sent|started|confirmed|accepted|recovered|validated/i.test(next.status)?'ok' as const:'info' as const}].slice(-60);
+    if(next.status&&next.status!==before)next.log=[...(next.log??[]),{at:Date.now(),text:next.status,kind:/attention|could not|not signed in|usage limit|paused|limit reached|failed|interrupted|quiet hours|waiting/i.test(next.status)?'warn' as const:/saved|sent|started|confirmed|accepted|recovered|validated/i.test(next.status)?'ok' as const:'info' as const}].slice(-60);
     return next;
   });
   return state;
@@ -142,7 +142,15 @@ export async function processContact(s:NetworkState,p:NetworkContact,signal:Abor
   const draft=async(ai:()=>Promise<string>,template:()=>string):Promise<string>=>{
     if(settings.aiMode!=='chatgpt'||!fresh.dossier?.trim())return template();
     try{const text=await ai();await currentRun(s.revision,signal);await chrome.tabs.update(tab,{active:true});return text;}
-    catch(error){if(signal.aborted||/paused/i.test(String(error)))throw error;await chrome.tabs.update(tab,{active:true}).catch(()=>undefined);return template();}
+    catch(error){
+      if(signal.aborted||/paused/i.test(String(error)))throw error;
+      await chrome.tabs.update(tab,{active:true}).catch(()=>undefined);
+      // Never fail silently: say why ChatGPT was not used, then carry on with the template.
+      const why=error instanceof Error?error.message:String(error);
+      const reason=/sign in to chatgpt/i.test(why)?'ChatGPT is not signed in. Sign in at chatgpt.com to get personalised messages.':/usage limit/i.test(why)?'ChatGPT has reached its usage limit.':`ChatGPT could not write this message (${why.slice(0,160)}).`;
+      await updateNetwork(c=>({...c,status:`${reason} Your template was used for ${p.name} instead.`}));
+      return template();
+    }
   };
   if(kind==='connect'&&settings.noteMode!=='none'&&!p.invitationNote)
     p.invitationNote=await draft(()=>prepareInvitation(fresh,p,200,signal),()=>renderNote(settings,fresh.target,p,me));
