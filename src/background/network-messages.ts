@@ -78,7 +78,7 @@ export function registerNetworkMessages():void{
           if(mode==='referral'&&!s.active){s.active=true;s.revision++;s.scope='referrals';}
           return s;
         });
-        void networkTick();
+        void updateNetwork(s=>{delete s.paused;return s;}).then(()=>networkTick());
         return {ok:true,message};
       })().then(respond).catch(()=>respond({ok:false,message:'Something went wrong. Open Referral Scout for details.'}));return true;
     }
@@ -213,7 +213,7 @@ export function registerNetworkMessages():void{
             s.status=waiting.length===1?`Approved for ${waiting[0]!.name}. Sending shortly.`:`${waiting.length} messages approved. They are sent one after another.`;
             return s;
           });
-          void networkTick();
+          void updateNetwork(s=>{delete s.paused;return s;}).then(()=>networkTick());
         }
         if(req.action==='unapprove')await updateNetwork(s=>{
           const p=s.contacts.find(x=>x.url===req.url);
@@ -283,7 +283,7 @@ export function registerNetworkMessages():void{
         if(req.action==='skip')await updateNetwork(s=>{const p=s.contacts.find(p=>p.url===req.url);if(p){p.state='skipped';p.reason='Skipped. No future action is scheduled.';}return s;});
         if(req.action==='clear')await clearAllNetwork();
         return statusView(await getNetwork());
-      }finally{clearInterval(timer);if(exclusive)await release(owner);if(['start','askReferral','findJobs','pickJobs','referralDecision','resume'].includes(req.action))void networkTick();}
+      }finally{clearInterval(timer);if(exclusive)await release(owner);if(['start','askReferral','findJobs','pickJobs','referralDecision','resume'].includes(req.action))void updateNetwork(s=>{delete s.paused;return s;}).then(()=>networkTick());}
     })().then(data=>respond({ok:true,data})).catch((error:unknown)=>respond({ok:false,error:error instanceof Error?error.message:String(error)}));return true;
   });
 }

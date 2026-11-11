@@ -40,6 +40,8 @@ export interface ReferralJob extends z.infer<typeof referralJobInput> {
   known?: number; decision?: 'known' | 'widen'; waiting?: boolean;
   /** Who to approach at this company, decided by ChatGPT from what it knows of the company. `strategyTried` stops a second prompt. */
   strategy?: CompanyStrategy; strategyTried?: boolean;
+  /** Pages that could not be read for this company. After three the company is closed with what was found, so one bad company never blocks the rest. */
+  failures?: number; error?: string;
 }
 /** How many people one "Ask for referrals" click contacts by itself: the strongest few. A whole recruiting team is not messaged at once. */
 export const REFERRAL_AUTO = 8;

@@ -41,7 +41,7 @@ export async function updateNetwork(fn:(s:NetworkState)=>NetworkState):Promise<N
 }
 let running:Promise<void>|null=null,controller:AbortController|null=null;
 export async function pauseNetwork(reason='Paused. Your saved people and progress are kept.'):Promise<void>{
-  await updateNetwork(s=>({...s,active:false,revision:s.revision+1,status:reason}));
+  await updateNetwork(s=>({...s,active:false,paused:true,revision:s.revision+1,status:reason}));
   controller?.abort();
   const tab=await read<number>('network-tab');
   if(tab!==undefined)await chrome.tabs.sendMessage(tab,{kind:'network.cancel'}).catch(()=>undefined);
@@ -449,13 +449,30 @@ async function run():Promise<void>{
   const renewal=setInterval(()=>{void renew(owner).then(ok=>{if(!ok)abort.abort();});},20000);
   try{
     const s=await getNetwork();if(!s.profile)return;
+    // Paused means everything: searches and reading as well as sending. Starting or resuming anything lifts it.
+    if(s.paused)return;
     // A referral search was asked for by a click on a job page, so it runs straight away, even while outreach is paused or outside active hours. It only reads.
     if(s.jobSearch?.status==='finding'){worked=true;await findJobsStep(s,abort.signal);return;}
     // Before any company is searched: one prompt covering every company that has no plan yet.
     const unplanned=(s.referralJobs??[]).filter(j=>j.finishedAt===undefined&&j.mode==='referral'&&!j.strategy&&!j.strategyTried).slice(0,20);
     if(unplanned.length){worked=true;await planCompanies(s,unplanned,abort.signal);return;}
     const scan=(s.referralJobs??[]).find(j=>j.finishedAt===undefined&&!j.waiting);
-    if(scan){worked=true;await referralScan(s,scan,abort.signal);return;}
+    if(scan){
+      worked=true;
+      try{await referralScan(s,scan,abort.signal);}
+      catch(error){
+        const message=error instanceof Error?error.message:String(error);
+        if(abort.signal.aborted||ACCOUNT_LEVEL.test(message))throw error;
+        // One company that cannot be read must not block the others or a new job search: retry twice, then close it with what was found.
+        await updateNetwork(c=>{
+          const j=(c.referralJobs??[]).find(x=>x.url===scan.url);if(!j)return c;
+          j.failures=(j.failures??0)+1;
+          if(j.failures>=3){j.finishedAt=Date.now();j.error=message.slice(0,200);if(j.mode==='referral')queueBest(c,j);c.status=`${j.company}: LinkedIn pages could not be read after three tries, so this company is closed with what was found. The other companies carry on.`;}
+          else c.status=`${j.company}: a page did not load properly. Trying again (${j.failures} of 3).`;
+          return c;});
+      }
+      return;
+    }
     if(!s.active)return;
     // A send that was cut off (browser closed, tab crashed) is sorted out by itself and outreach carries on.
     if(s.intent||s.contacts.some(p=>['requesting','messaging'].includes(p.state))){await recoverNetwork();worked=true;return;}

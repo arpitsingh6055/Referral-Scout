@@ -15,6 +15,13 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.24.0: Pause really pauses; nothing opens by itself
+- **Pause everything now stops everything**: job searches, company planning and people searches as well as sending. Before, it only stopped sending and searches kept running. It is offered whenever anything is running, not only while sending.
+- **Resume** is the main button while paused and continues from the exact step that was interrupted. Starting something new (a job search, choosing companies, a referral from a job page) also lifts the pause.
+- An account-level problem (signed out of LinkedIn, a LinkedIn checkpoint) pauses everything once with the reason, instead of being retried every minute.
+- A company whose pages cannot be read no longer blocks the others or a new job search: it is retried, then closed with whatever was found, and the card says so.
+- Job cards and settings sections stay closed until you open them. Only a draft waiting for your approval is shown open.
+
 ## 0.23.0: live progress tracker, shorter ChatGPT wait
 - **Home shows a live tracker** whenever work is running: the step in progress, the steps done and left (each job title being searched, each company being worked), a running clock, how long it normally takes and why, and when the last update arrived. The clock ticks every second so the panel never looks frozen.
 - **ChatGPT can no longer hold a run up for 4.5 minutes.** Planning prompts give up after 40 seconds if the question never reached ChatGPT (usually: not signed in) and after 2 minutes in all, close the unused tab, and continue on the built-in plan. Each ChatGPT stage (opening, question sent, writing, answer read) is shown as it happens.

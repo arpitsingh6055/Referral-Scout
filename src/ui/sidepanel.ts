@@ -126,6 +126,7 @@ const categoryLabels: Record<string, string> = { recruiter: 'Recruiter', leader:
 /* ---------- derived status ---------- */
 function runStatus(s: NetworkState): { tone: 'ok' | 'warn' | 'idle'; pill: string; title: string; sub: string } {
   const settings = s.settings ?? defaultSettings;
+  if (s.paused) return { tone: 'idle', pill: 'Paused', title: 'Paused', sub: s.status || 'Nothing is running. Press Resume to continue where you stopped.' };
   if (s.active && !withinActiveHours(settings)) return { tone: 'warn', pill: 'Waiting', title: 'Waiting for active hours', sub: `Outreach resumes at ${pad(settings.activeHours?.from ?? 8)}:00. Nothing is wrong.` };
   if (s.active && s.scope === 'referrals') return { tone: 'ok', pill: 'Referrals', title: s.jobSearch?.status === 'finding' ? 'Searching for jobs' : 'Working on your referrals', sub: s.status || 'Starting up…' };
   if (s.active) return { tone: 'ok', pill: 'Running', title: 'Outreach is running', sub: s.status || 'Starting up…' };
@@ -293,6 +294,7 @@ function buildReferrals(s: NetworkState): HTMLElement {
       if (job.strategy.avoid.length) plan.append(node('p', `Not asking strangers who are: ${job.strategy.avoid.join(', ')}`, 'field-help'));
       body.append(plan);
     } else if (job.mode === 'referral' && !job.strategyTried && !job.finishedAt) body.append(node('p', 'Waiting for ChatGPT’s plan for this company…', 'field-help'));
+    if (job.error) body.append(node('p', `This company was closed early: LinkedIn pages could not be read (${job.error}). People found before that are listed.`, 'callout'));
     if (job.waiting) {
       // The one question per company: people already known may be enough.
       const ask = node('div', '', 'callout');
@@ -326,6 +328,7 @@ setInterval(tick, 1000);
 type LiveStep = [state: 'done' | 'now' | 'later', text: string, detail?: string | undefined];
 function live(s: NetworkState, stage: number): HTMLElement | null {
   const search = s.jobSearch, jobs = s.referralJobs ?? [], steps: LiveStep[] = [];
+  if (s.paused) return null;
   let title = '', expect = '', since = 0;
   if (stage === 0 && search) {
     const terms = s.plan?.terms ?? [];
@@ -428,18 +431,23 @@ function render(s: NetworkState): void {
   });
   run.append(stepper, node('h2', status.title, 'run-title'), node('p', status.sub, 'run-sub'));
   // One main action at a time. General networking outreach lives in Settings.
+  // Pause stops searches as well as sending; Resume picks everything up where it stopped.
+  const main = s.paused ? 'btn block' : 'btn primary block';
+  if (s.paused) run.append(button('Resume', () => act({ kind: 'network', action: 'resume' }, 'Resumed where you stopped.'), 'btn primary block'));
   if (search?.status === 'finding') {
     run.append(node('p', 'You can keep using your browser. Results appear under Jobs.', 'field-help'),
       button('Stop this search', () => act({ kind: 'network', action: 'cancelJobSearch' }, 'Job search stopped.'), 'btn block'));
   } else if (choosing) {
-    run.append(button(`Choose companies (${search!.found.length} found)`, async () => { setTab('referrals', true); }, 'btn primary block'));
+    run.append(button(`Choose companies (${search!.found.length} found)`, async () => { setTab('referrals', true); }, main));
   } else {
     run.append(button(jobs.length ? 'Find more jobs' : 'Find jobs and referrals', async () => {
       await setup.save();
       await act({ kind: 'network', action: 'findJobs' }, 'Job search started. First the search is planned, then LinkedIn jobs are read.');
-    }, 'btn primary block'));
+    }, main));
   }
-  if (s.active) run.append(button('Pause everything', () => act({ kind: 'network', action: 'pause' }, 'Paused. Your progress is kept.'), 'btn block'));
+  const working = s.active || search?.status === 'finding' || jobs.some(j => !j.finishedAt && !j.waiting);
+  if (s.paused) { /* Resume is already the main button */ }
+  else if (working) run.append(button('Pause everything', () => act({ kind: 'network', action: 'pause' }, 'Paused. Searches and sending have stopped; your progress is kept.'), 'btn block'));
   else if (s.contacts.some(p => p.referralJob && ['shortlisted', 'connected', 'review'].includes(p.state))) run.append(
     button('Resume sending', () => act({ kind: 'network', action: 'resume' }, 'Sending resumed.'), 'btn block'));
   const used = usage(s), meters = node('div', '', 'meters');

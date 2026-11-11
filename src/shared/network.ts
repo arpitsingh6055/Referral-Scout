@@ -88,7 +88,7 @@ export interface NetworkState {
   profile:NetworkProfile|null;target:string;location:string;template:string;
   cv:{name:string;type:string;text:string;textVersion?:number;pages?:number;warnings?:string[];savedAt?:number;characterCount?:number}|null;
   dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
-  active:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;nextSweepAt?:number;jobSearch?:JobSearch;plan?:SearchPlan;
+  active:boolean;/** Everything is stopped (by the person or by an account-level problem) until something is started or resumed. */paused?:boolean;revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;nextSweepAt?:number;jobSearch?:JobSearch;plan?:SearchPlan;
   /** 'referrals' = only people from Referrals jobs are contacted; general searching and outreach stay off. */
   scope?:'all'|'referrals';referralJobs?:ReferralJob[];saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;
   settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;

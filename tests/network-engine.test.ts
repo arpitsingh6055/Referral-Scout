@@ -438,3 +438,31 @@ it('carries on with built-in rules, and says so, when ChatGPT cannot plan the co
   expect(vi.mocked(askChatGpt)).toHaveBeenCalledTimes(1);
   expect(vi.mocked(networkCommand).mock.calls.some(c => (c[1] as { action: string }).action === 'jobInfo')).toBe(true);
 });
+
+it('Pause stops searches as well as sending, and Resume carries on from the same place', async () => {
+  const { pauseNetwork } = await import('../src/background/network');
+  await seed({ scope: 'referrals', referralJobs: [{ url: 'https://www.linkedin.com/jobs/view/61/', title: 'Ops Intern', company: 'Stripe', location: '', mode: 'referral', addedAt: 1, cursor: 3, found: 0, infoTried: true, strategyTried: true }] });
+  await pauseNetwork();
+  vi.mocked(networkCommand).mockClear();
+  await networkTick();
+  expect(vi.mocked(networkCommand)).not.toHaveBeenCalled();
+  expect((await getNetwork()).referralJobs![0]!.cursor).toBe(3);
+  await updateNetwork(s => { delete s.paused; return s; });
+  vi.mocked(networkCommand).mockResolvedValueOnce([]);
+  await networkTick();
+  expect((await getNetwork()).referralJobs![0]!.cursor).toBe(4);
+});
+
+it('a company whose search page cannot be read does not stop anything: it is closed and the next company is searched', async () => {
+  const job = (n: number, company: string) => ({ url: `https://www.linkedin.com/jobs/view/7${n}/`, title: 'Ops Intern', company, location: '', mode: 'referral' as const, addedAt: n, cursor: 3, found: 0, infoTried: true, strategyTried: true });
+  await seed({ active: false, referralJobs: [job(1, 'Brokenco'), job(2, 'Fineco')] });
+  vi.mocked(networkCommand).mockRejectedValueOnce(new Error('The results list was not found.'));
+  await networkTick();
+  let saved = await getNetwork();
+  expect(saved.referralJobs![0]!.finishedAt).toBeGreaterThan(0);
+  expect(saved.paused).toBeFalsy();
+  vi.mocked(networkCommand).mockResolvedValueOnce([]);
+  await networkTick();
+  saved = await getNetwork();
+  expect(saved.referralJobs![1]!.cursor).toBe(4);
+});

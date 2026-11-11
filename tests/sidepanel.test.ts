@@ -99,3 +99,13 @@ it('shows a live tracker while jobs are searched: the plan done, the title being
   expect($('.live-clock')!.textContent).toMatch(/^1:0\d$/);
   expect($('.live-expect')!.textContent).toMatch(/Usually 2 to 4 minutes/);
 });
+
+it('when paused, Resume is the main action and the live tracker is hidden; while a search runs, Pause is offered even if sending is off', async () => {
+  await open({ paused: true, status: 'Paused. Your saved people and progress are kept.', jobSearch: { status: 'finding', cursor: 0, found: [], startedAt: Date.now() } });
+  expect($('.run-title')!.textContent).toBe('Paused');
+  expect(byText('button.primary', 'Resume')).toBeTruthy();
+  expect($('.live')).toBeNull();
+  await open({ active: false, jobSearch: { status: 'finding', cursor: 0, found: [], startedAt: Date.now() } });
+  expect(byText('button', 'Pause everything')).toBeTruthy();
+  expect($('.live')).not.toBeNull();
+});
