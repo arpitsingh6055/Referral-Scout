@@ -368,6 +368,13 @@ function render(s: NetworkState): void {
       'Review',
       () => openSetting('words', 'Your messages'),
     ]);
+  if (!s.api)
+    tips.push([
+      'Use your OpenAI API key',
+      'Optional. If you have one, answers come straight from the API: faster, and no ChatGPT tab is opened. Without it the ChatGPT website is used.',
+      'Set up',
+      () => openSetting('api', 'ChatGPT connection'),
+    ]);
   if (tips.length) {
     const card = node('section', '', 'card tips');
     card.append(node('h3', stage < 0 ? 'Before you start (optional)' : 'Make your messages stronger', 'card-title'));

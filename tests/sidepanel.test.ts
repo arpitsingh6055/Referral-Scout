@@ -281,6 +281,7 @@ it('ends setup on Home, not Settings, and suggests the CV and a message check th
   byText('button', 'Continue')!.click();
   await vi.waitFor(() => expect($<HTMLElement>('.tab[aria-selected=true]')?.textContent).toContain('Home'));
   expect(byText('.tip', 'Add your CV')).toBeTruthy();
+  expect(byText('.tip', 'Use your OpenAI API key')).toBeTruthy();
   byText('.tip button', 'Add CV')!.click();
   expect($<HTMLElement>('[aria-label="Settings"]')!.getAttribute('aria-selected')).toBe('true');
   expect((byText('details.acc', 'Your CV') as HTMLDetailsElement).open).toBe(true);
