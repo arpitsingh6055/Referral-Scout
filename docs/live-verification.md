@@ -116,3 +116,7 @@ Covered by tests only. Still to confirm in Edge:
 ## 0.35.0 (reply button in LinkedIn messaging; not yet run in the extension)
 Checked on the live conversation page, 12 November 2026: `a.msg-thread__link-to-profile` (an encoded member id), `.msg-entity-lockup__entity-title`, `.msg-s-event-listitem` with `--other` on the other person's messages, and the box `.msg-form__contenteditable`.
 Still to confirm in Edge: open a conversation with someone the extension messaged; the blue "Draft a reply with ChatGPT" button shows at the bottom left; pressing it places a draft in the message box and sends nothing; a conversation with anyone else shows no button.
+
+## 0.36.0
+- Checked live, 12 November 2026: on the connections page every row pairs the profile address with a Message link carrying LinkedIn's messaging id (3 connections, 3 distinct pairs). On the messaging page every profile link (header, profile card, message items) is that encoded id, never the profile address.
+- Still to confirm in Edge: after "Check LinkedIn now", opening a conversation with a connection the extension contacted shows the card with the right job; a chat window opened over another LinkedIn page shows it too.

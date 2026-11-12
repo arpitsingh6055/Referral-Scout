@@ -7,6 +7,7 @@ import {
   topCardFacts,
   textOf,
   recentConnections,
+  connectionIds,
   inboxRows,
   type InboxRow,
   jobRows,
@@ -416,7 +417,7 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
       main?.lastElementChild?.scrollIntoView({ block: 'end' });
       await sleep(900, signal);
     }
-    return recentConnections(document);
+    return { urls: recentConnections(document), ids: connectionIds(document) };
   }
   if (cmd.action === 'search') {
     if (!location.pathname.startsWith('/search/results/people')) throw new Error('LinkedIn did not open people search.');

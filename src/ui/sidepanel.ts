@@ -215,8 +215,6 @@ function render(s: NetworkState): void {
         'btn block',
       ),
     );
-  else if (s.contacts.some(p => p.referralJob && ['shortlisted', 'connected', 'review'].includes(p.state)))
-    run.append(button('Resume sending', () => act({ kind: 'network', action: 'resume' }, 'Sending resumed.'), 'btn block'));
   const used = usage(s),
     meters = node('div', '', 'meters');
   meters.append(meter('Invitations today', used.today, settings.dailyInvites), meter('This week', used.week, settings.weeklyInvites));
@@ -407,19 +405,63 @@ function render(s: NetworkState): void {
     home.append(card);
   }
   if (needs || s.active || jobs.length || s.contacts.length) {
-    const head = node('div', '', 'row between section-row'),
-      asked = s.contacts.some(p => p.requestedAt > 0 || p.messagedAt > 0);
-    head.append(node('h3', 'Your pipeline', 'section-title'));
-    if (asked) head.append(button('Check for replies now', () => act({ kind: 'network', action: 'checkNow' }), 'btn sm'));
-    home.append(todos, head, kpis);
-    if (asked)
-      home.append(
+    // Reaching out has its own switch, separate from searching: the queue, whether sending is on, and one button.
+    const scope = s.scope === 'referrals' ? s.contacts.filter(p => p.referralJob) : s.contacts,
+      queue = scope.filter(
+        p =>
+          ['shortlisted', 'requesting', 'messaging'].includes(p.state) ||
+          (p.state === 'review' && p.approved) ||
+          (p.state === 'connected' && !p.messagedAt),
+      ),
+      first = queue[0];
+    if (!s.paused && (queue.length || s.active)) {
+      const card = node('section', '', 'card sending'),
+        words = node('div');
+      words.append(
         node(
-          'p',
-          `Acceptances and replies are checked on LinkedIn every 2 hours while sending is on${s.repliesCheckedAt ? `; replies last checked ${ago(s.repliesCheckedAt)}` : ''}. You can still mark someone yourself.`,
-          'field-help pipeline-note',
+          'b',
+          queue.length ? `${queue.length} ${queue.length === 1 ? 'person' : 'people'} in the queue` : 'Nobody is waiting to be contacted',
+          'sending-title',
+        ),
+        node(
+          'span',
+          s.active
+            ? first
+              ? `Reaching out is on. Next: ${first.name}${first.companyName ? ` at ${first.companyName}` : ''}${used.next ? ` · ${used.next.toLowerCase()}` : ''}.`
+              : 'Reaching out is on. New people are contacted as they are found.'
+            : 'Reaching out is off, so nobody is being contacted.',
         ),
       );
+      card.append(
+        words,
+        s.active
+          ? button('Stop reaching out', () => act({ kind: 'network', action: 'stopSending' }), 'btn sm')
+          : button(
+              `Reach out to ${queue.length === 1 ? 'this person' : `these ${queue.length} people`}`,
+              () => act({ kind: 'network', action: 'resume' }),
+              'btn sm primary',
+            ),
+      );
+      home.append(card);
+    }
+    home.append(todos, node('h3', 'Your pipeline', 'section-title'), kpis);
+    // Acceptances and replies: always one clear button, with when it was last done.
+    if (s.contacts.length) {
+      const check = node('section', '', 'card sending'),
+        words = node('div');
+      words.append(
+        node('b', 'Who accepted? Who replied?', 'sending-title'),
+        node(
+          'span',
+          `Your LinkedIn connections and messages are checked every 2 hours while reaching out is on${s.repliesCheckedAt ? `. Last checked ${ago(s.repliesCheckedAt)}` : ''}.`,
+        ),
+      );
+      check.append(
+        words,
+        button('Check LinkedIn now', () => act({ kind: 'network', action: 'checkNow' }), 'btn sm primary'),
+      );
+      home.append(check);
+    }
   }
   const log = [...(s.log ?? [])].reverse().slice(0, 3);
   if (log.length) {

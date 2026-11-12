@@ -15,6 +15,13 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.36.0: your people are recognised in LinkedIn messages; reaching out has its own switch
+- **A card in the conversation.** When you open a conversation with someone the extension invited or messaged, a card at the bottom left says "<Name> is on your Referral Scout list", which job you reached out about (with a link to it), and what has happened (invited, accepted, messaged, replied). It holds the **Draft a reply with ChatGPT** button and can be made small. Nobody else gets a card.
+- **Recognised exactly, not by name.** A profile address ends in a name that is unique to the person (`abhishek-purushottam-54128535a`); that address is already the key for every person in the extension. LinkedIn messaging does not show it: it shows its own encoded id. The extension now learns that id for each connection from the connections page (every row there has both), during the regular check and "Check LinkedIn now", so conversations are matched exactly. Until the first check a conversation is matched by name, only when one contacted person has that name.
+- Chat windows that open over other LinkedIn pages are read too, using the same markup; their header has not been checked live yet.
+- **Reaching out has its own switch on Home**: "N people in the queue", whether reaching out is on, who is next, and one button, "Reach out to these N people" or "Stop reaching out". Stopping it keeps the queue and lets searches carry on; "Pause everything" is still the full stop. This replaces the old "Resume sending" button.
+- **"Who accepted? Who replied?"** is now its own card on Home with a **Check LinkedIn now** button and the time of the last check, shown whenever you have anyone on your list.
+
 ## 0.35.0: replies in your LinkedIn messages
 - **The extension knows whose conversation is open.** When you open a conversation in LinkedIn messaging with someone the extension invited or messaged, it recognises them (by LinkedIn's own id once learned, otherwise by a name only one of them has) and quietly keeps the last 20 messages of that conversation on your device. Conversations are never shown in the side panel and never sent to it.
 - **A message from them counts as a reply the moment the conversation is seen**, whether or not you have read or answered it. They move to Replied.

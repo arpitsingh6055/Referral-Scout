@@ -302,7 +302,10 @@ it('keeps a conversation in step for someone who was asked, marks the reply, and
     ],
   });
   expect(await talk('sync', { name: 'Not On The List' })).toEqual({ ours: false });
-  expect(await talk('sync')).toEqual({ ours: true });
+  expect(await talk('sync')).toEqual({
+    ours: true,
+    info: { first: 'Ananya', job: null, history: expect.stringMatching(/^messaged .* · replied$/) },
+  });
   const saved = (await getNetwork()).contacts[0]!;
   expect(saved).toMatchObject({ messagingId: 'ACoAAB-123456', outcome: 'replied' });
   expect(saved.thread).toHaveLength(2);
@@ -313,4 +316,45 @@ it('keeps a conversation in step for someone who was asked, marks the reply, and
   expect(vi.mocked(askChatGpt).mock.calls.at(-1)![0]).toContain('Sure, share your CV');
   vi.mocked(askChatGpt).mockRejectedValueOnce(new Error('Sign in to ChatGPT.'));
   expect(await talk('draft')).toMatchObject({ ok: false, error: 'ChatGPT could not draft a reply: Sign in to ChatGPT.' });
+});
+
+it('recognises a conversation exactly by profile address or by LinkedIn’s messaging id, and says which job the person was asked about', async () => {
+  const page = {
+    id: ID,
+    frameId: 0,
+    tab: { id: 4 },
+    url: 'https://www.linkedin.com/messaging/thread/2-abc==/',
+    origin: 'https://www.linkedin.com',
+  };
+  const talk = (extra: Record<string, unknown>) =>
+    new Promise<{ ours?: boolean; info?: { first: string; job: { title: string; company: string } | null; history: string } }>(resolve => {
+      listener({ kind: 'network.thread', action: 'sync', id: '', name: 'A Different Display Name', messages: [], ...extra }, page, r =>
+        resolve(r as never),
+      );
+    });
+  await seed({
+    referralJobs: [job(1)],
+    contacts: [
+      person('abhishek-purushottam-54128535a', {
+        name: 'Abhishek Purushottam',
+        state: 'pending',
+        requestedAt: Date.now(),
+        referralJob: job(1).url,
+      }),
+      person('by-id', { name: 'Someone', messagingId: 'ACoAAB-known-id', state: 'messaged', messagedAt: 5 }),
+    ],
+  });
+  const byAddress = await talk({ url: 'https://www.linkedin.com/in/abhishek-purushottam-54128535a/' });
+  expect(byAddress.info).toMatchObject({ first: 'Abhishek', job: { title: 'Ops Intern', company: 'Company 1' } });
+  expect(byAddress.info!.history).toMatch(/^invited /);
+  expect((await talk({ id: 'ACoAAB-known-id' })).ours).toBe(true);
+  expect((await talk({ id: 'ACoAAB-unknown' })).ours).toBe(false);
+});
+
+it('"Stop reaching out" turns sending off without pausing searches or emptying the queue', async () => {
+  await seed({ active: true, scope: 'referrals', contacts: [person('queued', { referralJob: job(1).url })], referralJobs: [job(1)] });
+  const after = await ok({ action: 'stopSending' });
+  expect(after).toMatchObject({ active: false, status: 'Reaching out is stopped. The queue is kept; searches carry on.' });
+  expect(after.paused).toBeFalsy();
+  expect(after.contacts[0]!.state).toBe('shortlisted');
 });

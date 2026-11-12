@@ -370,7 +370,7 @@ it('shows the people of a job as one line each, grouped by where they stand, wit
     ],
   });
   expect(byText('button', 'Stop searching, reach out to who was found')).toBeTruthy();
-  expect(byText('button', 'Check for replies now')).toBeTruthy();
+  expect(byText('button', 'Check LinkedIn now')).toBeTruthy();
   byText('.tab', 'Jobs')!.click();
   expect([...document.querySelectorAll('.group-title')].map(e => e.textContent)).toEqual([
     'Replied (1)',
@@ -381,4 +381,37 @@ it('shows the people of a job as one line each, grouped by where they stand, wit
   expect(document.querySelectorAll('details.person-row')).toHaveLength(4);
   byText('button', 'Stop asking here')!.click();
   await vi.waitFor(() => expect(sent.find(r => r.action === 'stopCompany')).toMatchObject({ url: jobUrl }));
+});
+
+it('gives reaching out its own switch on Home and always offers the LinkedIn check', async () => {
+  const jobUrl = 'https://www.linkedin.com/jobs/view/1/';
+  const contacts = [person('a', 'shortlisted', { referralJob: jobUrl }), person('b', 'shortlisted', { referralJob: jobUrl })];
+  await open({
+    active: false,
+    scope: 'referrals',
+    contacts,
+    referralJobs: [
+      {
+        url: jobUrl,
+        title: 'Ops Intern',
+        company: 'Stripe',
+        location: '',
+        mode: 'referral',
+        addedAt: 1,
+        cursor: 4,
+        found: 2,
+        finishedAt: 1,
+      },
+    ],
+  });
+  expect(byText('.sending', '2 people in the queue')!.textContent).toContain('Reaching out is off');
+  expect(byText('.sending', 'Who accepted? Who replied?')).toBeTruthy();
+  byText('button', 'Reach out to these 2 people')!.click();
+  await vi.waitFor(() => expect(sent.map(r => r.action)).toContain('resume'));
+  await open({ active: true, scope: 'referrals', contacts });
+  byText('button', 'Stop reaching out')!.click();
+  await vi.waitFor(() => expect(sent.map(r => r.action)).toContain('stopSending'));
+  await new Promise(r => setTimeout(r, 30)); // the first press finishes before the next
+  byText('button', 'Check LinkedIn now')!.click();
+  await vi.waitFor(() => expect(sent.map(r => r.action)).toContain('checkNow'));
 });

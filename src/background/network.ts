@@ -767,12 +767,21 @@ async function checkReplies(signal: AbortSignal): Promise<number> {
 async function sweepAcceptances(s: NetworkState, signal: AbortSignal, onRequest = false): Promise<void> {
   await note(s, 'Checking your connections list for people who accepted…');
   const tab = await networkTab('https://www.linkedin.com/mynetwork/invite-connect/connections/', signal);
-  const connected = new Set(z.array(z.string()).parse(await networkCommand(tab, { action: 'connections' }, signal)));
+  const page = z
+    .union([z.array(z.string()), z.object({ urls: z.array(z.string()), ids: z.record(z.string(), z.string()).default({}) })])
+    .parse(await networkCommand(tab, { action: 'connections' }, signal));
+  const connected = new Set(Array.isArray(page) ? page : page.urls),
+    ids = Array.isArray(page) ? {} : page.ids;
   if (onRequest) signal.throwIfAborted();
   else await currentRun(s.revision, signal);
   await updateNetwork(current => {
     const names: string[] = [],
       now = Date.now();
+    // Learn LinkedIn's messaging id for everyone on the list, so their conversation is recognised exactly later.
+    for (const p of current.contacts) {
+      const known = ids[p.url];
+      if (known) p.messagingId = known;
+    }
     for (const p of current.contacts)
       if (p.state === 'pending' && p.requestedAt > 0 && connected.has(p.url)) {
         p.state = 'connected';

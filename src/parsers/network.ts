@@ -143,6 +143,32 @@ export function recentConnections(doc: ParentNode): string[] {
   }
   return [...found];
 }
+/**
+ * LinkedIn's messaging id for each connection, read from the connections page (checked live, 12 November 2026): every
+ * row has the person's profile link and a Message link to /messaging/compose/?…&recipient=<id>. The id is what
+ * LinkedIn messaging shows instead of the profile address, so this pairs the two exactly.
+ */
+export function connectionIds(doc: ParentNode): Record<string, string> {
+  const main = mainOf(doc) ?? doc,
+    out: Record<string, string> = {};
+  for (const a of main.querySelectorAll<HTMLAnchorElement>('a[href*="/messaging/compose/"]')) {
+    const href = a.getAttribute('href') ?? '',
+      id = /[?&]recipient=([\w-]+)/.exec(href)?.[1] ?? /fsd_profile(?:%3A|:)([\w-]+)/.exec(href)?.[1];
+    if (!id) continue;
+    // The row is the nearest ancestor that holds exactly one person's profile link.
+    for (let row = a.parentElement, depth = 0; row && depth < 10; row = row.parentElement, depth++) {
+      const urls = new Set(
+        [...row.querySelectorAll<HTMLAnchorElement>('a[href*="/in/"]')].map(l => profileUrl(l.getAttribute('href') ?? '')).filter(Boolean),
+      );
+      if (urls.size > 1) break;
+      if (urls.size === 1) {
+        out[[...urls][0]!] = id;
+        break;
+      }
+    }
+  }
+  return out;
+}
 export interface InboxRow {
   name: string;
   mine: boolean;

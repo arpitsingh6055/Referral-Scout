@@ -5,6 +5,7 @@ import {
   rememberMessage,
   threadMessage,
   contactForThread,
+  historyLine,
   type SavedItem,
   networkRequest,
   networkProfileSchema,
@@ -188,18 +189,18 @@ export function registerNetworkMessages(): void {
         respond({ ours: false });
         return false;
       }
-      const { action, id, name, messages } = thread.data;
+      const { action, id, name, messages, url } = thread.data;
       void (async () => {
         const state = await getNetwork(),
-          person = contactForThread(state.contacts, id, name);
+          person = contactForThread(state.contacts, id, name, url ? (profileUrl(url) ?? undefined) : undefined);
         if (!person || !state.profile)
           return action === 'draft' ? { ok: false, error: 'This person is not on your Referral Scout list.' } : { ours: false };
-        const changed = person.messagingId !== id || JSON.stringify(person.thread ?? []) !== JSON.stringify(messages);
+        const changed = (!!id && person.messagingId !== id) || JSON.stringify(person.thread ?? []) !== JSON.stringify(messages);
         if (changed)
           await updateNetwork(s => {
             const p = s.contacts.find(x => x.url === person.url);
             if (!p) return s;
-            p.messagingId = id;
+            if (id) p.messagingId = id;
             p.thread = messages;
             // A message from them is a reply, whether or not it has been read or answered.
             if (!p.outcome && messages.some(m => !m.mine)) {
@@ -208,9 +209,21 @@ export function registerNetworkMessages(): void {
             }
             return s;
           });
-        if (action === 'sync') return { ours: true };
         const job = (state.referralJobs ?? []).find(j => j.url === person.referralJob),
           settings = state.settings;
+        // What the conversation page shows about this person: why they were contacted, and what has happened since.
+        if (action === 'sync')
+          return {
+            ours: true,
+            info: {
+              first: person.name.split(/\s+/)[0] ?? person.name,
+              job: job ? { title: job.title, company: job.company, url: job.url } : null,
+              history: historyLine({
+                ...person,
+                ...(messages.some(m => !m.mine) && !person.outcome ? { outcome: 'replied' as const } : {}),
+              }),
+            },
+          };
         const prompt = replyPrompt({
           me: state.profile.name,
           about: `${/^verify\b|verification/i.test(state.profile.headline) ? '' : state.profile.headline}. ${(state.cv?.text || state.profile.about || '').slice(0, 1000)}`,
@@ -759,6 +772,16 @@ export function registerNetworkMessages(): void {
                 held++;
               }
             s.status = `${j.company}: stopped. ${held} ${held === 1 ? 'person was' : 'people were'} taken out of the queue; anyone already asked is unchanged.`;
+            return s;
+          });
+        // Sending only: searches carry on and the queue is kept. "Pause everything" is the full stop.
+        if (req.action === 'stopSending')
+          await updateNetwork(s => {
+            if (s.active) {
+              s.active = false;
+              s.revision++;
+            }
+            s.status = 'Reaching out is stopped. The queue is kept; searches carry on.';
             return s;
           });
         if (req.action === 'clearApi') {

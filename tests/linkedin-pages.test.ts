@@ -1,6 +1,7 @@
 import { beforeEach, expect, it } from 'vitest';
 import {
   companyFromCurrent,
+  connectionIds,
   inboxRows,
   recentConnections,
   networkPeople,
@@ -167,4 +168,19 @@ it('reads accepted invitations from the connections page as profile addresses, n
   const doc = parse(`<main><div><a href="/in/new-person/">New Person</a><p>Connected on November 12, 2026</p></div>
     <div><a href="https://www.linkedin.com/in/older-person?miniProfileUrn=x">Older Person</a><p>Connected on October 15, 2026</p></div></main>`);
   expect(recentConnections(doc)).toEqual(['https://www.linkedin.com/in/new-person/', 'https://www.linkedin.com/in/older-person/']);
+});
+
+it('pairs each connection’s profile address with LinkedIn’s messaging id from the Message link in the same row', () => {
+  const row = (
+    slug: string,
+    id: string,
+  ) => `<div class="row"><a href="/in/${slug}/"><img alt=""></a><div><a href="https://www.linkedin.com/in/${slug}/">Name</a><p>Connected on November 12, 2026</p></div>
+    <a href="/messaging/compose/?profileUrn=urn%3Ali%3Afsd_profile%3A${id}&recipient=${id}&screenContext=NON_SELF_PROFILE_VIEW">Message</a></div>`;
+  const doc = parse(
+    `<main><div class="list">${row('abhishek-purushottam-54128535a', 'ACoAAC8ID28BOwPN-abc_DEF')}${row('second-person', 'ACoAAEwhVnsB3qa_xyz')}</div></main>`,
+  );
+  expect(connectionIds(doc)).toEqual({
+    'https://www.linkedin.com/in/abhishek-purushottam-54128535a/': 'ACoAAC8ID28BOwPN-abc_DEF',
+    'https://www.linkedin.com/in/second-person/': 'ACoAAEwhVnsB3qa_xyz',
+  });
 });

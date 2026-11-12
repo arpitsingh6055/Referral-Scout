@@ -426,6 +426,7 @@ export const networkRequest = z.discriminatedUnion('action', [
     model: z.string().trim().min(2).max(80),
   }),
   z.object({ kind: z.literal('network'), action: z.literal('clearApi') }),
+  z.object({ kind: z.literal('network'), action: z.literal('stopSending') }),
   z.object({ kind: z.literal('network'), action: z.literal('skipCompany'), url: z.string() }),
   z.object({ kind: z.literal('network'), action: z.literal('stopCompany'), url: z.string() }),
   z.object({ kind: z.literal('network'), action: z.literal('finishScans') }),
@@ -555,16 +556,33 @@ export function repliesFrom(rows: { name: string; mine: boolean }[], contacts: N
 export const threadMessage = z.object({
   kind: z.literal('network.thread'),
   action: z.enum(['sync', 'draft']),
-  id: z.string().min(3).max(120),
+  id: z.string().max(120),
+  /** The person's own profile address, when the conversation shows it (chat windows opened from a profile do). */
+  url: z.string().max(300).optional(),
   name: z.string().min(1).max(200),
   messages: z.array(z.object({ mine: z.boolean(), text: z.string().max(800) })).max(20),
 });
 /** The person a conversation belongs to: by LinkedIn's messaging id once known, otherwise by a name only one of them has. */
-export function contactForThread(contacts: NetworkContact[], id: string, name: string): NetworkContact | undefined {
-  const known = contacts.find(p => p.messagingId === id);
-  if (known) return known;
+export function contactForThread(contacts: NetworkContact[], id: string, name: string, url?: string): NetworkContact | undefined {
+  // 1. The profile address (its last part is the person's permanent LinkedIn name) is exact. 2. So is LinkedIn's
+  // messaging id, learned from the connections page. 3. Otherwise a name that only one contacted person has.
+  const exact = (url ? contacts.find(p => p.url === url) : undefined) ?? (id ? contacts.find(p => p.messagingId === id) : undefined);
+  if (exact) return exact;
   const same = contacts.filter(
     p => !p.messagingId && plainName(p.name) === plainName(name) && (p.requestedAt > 0 || p.messagedAt > 0 || !!p.acceptedAt || !!p.direct),
   );
   return same.length === 1 ? same[0] : undefined;
+}
+
+/** The last part of a profile address: the person's permanent LinkedIn name, unique to them. */
+export const slugOf = (url: string): string => /\/in\/([^/?#]+)/.exec(url)?.[1] ?? '';
+/** One line on what has happened with a person, for showing next to their conversation. */
+export function historyLine(p: NetworkContact): string {
+  const day = (t: number): string => new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  const parts: string[] = [];
+  if (p.requestedAt > 0) parts.push(`invited ${day(p.requestedAt)}`);
+  if (p.acceptedAt) parts.push(`accepted ${day(p.acceptedAt)}`);
+  if (p.messagedAt > 0) parts.push(`messaged ${day(p.messagedAt)}`);
+  if (p.outcome) parts.push(p.outcome === 'referred' ? 'agreed to refer you' : p.outcome === 'declined' ? 'cannot help' : 'replied');
+  return parts.length ? parts.join(' · ') : 'on your list, not contacted yet';
 }

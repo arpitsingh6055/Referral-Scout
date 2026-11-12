@@ -1764,3 +1764,30 @@ details.person-row > .person .person-head {
 .run.warn .btn.primary {
   color: #9a4a06;
 }
+
+/* one-line cards with a single action: the queue switch, and the check for acceptances and replies */
+.sending {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.sending > div {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sending-title {
+  font-size: 15px;
+}
+.sending span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.sending .btn {
+  flex: none;
+  max-width: 46%;
+  white-space: normal;
+  text-align: center;
+}
