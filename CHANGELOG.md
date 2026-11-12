@@ -17,6 +17,7 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 
 ## 0.32.0: setup ends on Home
 - After you answer "what are you looking for?", the panel always opens on **Home**. Before, it could land on Settings if that was the last screen open (for example after "Delete everything").
+- **Save changes** in Settings returns to Home.
 - Home suggests the optional next steps itself: **Add your CV** and, before the first search, **Check your messages**. A third, **Use your OpenAI API key**, is shown until a key is saved. Each opens Settings at that section; the CV suggestion stays until a CV is added.
 
 ## 0.31.0: code split, formatting, README

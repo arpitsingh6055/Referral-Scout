@@ -286,3 +286,12 @@ it('ends setup on Home, not Settings, and suggests the CV and a message check th
   expect($<HTMLElement>('[aria-label="Settings"]')!.getAttribute('aria-selected')).toBe('true');
   expect((byText('details.acc', 'Your CV') as HTMLDetailsElement).open).toBe(true);
 });
+
+it('goes back to Home after Save changes in Settings', async () => {
+  await open();
+  $<HTMLElement>('[aria-label="Settings"]')!.click();
+  byText('button', 'Save changes')!.click();
+  await vi.waitFor(() => expect(byText('.toast', 'Changes saved.')).toBeTruthy());
+  expect($<HTMLElement>('.tab[aria-selected=true]')!.textContent).toContain('Home');
+  expect(sent.map(r => r.action)).toContain('save');
+});

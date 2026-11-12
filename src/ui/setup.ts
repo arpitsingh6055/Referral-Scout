@@ -300,7 +300,9 @@ export function buildSetup(
         'Save changes',
         async () => {
           await save();
+          ui.tab = 'home'; // saved: back to Home, where the result of the change shows
           await act({ kind: 'network', action: 'status' }, 'Changes saved.');
+          document.scrollingElement?.scrollTo({ top: 0 });
         },
         'btn primary block savebar',
       ),
