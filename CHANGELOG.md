@@ -15,6 +15,12 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.35.0: replies in your LinkedIn messages
+- **The extension knows whose conversation is open.** When you open a conversation in LinkedIn messaging with someone the extension invited or messaged, it recognises them (by LinkedIn's own id once learned, otherwise by a name only one of them has) and quietly keeps the last 20 messages of that conversation on your device. Conversations are never shown in the side panel and never sent to it.
+- **A message from them counts as a reply the moment the conversation is seen**, whether or not you have read or answered it. They move to Replied.
+- **"Draft a reply with ChatGPT"** appears at the bottom left of that conversation, and only for those people. ChatGPT reads the conversation, the job and your background and writes your next message; the draft is placed in LinkedIn's message box for you to edit. You add any attachment and press Send yourself: the extension never sends it. If the box already has text it asks before replacing it.
+- The conversation page was checked live on 12 November 2026 (header link, message items, message box). The button and the draft have not been tried in Edge yet.
+
 ## 0.34.1: reply and acceptance checks validated
 - **Fixed: "Check for replies now" failed while sending was off.** The acceptance check refused to run unless outreach was active, which stopped the whole check and paused everything. It now runs on request whatever the sending state. Found by a new end-to-end test of the check.
 - **Fixed: a person whose name carries a credential ("Priya Sharma, MBA") was treated as a group chat** and skipped. Only real group chats ("… and 2 others") and sponsored messages are left out now.

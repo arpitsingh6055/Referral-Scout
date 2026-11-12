@@ -112,3 +112,7 @@ Covered by tests only. Still to confirm in Edge:
 ## 0.34.0 (not yet run live in the extension)
 - The messaging conversation list was read on the live page on 12 November 2026: `li.msg-conversation-listitem`, the name in `.msg-conversation-listitem__participant-names`, and a snippet starting "You:" when the latest message is your own. Checked on an account with a single conversation.
 - Still to confirm in Edge: "Check for replies now" marks a real reply; searching and sending alternate during a multi-company run; the panel jumps to the company list when a job search finishes.
+
+## 0.35.0 (reply button in LinkedIn messaging; not yet run in the extension)
+Checked on the live conversation page, 12 November 2026: `a.msg-thread__link-to-profile` (an encoded member id), `.msg-entity-lockup__entity-title`, `.msg-s-event-listitem` with `--other` on the other person's messages, and the box `.msg-form__contenteditable`.
+Still to confirm in Edge: open a conversation with someone the extension messaged; the blue "Draft a reply with ChatGPT" button shows at the bottom left; pressing it places a draft in the message box and sends nothing; a conversation with anyone else shows no button.

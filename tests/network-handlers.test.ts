@@ -267,3 +267,50 @@ it('"Check now" asks the engine for an immediate look', async () => {
   expect((await ok({ action: 'checkNow' })).checkRequested).toBe(true);
   await vi.waitFor(() => expect(networkTick).toHaveBeenCalled());
 });
+
+it('keeps a conversation in step for someone who was asked, marks the reply, and drafts the next message without sending anything', async () => {
+  const { askChatGpt } = await import('../src/background/network-ai');
+  const page = {
+    id: ID,
+    frameId: 0,
+    tab: { id: 4 },
+    url: 'https://www.linkedin.com/messaging/thread/2-abc==/',
+    origin: 'https://www.linkedin.com',
+  };
+  const talk = (action: string, extra = {}) =>
+    new Promise<Record<string, unknown>>(resolve => {
+      listener(
+        {
+          kind: 'network.thread',
+          action,
+          id: 'ACoAAB-123456',
+          name: 'Ananya Rao',
+          messages: [
+            { mine: true, text: 'Hi Ananya' },
+            { mine: false, text: 'Sure, share your CV' },
+          ],
+          ...extra,
+        },
+        page,
+        r => resolve(r as Record<string, unknown>),
+      );
+    });
+  await seed({
+    contacts: [
+      person('ananya', { name: 'Ananya Rao', state: 'messaged', messagedAt: 5 }),
+      person('stranger', { name: 'Someone Else', messagedAt: 0 }),
+    ],
+  });
+  expect(await talk('sync', { name: 'Not On The List' })).toEqual({ ours: false });
+  expect(await talk('sync')).toEqual({ ours: true });
+  const saved = (await getNetwork()).contacts[0]!;
+  expect(saved).toMatchObject({ messagingId: 'ACoAAB-123456', outcome: 'replied' });
+  expect(saved.thread).toHaveLength(2);
+  expect(JSON.stringify(await ok({ action: 'status' }))).not.toContain('Sure, share your CV'); // conversations never reach the side panel
+
+  vi.mocked(askChatGpt).mockResolvedValueOnce('{"reply":"Thank you, Ananya. I have attached my CV."}');
+  expect(await talk('draft')).toEqual({ ok: true, text: 'Thank you, Ananya. I have attached my CV.' });
+  expect(vi.mocked(askChatGpt).mock.calls.at(-1)![0]).toContain('Sure, share your CV');
+  vi.mocked(askChatGpt).mockRejectedValueOnce(new Error('Sign in to ChatGPT.'));
+  expect(await talk('draft')).toMatchObject({ ok: false, error: 'ChatGPT could not draft a reply: Sign in to ChatGPT.' });
+});

@@ -1,6 +1,10 @@
+import { extractJson } from '../parsers/json';
+import { replyPrompt } from '../shared/referral';
 import { z } from 'zod';
 import {
   rememberMessage,
+  threadMessage,
+  contactForThread,
   type SavedItem,
   networkRequest,
   networkProfileSchema,
@@ -30,6 +34,7 @@ import {
   recoverDossier,
   apiConfig,
   askApi,
+  askChatGpt,
   saveApiConfig,
 } from './network-ai';
 import { validatedDossier } from '../shared/dossier';
@@ -85,7 +90,11 @@ function statusView(s: NetworkState): NetworkState {
         }
       : {}),
     ...(s.cv ? { cv: { ...s.cv, text: '', textVersion: 2, characterCount: s.cv.characterCount ?? s.cv.text.length } } : {}),
-    contacts: s.contacts.map(p => ({ ...p, rawText: '' })),
+    contacts: s.contacts.map(p => {
+      const { thread: kept, ...rest } = p;
+      void kept;
+      return { ...rest, rawText: '' };
+    }),
   };
 }
 export function registerNetworkMessages(): void {
@@ -170,6 +179,63 @@ export function registerNetworkMessages(): void {
       })()
         .then(respond)
         .catch(() => respond({ ok: false, message: 'Something went wrong. Open Referral Scout for details.' }));
+      return true;
+    }
+    const thread = threadMessage.safeParse(input);
+    if (thread.success) {
+      // Sent from an open LinkedIn conversation. The conversation is kept only for people this extension asked.
+      if (!trustedSite(sender, chrome.runtime.id)) {
+        respond({ ours: false });
+        return false;
+      }
+      const { action, id, name, messages } = thread.data;
+      void (async () => {
+        const state = await getNetwork(),
+          person = contactForThread(state.contacts, id, name);
+        if (!person || !state.profile)
+          return action === 'draft' ? { ok: false, error: 'This person is not on your Referral Scout list.' } : { ours: false };
+        const changed = person.messagingId !== id || JSON.stringify(person.thread ?? []) !== JSON.stringify(messages);
+        if (changed)
+          await updateNetwork(s => {
+            const p = s.contacts.find(x => x.url === person.url);
+            if (!p) return s;
+            p.messagingId = id;
+            p.thread = messages;
+            // A message from them is a reply, whether or not it has been read or answered.
+            if (!p.outcome && messages.some(m => !m.mine)) {
+              p.outcome = 'replied';
+              p.outcomeAt = Date.now();
+            }
+            return s;
+          });
+        if (action === 'sync') return { ours: true };
+        const job = (state.referralJobs ?? []).find(j => j.url === person.referralJob),
+          settings = state.settings;
+        const prompt = replyPrompt({
+          me: state.profile.name,
+          about: `${/^verify\b|verification/i.test(state.profile.headline) ? '' : state.profile.headline}. ${(state.cv?.text || state.profile.about || '').slice(0, 1000)}`,
+          roles: settings?.roles?.length ? settings.roles : [state.target],
+          person: { name: person.name, headline: person.headline, companyName: person.companyName },
+          job: job ? { title: job.title, company: job.company, url: job.url } : undefined,
+          messages,
+        });
+        const answer = extractJson(
+          await askChatGpt(prompt, new AbortController().signal, 'LEGACY', state.profile.url, '', { startMs: 40_000, totalMs: 120_000 }),
+        );
+        const text = z.object({ reply: z.string().trim().min(5).max(1500) }).parse(answer).reply;
+        return { ok: true, text };
+      })()
+        .then(respond)
+        .catch((error: unknown) =>
+          respond(
+            action === 'draft'
+              ? {
+                  ok: false,
+                  error: `ChatGPT could not draft a reply: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}`,
+                }
+              : { ours: false },
+          ),
+        );
       return true;
     }
     const remember = rememberMessage.safeParse(input);

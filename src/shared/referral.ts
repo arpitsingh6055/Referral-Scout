@@ -263,3 +263,38 @@ export function pickCompany(rows: { name: string; url: string; lines: string[] }
     .filter(x => x.length > 2);
   return (same.find(r => places.some(p => r.lines.join(' ').toLowerCase().includes(p.split(' ')[0]!))) ?? same[0]!).url;
 }
+
+/**
+ * The next reply in a conversation with someone who was asked for a referral. ChatGPT reads what has been said
+ * and writes what the seeker would say next; the person edits and sends it themselves.
+ */
+export function replyPrompt(input: {
+  me: string;
+  about: string;
+  roles: string[];
+  person: { name: string; headline: string; companyName?: string | undefined };
+  job?: { title: string; company: string; url: string } | undefined;
+  messages: { mine: boolean; text: string }[];
+}): string {
+  const first = input.person.name.split(/\s+/)[0] ?? input.person.name;
+  return [
+    `You are helping ${input.me}, a job seeker, write the NEXT message in a LinkedIn conversation. They contacted ${input.person.name} to ask for help with a job. Write only what ${input.me} would send now.`,
+    '',
+    'Read the conversation and answer what the other person actually said. Typical situations:',
+    `- They agreed to refer or help ("Sure, share your CV"): thank them in one line, say the CV is attached, give the job link if there is one, and ask if they need anything else. Example: "Thank you, ${first}, I really appreciate it. I have attached my CV. The role is <job link>. Is there anything else you need from me?"`,
+    '- They asked a question (about experience, notice period, location, which role): answer it plainly from the facts below. If the facts below do not contain the answer, write a short bracketed note for the seeker to fill in, like [your notice period], rather than inventing it.',
+    '- They pointed to someone else or to a careers page: thank them, and ask one specific follow-up at most (for example whether they could introduce you).',
+    '- They said they cannot help: thank them warmly in one or two lines and do not ask again.',
+    '- They only said hello or thanks for connecting: state the request in two sentences, with the job, and ask whether they would be open to referring you or pointing you to the right person.',
+    `- The last message is from ${input.me} and has not been answered: write a brief, polite nudge of one or two sentences that adds something useful, not "just following up".`,
+    '',
+    'Rules: 30 to 90 words. Plain, warm, specific. Match their tone and language. No flattery, no list of achievements, no invented facts, no emojis unless they used them, no phone numbers or email addresses. Do not paste the CV; the seeker attaches it themselves. Use the job link only if one is given below.',
+    '',
+    `THE SEEKER: ${JSON.stringify({ name: input.me, lookingFor: input.roles, about: input.about.slice(0, 1200) })}`,
+    `THE OTHER PERSON: ${JSON.stringify({ name: input.person.name, headline: input.person.headline, ...(input.person.companyName ? { company: input.person.companyName } : {}) })}`,
+    `THE JOB: ${input.job ? JSON.stringify({ title: input.job.title, company: input.job.company, link: input.job.url }) : 'no specific job on record'}`,
+    `THE CONVERSATION SO FAR, oldest first: ${JSON.stringify(input.messages.map(m => ({ from: m.mine ? input.me : input.person.name, text: m.text })))}`,
+    '',
+    'Reply with ONLY one JSON object: {"reply": the message text}.',
+  ].join('\n');
+}

@@ -104,6 +104,10 @@ export interface NetworkContact extends NetworkProfile {
   /** Already a 1st-degree connection when found: no invitation is needed, only a message. */
   direct?: boolean;
   /** What came of it, marked by the person: they wrote back, agreed to refer, or said no. */
+  /** LinkedIn's own id for this person in messaging, learned the first time their conversation is opened. */
+  messagingId?: string;
+  /** The conversation with them, kept quietly for drafting replies. Never shown in the side panel. */
+  thread?: { mine: boolean; text: string }[];
   outcome?: 'replied' | 'referred' | 'declined';
   outcomeAt?: number;
   /** The job (its LinkedIn address) this person was found for, when the aim is a referral. */
@@ -546,4 +550,21 @@ export function repliesFrom(rows: { name: string; mine: boolean }[], contacts: N
     if (same.length === 1) out.push(same[0]!.url);
   }
   return out;
+}
+
+export const threadMessage = z.object({
+  kind: z.literal('network.thread'),
+  action: z.enum(['sync', 'draft']),
+  id: z.string().min(3).max(120),
+  name: z.string().min(1).max(200),
+  messages: z.array(z.object({ mine: z.boolean(), text: z.string().max(800) })).max(20),
+});
+/** The person a conversation belongs to: by LinkedIn's messaging id once known, otherwise by a name only one of them has. */
+export function contactForThread(contacts: NetworkContact[], id: string, name: string): NetworkContact | undefined {
+  const known = contacts.find(p => p.messagingId === id);
+  if (known) return known;
+  const same = contacts.filter(
+    p => !p.messagingId && plainName(p.name) === plainName(name) && (p.requestedAt > 0 || p.messagedAt > 0 || !!p.acceptedAt || !!p.direct),
+  );
+  return same.length === 1 ? same[0] : undefined;
 }

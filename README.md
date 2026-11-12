@@ -81,6 +81,7 @@ LinkedIn's User Agreement does not allow automated activity, and accounts that s
 
 - Everything is stored in your browser, on your device. There is no server and no telemetry.
 - Text sent to ChatGPT: your target roles, your headline or CV text if you added one, and the job titles and company names being planned. Nobody's profile is sent for the planning questions.
+- Conversations: when you open a LinkedIn conversation with someone the extension contacted, its last 20 messages are kept on your device so a reply can be drafted. They are sent to ChatGPT only when you press "Draft a reply with ChatGPT", and are never shown in the side panel.
 - An API key, if you add one, is stored on your device only, is never shown again in the panel, and is left out of exports.
 - **Settings → Export saved data** downloads everything as a file; **Delete everything** removes it.
 
