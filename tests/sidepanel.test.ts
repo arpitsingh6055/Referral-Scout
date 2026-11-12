@@ -269,3 +269,19 @@ it('offers an API key as an option in Settings, shows only its last characters o
   expect(document.querySelector('input[type=password]')).toBeNull();
   expect(byText('button', 'Remove the key')).toBeTruthy();
 });
+
+it('ends setup on Home, not Settings, and suggests the CV and a message check there', async () => {
+  await open();
+  $<HTMLElement>('[aria-label="Settings"]')!.click(); // the panel was last on Settings, as after "Delete everything"
+  state = { ...state, targetSet: false };
+  byText('button', 'Save changes')!.click();
+  await vi.waitFor(() => expect(byText('button', 'Continue')).toBeTruthy());
+  $<HTMLTextAreaElement>('textarea')!.value = 'Sales intern';
+  state = { ...state, targetSet: true };
+  byText('button', 'Continue')!.click();
+  await vi.waitFor(() => expect($<HTMLElement>('.tab[aria-selected=true]')?.textContent).toContain('Home'));
+  expect(byText('.tip', 'Add your CV')).toBeTruthy();
+  byText('.tip button', 'Add CV')!.click();
+  expect($<HTMLElement>('[aria-label="Settings"]')!.getAttribute('aria-selected')).toBe('true');
+  expect((byText('details.acc', 'Your CV') as HTMLDetailsElement).open).toBe(true);
+});

@@ -27,6 +27,7 @@ function render(s: NetworkState): void {
   const scroll = document.scrollingElement?.scrollTop ?? 0;
   page.replaceChildren();
   if (!s.profile) {
+    ui.tab = 'home';
     page.append(welcome());
     return;
   }
@@ -343,6 +344,45 @@ function render(s: NetworkState): void {
   home.append(hello, run);
   const tracker = live(s, stage);
   if (tracker) home.append(tracker);
+  // Suggestions that make the results better, shown on Home instead of sending a new user into Settings.
+  const openSetting = (key: string, title: string): void => {
+    ui.open.add(key);
+    ui.tab = 'setup';
+    render(s);
+    [...document.querySelectorAll<HTMLElement>('details.acc')]
+      .find(d => d.querySelector('summary')?.textContent?.startsWith(title))
+      ?.scrollIntoView?.({ block: 'start' });
+  };
+  const tips: [string, string, string, () => void][] = [];
+  if (!s.cv)
+    tips.push([
+      'Add your CV',
+      'ChatGPT can then mention your real background when it writes to people. It stays on this device.',
+      'Add CV',
+      () => openSetting('chatgpt', 'Your CV'),
+    ]);
+  if (stage < 0)
+    tips.push([
+      'Check your messages',
+      'The connection note and the follow-up sent in your name. Read them once before anything goes out.',
+      'Review',
+      () => openSetting('words', 'Your messages'),
+    ]);
+  if (tips.length) {
+    const card = node('section', '', 'card tips');
+    card.append(node('h3', stage < 0 ? 'Before you start (optional)' : 'Make your messages stronger', 'card-title'));
+    for (const [title, text, label, go] of tips) {
+      const row = node('div', '', 'tip'),
+        words = node('div'),
+        open = node('button', label, 'btn sm');
+      open.type = 'button';
+      open.addEventListener('click', go);
+      words.append(node('b', title), node('span', text));
+      row.append(words, open);
+      card.append(row);
+    }
+    home.append(card);
+  }
   if (needs || s.active || jobs.length || s.contacts.length) home.append(todos, node('h3', 'Your pipeline', 'section-title'), kpis);
   const log = [...(s.log ?? [])].reverse().slice(0, 3);
   if (log.length) {

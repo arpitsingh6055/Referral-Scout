@@ -1669,3 +1669,34 @@ textarea.draft:focus {
   border-radius: 9px;
   font-size: 15px;
 }
+
+/* suggestions on Home */
+.tips {
+  margin-top: 16px;
+}
+.tip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.tip:first-of-type {
+  border-top: 0;
+}
+.tip > div {
+  flex: 1;
+  min-width: 0;
+}
+.tip b {
+  display: block;
+}
+.tip span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.tip .btn {
+  flex: none;
+  color: var(--primary);
+  border-color: var(--primary);
+}

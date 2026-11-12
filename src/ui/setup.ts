@@ -18,6 +18,7 @@ import {
   bubble,
   flags,
   rerender,
+  ui,
 } from './core';
 
 /* ---------- screens ---------- */
@@ -94,6 +95,7 @@ export function askTarget(s: NetworkState): HTMLElement {
           throw new Error('Type the role you are looking for, for example "Product Management internship".');
         }
         flags.dirty = false;
+        ui.tab = 'home'; // setup always ends on Home, wherever the panel was before
         await act(
           {
             kind: 'network',
