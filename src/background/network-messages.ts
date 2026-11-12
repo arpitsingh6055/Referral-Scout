@@ -641,6 +641,60 @@ export function registerNetworkMessages(): void {
             status: `API key saved. ChatGPT questions now go to the OpenAI API (${req.model}); no ChatGPT page is opened.`,
           }));
         }
+        if (req.action === 'checkNow')
+          await updateNetwork(s => ({ ...s, checkRequested: true, status: 'Checking LinkedIn for accepted invitations and replies…' }));
+        // Stop searching for jobs here and choose from what has been found so far.
+        if (req.action === 'finishJobSearch')
+          await updateNetwork(s => {
+            if (s.jobSearch?.status !== 'finding') throw new Error('No job search is running.');
+            if (!s.jobSearch.found.length) throw new Error('Nothing has been found yet. Wait for the first results, or stop the search.');
+            s.jobSearch.cursor = Number.MAX_SAFE_INTEGER;
+            s.status = 'Stopping the search and preparing the list from what was found…';
+            return s;
+          });
+        // Stop looking for more people everywhere and reach out to those already found.
+        if (req.action === 'finishScans')
+          await updateNetwork(s => {
+            const open = (s.referralJobs ?? []).filter(j => j.finishedAt === undefined);
+            if (!open.length) throw new Error('No company is being searched.');
+            for (const j of open) {
+              j.finishedAt = Date.now();
+              delete j.waiting;
+              if (j.mode === 'referral') queueBest(s, j);
+            }
+            referralsOn(s);
+            s.status = `Stopped searching at ${open.length} ${open.length === 1 ? 'company' : 'companies'}. Reaching out to the people already found.`;
+            return s;
+          });
+        // One company: stop searching it and go with who was found.
+        if (req.action === 'skipCompany')
+          await updateNetwork(s => {
+            const j = (s.referralJobs ?? []).find(j => j.url === req.url);
+            if (!j || j.finishedAt !== undefined) throw new Error('That company is not being searched.');
+            j.finishedAt = Date.now();
+            delete j.waiting;
+            if (j.mode === 'referral') queueBest(s, j);
+            s.status = `${j.company}: search stopped. People already found are kept.`;
+            return s;
+          });
+        // One company: nobody else there is contacted. People already asked stay as they are.
+        if (req.action === 'stopCompany')
+          await updateNetwork(s => {
+            const j = (s.referralJobs ?? []).find(j => j.url === req.url);
+            if (!j) throw new Error('That job is no longer on your list.');
+            if (j.finishedAt === undefined) j.finishedAt = Date.now();
+            delete j.waiting;
+            let held = 0;
+            for (const p of s.contacts)
+              if (p.referralJob === j.url && ['shortlisted', 'review'].includes(p.state)) {
+                p.state = 'found';
+                delete p.approved;
+                delete p.auto;
+                held++;
+              }
+            s.status = `${j.company}: stopped. ${held} ${held === 1 ? 'person was' : 'people were'} taken out of the queue; anyone already asked is unchanged.`;
+            return s;
+          });
         if (req.action === 'clearApi') {
           await saveApiConfig(null);
           await updateNetwork(s => {
@@ -673,7 +727,21 @@ export function registerNetworkMessages(): void {
       } finally {
         clearInterval(timer);
         if (exclusive) await release(owner);
-        if (accepted && ['start', 'askReferral', 'findJobs', 'pickJobs', 'referralDecision', 'resume'].includes(req.action))
+        if (
+          accepted &&
+          [
+            'start',
+            'askReferral',
+            'findJobs',
+            'pickJobs',
+            'referralDecision',
+            'resume',
+            'checkNow',
+            'finishJobSearch',
+            'finishScans',
+            'skipCompany',
+          ].includes(req.action)
+        )
           void updateNetwork(s => {
             delete s.paused;
             return s;

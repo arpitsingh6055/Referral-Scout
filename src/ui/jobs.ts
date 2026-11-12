@@ -1,9 +1,18 @@
 /** Jobs and Saved screens: the company shortlist, one card per job, and remembered people and jobs. */
-import { board } from './pipeline';
-import { type NetworkState, dueReminders, staleRequests, jobStatuses, type JobStatus, type SavedItem, SAFE } from '../shared/network';
+import { board, outcomeLabels, wasAsked } from './pipeline';
+import {
+  type NetworkState,
+  type NetworkContact,
+  dueReminders,
+  staleRequests,
+  jobStatuses,
+  type JobStatus,
+  type SavedItem,
+  SAFE,
+} from '../shared/network';
 import { referralPlan } from '../shared/referral';
 import { type JobSearch } from '../shared/jobsearch';
-import { node, link, button, act, kit, accordion, flags } from './core';
+import { node, link, button, act, kit, accordion, flags, ui, stateLabels } from './core';
 import { personCard } from './people';
 
 /* People and jobs remembered with the button on LinkedIn pages: reminders, job progress and old requests. */
@@ -183,6 +192,7 @@ export function jobChooser(search: JobSearch): HTMLElement {
         .map(j => j.id)
         .slice(0, 20);
       if (!ids.length) throw new Error('Tick at least one company.');
+      ui.tab = 'home'; // back to Home, where the search for people is shown step by step
       await act(
         { kind: 'network', action: 'pickJobs', ids, perCompany: perCompanyChoice },
         `${ids.length} ${ids.length === 1 ? 'company' : 'companies'} chosen. Finding who can refer you.`,
@@ -202,6 +212,7 @@ export function jobChooser(search: JobSearch): HTMLElement {
   };
   const caution = node('p', '', 'callout');
   card.append(
+    node('p', 'Step 2 of 4 · your turn', 'eyebrow'),
     node('h2', 'Choose companies', 'card-title'),
     node(
       'p',
@@ -424,7 +435,43 @@ export function buildReferrals(s: NetworkState): HTMLElement {
           'muted small',
         ),
       );
-    for (const p of people) body.append(personCard(s, p));
+    // People in the order that matters: who answered, who was asked, who is queued, who was only found.
+    const groups: [string, (p: NetworkContact) => boolean][] = [
+      ['Replied', p => !!p.outcome],
+      ['Needs you', p => p.state === 'attention' || (p.state === 'review' && !p.approved)],
+      ['Asked, waiting for an answer', p => wasAsked(p)],
+      ['In the queue', p => ['shortlisted', 'review', 'requesting', 'messaging', 'connected'].includes(p.state)],
+      ['Found, not contacted', p => p.state === 'found'],
+      ['Skipped', p => p.state === 'skipped'],
+    ];
+    const placed = new Set<string>();
+    for (const [label, test] of groups) {
+      const members = people.filter(p => !placed.has(p.url) && test(p));
+      if (!members.length) continue;
+      body.append(node('h4', `${label} (${members.length})`, 'group-title'));
+      for (const p of members) {
+        placed.add(p.url);
+        const row = node('details', '', 'person-row'),
+          summary = node('summary'),
+          who = node('span', '', 'person-row-who');
+        who.append(node('b', p.name), node('span', p.headline, 'muted small'));
+        summary.append(
+          who,
+          node('span', p.outcome ? outcomeLabels[p.outcome] : stateLabels[p.state], `badge ${p.outcome ? 'connected' : p.state}`),
+        );
+        row.open = label === 'Needs you';
+        row.append(summary, personCard(s, p));
+        body.append(row);
+      }
+    }
+    const control = node('div', '', 'person-actions');
+    if (job.finishedAt === undefined)
+      control.append(button('Stop searching here', () => act({ kind: 'network', action: 'skipCompany', url: job.url }), 'btn sm'));
+    if (people.some(p => ['shortlisted', 'review'].includes(p.state)))
+      control.append(
+        button('Stop asking here', () => act({ kind: 'network', action: 'stopCompany', url: job.url }), 'btn sm ghost danger'),
+      );
+    if (control.childElementCount) body.append(control);
     body.append(
       button(
         job.applied ? 'Applied ✓ (undo)' : 'I applied',

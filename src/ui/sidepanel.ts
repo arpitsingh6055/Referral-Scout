@@ -161,7 +161,20 @@ function render(s: NetworkState): void {
   if (search?.status === 'finding') {
     run.append(
       node('p', 'You can keep using your browser. Results appear under Jobs.', 'field-help'),
-      button('Stop this search', () => act({ kind: 'network', action: 'cancelJobSearch' }, 'Job search stopped.'), 'btn block'),
+      ...(search.found.length
+        ? [
+            button(
+              `Stop here and choose from ${search.found.length} jobs found`,
+              () => act({ kind: 'network', action: 'finishJobSearch' }),
+              'btn block',
+            ),
+          ]
+        : []),
+      button(
+        'Cancel this search',
+        () => act({ kind: 'network', action: 'cancelJobSearch' }, 'Job search cancelled. Companies you already chose are kept.'),
+        'btn block',
+      ),
     );
   } else if (choosing) {
     run.append(
@@ -188,6 +201,9 @@ function render(s: NetworkState): void {
       ),
     );
   }
+  // You are never locked into a stage: stop looking for more people and go with those already found.
+  if (!s.paused && jobs.some(j => j.finishedAt === undefined) && s.contacts.some(p => p.referralJob))
+    run.append(button('Stop searching, reach out to who was found', () => act({ kind: 'network', action: 'finishScans' }), 'btn block'));
   const working = s.active || search?.status === 'finding' || jobs.some(j => !j.finishedAt && !j.waiting);
   if (s.paused) {
     /* Resume is already the main button */
@@ -390,7 +406,21 @@ function render(s: NetworkState): void {
     }
     home.append(card);
   }
-  if (needs || s.active || jobs.length || s.contacts.length) home.append(todos, node('h3', 'Your pipeline', 'section-title'), kpis);
+  if (needs || s.active || jobs.length || s.contacts.length) {
+    const head = node('div', '', 'row between section-row'),
+      asked = s.contacts.some(p => p.requestedAt > 0 || p.messagedAt > 0);
+    head.append(node('h3', 'Your pipeline', 'section-title'));
+    if (asked) head.append(button('Check for replies now', () => act({ kind: 'network', action: 'checkNow' }), 'btn sm'));
+    home.append(todos, head, kpis);
+    if (asked)
+      home.append(
+        node(
+          'p',
+          `Acceptances and replies are checked on LinkedIn every 2 hours while sending is on${s.repliesCheckedAt ? `; replies last checked ${ago(s.repliesCheckedAt)}` : ''}. You can still mark someone yourself.`,
+          'field-help pipeline-note',
+        ),
+      );
+  }
   const log = [...(s.log ?? [])].reverse().slice(0, 3);
   if (log.length) {
     const recent = node('section', '', 'card recent'),
@@ -434,6 +464,11 @@ async function refresh(): Promise<void> {
   if (flags.busy || flags.dirty || typing) return; // never throw away what the user is typing
   const current = await request({ kind: 'network', action: 'status' });
   announce(current);
+  const before = flags.last;
+  if (before?.jobSearch?.status === 'finding' && current.jobSearch?.status === 'choosing' && current.jobSearch.found.length) {
+    ui.tab = 'referrals'; // the list is ready and it is the person's turn: show it
+    document.scrollingElement?.scrollTo({ top: 0 });
+  }
   if (JSON.stringify(current) !== flags.signature) render(current);
 }
 /* Work done in the background (a search, a draft, a send, a ChatGPT fallback) is announced as a notification too,

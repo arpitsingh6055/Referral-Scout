@@ -208,3 +208,62 @@ it('Skip stops a person for good, and Approve all approves every waiting draft a
   expect((await ok({ action: 'skip', url: person('a').url })).contacts[0]).toMatchObject({ state: 'skipped' });
   expect((await ok({ action: 'approve', url: '*' })).contacts.filter(p => p.approved).map(p => p.name)).toEqual(['b', 'c']);
 });
+
+it('lets the person leave any stage: stop a job search with what was found, stop looking for people, stop one company', async () => {
+  const found = [
+    {
+      id: '111111',
+      url: 'https://www.linkedin.com/jobs/view/111111/',
+      title: 'Ops Intern',
+      company: 'Acme',
+      location: '',
+      insight: '',
+      term: 'x',
+      score: 5,
+      picked: false,
+    },
+  ];
+  await seed({ jobSearch: { status: 'finding', cursor: 1, found: [], startedAt: 1 } });
+  expect(await send({ action: 'finishJobSearch' })).toMatchObject({
+    ok: false,
+    error: 'Nothing has been found yet. Wait for the first results, or stop the search.',
+  });
+  await updateNetwork(s => ({ ...s, jobSearch: { status: 'finding', cursor: 1, found, startedAt: 1 } }));
+  expect((await ok({ action: 'finishJobSearch' })).jobSearch!.cursor).toBeGreaterThan(1000);
+
+  await seed({
+    active: false,
+    referralJobs: [job(1), job(2, { waiting: true })],
+    contacts: [person('a', { state: 'found', referralJob: job(1).url, degree: 2 })],
+  });
+  const stopped = await ok({ action: 'finishScans' });
+  expect(stopped.referralJobs!.every(j => j.finishedAt! > 0 && !j.waiting)).toBe(true);
+  expect(stopped).toMatchObject({ active: true, scope: 'referrals' });
+  expect(stopped.status).toBe('Stopped searching at 2 companies. Reaching out to the people already found.');
+
+  await seed({ referralJobs: [job(1), job(2)] });
+  const one = await ok({ action: 'skipCompany', url: job(1).url });
+  expect(one.referralJobs![0]!.finishedAt).toBeGreaterThan(0);
+  expect(one.referralJobs![1]!.finishedAt).toBeUndefined();
+});
+
+it('"Stop asking here" takes unsent people out of the queue and leaves anyone already asked alone', async () => {
+  await seed({
+    referralJobs: [job(1)],
+    contacts: [
+      person('queued', { referralJob: job(1).url, auto: true }),
+      person('draft', { referralJob: job(1).url, state: 'review', approved: true }),
+      person('asked', { referralJob: job(1).url, state: 'pending', requestedAt: 5 }),
+      person('other', { referralJob: job(2).url }),
+    ],
+  });
+  const after = await ok({ action: 'stopCompany', url: job(1).url });
+  expect(after.contacts.map(p => p.state)).toEqual(['found', 'found', 'pending', 'shortlisted']);
+  expect(after.status).toBe('Company 1: stopped. 2 people were taken out of the queue; anyone already asked is unchanged.');
+});
+
+it('"Check now" asks the engine for an immediate look', async () => {
+  await seed();
+  expect((await ok({ action: 'checkNow' })).checkRequested).toBe(true);
+  await vi.waitFor(() => expect(networkTick).toHaveBeenCalled());
+});

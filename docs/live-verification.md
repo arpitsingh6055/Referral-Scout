@@ -108,3 +108,7 @@ Covered by tests only. Still to confirm in Edge:
 1. **One work window.** Start a job search with the ChatGPT website: ChatGPT opens as a tab in the same background window as LinkedIn and closes after its answer is read. Press Pause: the window closes. Press Resume: it reopens.
 2. **API key.** Settings, ChatGPT connection: save a real key and model name (the browser asks to allow api.openai.com), press "Test the key", then run a job search and confirm no ChatGPT tab opens.
 3. **Outcomes.** Mark "They replied" and "Will refer me" on a person and "I applied" on a job; the Home numbers and the Jobs board follow.
+
+## 0.34.0 (not yet run live in the extension)
+- The messaging conversation list was read on the live page on 12 November 2026: `li.msg-conversation-listitem`, the name in `.msg-conversation-listitem__participant-names`, and a snippet starting "You:" when the latest message is your own. Checked on an account with a single conversation.
+- Still to confirm in Edge: "Check for replies now" marks a real reply; searching and sending alternate during a multi-company run; the panel jumps to the company list when a job search finishes.

@@ -18,6 +18,7 @@ import {
   withinActiveHours,
   type NetworkState,
   type NetworkContact,
+  repliesFrom,
 } from '../shared/network';
 import { classify, geoFor, normalizeCompany, planSearch, companyOf } from '../shared/targeting';
 import { companyFromCurrent } from '../parsers/network';
@@ -735,6 +736,33 @@ async function referralScan(s: NetworkState, job: ReferralJob, signal: AbortSign
     return current;
   });
 }
+/** Looks at LinkedIn messaging once and marks everyone who has written back. Reading only; a failure here stops nothing. */
+async function checkReplies(signal: AbortSignal): Promise<number> {
+  let rows: { name: string; mine: boolean }[] = [];
+  try {
+    const tab = await networkTab('https://www.linkedin.com/messaging/', signal);
+    rows = z.array(z.object({ name: z.string(), mine: z.boolean() })).parse(await networkCommand(tab, { action: 'inbox' }, signal));
+  } catch (error) {
+    const m = error instanceof Error ? error.message : String(error);
+    if (signal.aborted || ACCOUNT_LEVEL.test(m)) throw error;
+    await updateNetwork(c => ({ ...c, repliesCheckedAt: Date.now() }));
+    return 0;
+  }
+  let found = 0;
+  await updateNetwork(c => {
+    const urls = repliesFrom(rows, c.contacts);
+    for (const p of c.contacts)
+      if (urls.includes(p.url)) {
+        p.outcome = 'replied';
+        p.outcomeAt = Date.now();
+        found++;
+      }
+    c.repliesCheckedAt = Date.now();
+    if (found) c.status = `${found} ${found === 1 ? 'person has' : 'people have'} replied. Open People, Replied to see who.`;
+    return c;
+  });
+  return found;
+}
 async function sweepAcceptances(s: NetworkState, signal: AbortSignal): Promise<void> {
   await note(s, 'Checking your connections list for people who accepted…');
   const tab = await networkTab('https://www.linkedin.com/mynetwork/invite-connect/connections/', signal);
@@ -1116,6 +1144,7 @@ async function note(s: NetworkState, status: string): Promise<void> {
   if (s.status !== status) await updateNetwork(c => ({ ...c, status }));
 }
 let worked = false;
+let lastWasSearch = false;
 async function run(): Promise<void> {
   const owner = crypto.randomUUID();
   if (!(await acquire(owner))) return;
@@ -1131,45 +1160,76 @@ async function run(): Promise<void> {
     if (!s.profile) return;
     // Paused means everything: searches and reading as well as sending. Starting or resuming anything lifts it.
     if (s.paused) return;
-    // A referral search was asked for by a click on a job page, so it runs straight away, even while outreach is paused or outside active hours. It only reads.
-    if (s.jobSearch?.status === 'finding') {
+    // "Check now": acceptances and replies are looked at straight away, whatever else is queued.
+    if (s.checkRequested) {
       worked = true;
-      await findJobsStep(s, abort.signal);
+      await updateNetwork(c => {
+        delete c.checkRequested;
+        return c;
+      });
+      if (s.contacts.some(p => p.state === 'pending' && p.requestedAt > 0)) await sweepAcceptances(s, abort.signal);
+      const replies = await checkReplies(abort.signal);
+      const accepted = (await getNetwork()).contacts.filter(p => p.acceptedAt).length - s.contacts.filter(p => p.acceptedAt).length;
+      await updateNetwork(c => ({
+        ...c,
+        status: `Checked just now: ${accepted} new ${accepted === 1 ? 'acceptance' : 'acceptances'}, ${replies} new ${replies === 1 ? 'reply' : 'replies'}.`,
+      }));
       return;
     }
-    // Before any company is searched: one prompt covering every company that has no plan yet.
-    const unplanned = (s.referralJobs ?? [])
-      .filter(j => j.finishedAt === undefined && j.mode === 'referral' && !j.strategy && !j.strategyTried)
-      .slice(0, 20);
-    if (unplanned.length) {
-      worked = true;
-      await planCompanies(s, unplanned, abort.signal);
-      return;
-    }
-    const scan = (s.referralJobs ?? []).find(j => j.finishedAt === undefined && !j.waiting);
-    if (scan) {
-      worked = true;
-      try {
-        await referralScan(s, scan, abort.signal);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (abort.signal.aborted || ACCOUNT_LEVEL.test(message)) throw error;
-        // One company that cannot be read must not block the others or a new job search: retry twice, then close it with what was found.
-        await updateNetwork(c => {
-          const j = (c.referralJobs ?? []).find(x => x.url === scan.url);
-          if (!j) return c;
-          j.failures = (j.failures ?? 0) + 1;
-          if (j.failures >= 3) {
-            j.finishedAt = Date.now();
-            j.error = message.slice(0, 200);
-            if (j.mode === 'referral') queueBest(c, j);
-            c.status = `${j.company}: LinkedIn pages could not be read after three tries, so this company is closed with what was found. The other companies carry on.`;
-          } else c.status = `${j.company}: a page did not load properly. Trying again (${j.failures} of 3).`;
-          return c;
-        });
+    // Searching and sending take turns, so people already found are contacted while other companies are still being searched.
+    const scoped = s.scope === 'referrals' ? { ...s, contacts: s.contacts.filter(p => p.referralJob) } : s;
+    const sendDue =
+      s.active &&
+      !s.intent &&
+      withinActiveHours(s.settings ?? defaultSettings) &&
+      Date.now() >= s.nextActionAt &&
+      !!nextContact(scoped) &&
+      !idleReason(scoped);
+    if (!(sendDue && lastWasSearch)) {
+      // A referral search was asked for by a click on a job page, so it runs straight away, even while outreach is paused or outside active hours. It only reads.
+      if (s.jobSearch?.status === 'finding') {
+        lastWasSearch = true;
+        worked = true;
+        await findJobsStep(s, abort.signal);
+        return;
       }
-      return;
+      // Before any company is searched: one prompt covering every company that has no plan yet.
+      const unplanned = (s.referralJobs ?? [])
+        .filter(j => j.finishedAt === undefined && j.mode === 'referral' && !j.strategy && !j.strategyTried)
+        .slice(0, 20);
+      if (unplanned.length) {
+        lastWasSearch = true;
+        worked = true;
+        await planCompanies(s, unplanned, abort.signal);
+        return;
+      }
+      const scan = (s.referralJobs ?? []).find(j => j.finishedAt === undefined && !j.waiting);
+      if (scan) {
+        lastWasSearch = true;
+        worked = true;
+        try {
+          await referralScan(s, scan, abort.signal);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (abort.signal.aborted || ACCOUNT_LEVEL.test(message)) throw error;
+          // One company that cannot be read must not block the others or a new job search: retry twice, then close it with what was found.
+          await updateNetwork(c => {
+            const j = (c.referralJobs ?? []).find(x => x.url === scan.url);
+            if (!j) return c;
+            j.failures = (j.failures ?? 0) + 1;
+            if (j.failures >= 3) {
+              j.finishedAt = Date.now();
+              j.error = message.slice(0, 200);
+              if (j.mode === 'referral') queueBest(c, j);
+              c.status = `${j.company}: LinkedIn pages could not be read after three tries, so this company is closed with what was found. The other companies carry on.`;
+            } else c.status = `${j.company}: a page did not load properly. Trying again (${j.failures} of 3).`;
+            return c;
+          });
+        }
+        return;
+      }
     }
+    lastWasSearch = false;
     if (!s.active) {
       await closeWorkWindow().catch(() => undefined);
       return;
@@ -1203,9 +1263,16 @@ async function run(): Promise<void> {
     const waiting =
       s.contacts.some(p => p.state === 'pending' && p.requestedAt > 0) ||
       (s.saved ?? []).some(i => i.type === 'person' && i.relation === 'pending');
+    const awaitingReply = s.contacts.some(p => p.messagedAt > 0 && !p.outcome);
+    if (!waiting && awaitingReply && Date.now() - (s.repliesCheckedAt ?? 0) > 2 * 60 * 60000) {
+      worked = true;
+      await checkReplies(abort.signal);
+      return;
+    }
     if (waiting && Date.now() >= (s.nextSweepAt ?? 0)) {
       worked = true;
       await sweepAcceptances(s, abort.signal);
+      if (awaitingReply) await checkReplies(abort.signal);
       return;
     }
     // In referrals-only running, general contacts are left exactly as they are.

@@ -390,6 +390,21 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
     ).catch(() => null);
     return { companyUrl: item?.companyUrl ?? null, location: item?.location ?? '', suggested: item?.suggested ?? [] };
   }
+  if (cmd.action === 'inbox') {
+    // LinkedIn messaging (checked live, November 2026): one list item per conversation, the other person's name,
+    // and a snippet that starts with "You:" when the latest message is your own.
+    if (!location.pathname.startsWith('/messaging')) throw new Error('LinkedIn did not open messaging.');
+    const read = (): { name: string; mine: boolean }[] | null => {
+      const rows: { name: string; mine: boolean }[] = [];
+      for (const li of document.querySelectorAll('li.msg-conversation-listitem')) {
+        const name = textOf(li.querySelector('.msg-conversation-listitem__participant-names'));
+        if (name)
+          rows.push({ name: name.slice(0, 200), mine: /^you:/i.test(textOf(li.querySelector('.msg-conversation-card__message-snippet'))) });
+      }
+      return rows.length || document.querySelector('.msg-conversations-container__conversations-list') ? rows.slice(0, 60) : null;
+    };
+    return await wait(read, signal, 12000).catch(() => []);
+  }
   if (cmd.action === 'connections') {
     if (!location.pathname.startsWith('/mynetwork/invite-connect/connections'))
       throw new Error('LinkedIn did not open your connections list.');

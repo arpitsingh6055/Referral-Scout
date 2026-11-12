@@ -15,6 +15,13 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.34.0: you stay in command; replies are checked for you
+- **Leave any stage.** During a job search: "Stop here and choose from the N jobs found", or cancel. While people are being found: "Stop searching, reach out to who was found" on Home, and per company "Stop searching here". While reaching out: per company "Stop asking here" takes everyone not yet contacted out of the queue; people already asked are untouched. Pause and Resume work as before.
+- **Searching and sending take turns.** People already found at one company are contacted while other companies are still being searched, instead of waiting for every search to finish.
+- **Replies are read for you.** Every 2 hours while sending is on, and whenever you press **Check for replies now** on Home, the extension looks at your connections list and at LinkedIn messaging and marks who accepted and who wrote back. It reads the conversation list only (names, and whether the latest message is yours), not the messages. People with the same name as another person you asked are left for you to mark. The messaging list was checked against the live page on 12 November 2026.
+- **Clear hand-overs.** When a job search finishes, the panel opens the company list by itself, labelled "Step 2 of 4 · your turn"; Home says "Your turn: Choose your companies". After you confirm companies you are taken back to Home, where the search for people is tracked.
+- **People inside a job are one line each**, grouped as Replied, Needs you, Asked and waiting, In the queue, Found, Skipped. Open a line for the message, actions and outcome.
+
 ## 0.33.0: new defaults and a clear account warning
 - **Ten companies are ticked by default** in the shortlist (was 15); you can still tick up to 20.
 - **The daily invitation limit defaults to 30** (was 15). An install still on the old default moves to 30 once; a value you chose yourself is kept. The weekly limit stays at 80.

@@ -210,6 +210,10 @@ export interface NetworkState {
   paceV2?: boolean;
   hoursV2?: boolean;
   limitsV2?: boolean;
+  /** The person pressed "Check now": look at acceptances and replies on the next step, whatever else is going on. */
+  checkRequested?: boolean;
+  /** When replies were last looked for in LinkedIn messaging. */
+  repliesCheckedAt?: number;
   /** The person has said what they are looking for; until then setup asks instead of assuming. */ targetSet?: boolean;
   /** Shown to the side panel only: whether an API key is saved, its model and its last four characters. Never the key. */ api?: {
     model: string;
@@ -418,6 +422,11 @@ export const networkRequest = z.discriminatedUnion('action', [
     model: z.string().trim().min(2).max(80),
   }),
   z.object({ kind: z.literal('network'), action: z.literal('clearApi') }),
+  z.object({ kind: z.literal('network'), action: z.literal('skipCompany'), url: z.string() }),
+  z.object({ kind: z.literal('network'), action: z.literal('stopCompany'), url: z.string() }),
+  z.object({ kind: z.literal('network'), action: z.literal('finishScans') }),
+  z.object({ kind: z.literal('network'), action: z.literal('finishJobSearch') }),
+  z.object({ kind: z.literal('network'), action: z.literal('checkNow') }),
   z.object({ kind: z.literal('network'), action: z.literal('testApi') }),
   z.object({ kind: z.literal('network'), action: z.literal('forget'), url: z.string() }),
   z.object({ kind: z.literal('network'), action: z.literal('askReferral'), url: z.string() }),
@@ -455,6 +464,7 @@ export const networkPageCommand = z.object({
     'search',
     'connections',
     'companyId',
+    'inbox',
     'companies',
     'jobs',
     'jobInfo',
@@ -512,5 +522,28 @@ export function riskNotes(daily: number | null, weekly: number | null, paceSecon
   if (weekly === null) out.push('no weekly limit');
   else if (weekly > SAFE.weekly) out.push(`${weekly} invitations a week (LinkedIn itself allows about ${SAFE.weekly})`);
   if (paceSeconds < SAFE.paceSeconds) out.push(`only ${paceSeconds} seconds between sends (recommended: ${SAFE.paceSeconds} or more)`);
+  return out;
+}
+
+/** A name as it can be compared between a profile and the messaging list: no brackets, no suffix after a comma, no case. */
+export const plainName = (name: string): string =>
+  name
+    .replace(/\([^)]*\)/g, ' ')
+    .split(',')[0]!
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+/**
+ * Who has written back, read from the conversation list in LinkedIn messaging: a conversation with someone who was
+ * asked, whose latest message is theirs. Two people with the same name are left for the person to mark.
+ */
+export function repliesFrom(rows: { name: string; mine: boolean }[], contacts: NetworkContact[]): string[] {
+  const asked = contacts.filter(p => !p.outcome && (p.messagedAt > 0 || p.requestedAt > 0)),
+    out: string[] = [];
+  for (const row of rows) {
+    if (row.mine) continue;
+    const same = asked.filter(p => plainName(p.name) === plainName(row.name));
+    if (same.length === 1) out.push(same[0]!.url);
+  }
   return out;
 }

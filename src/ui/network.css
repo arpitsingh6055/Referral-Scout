@@ -1700,3 +1700,67 @@ textarea.draft:focus {
   color: var(--primary);
   border-color: var(--primary);
 }
+
+/* people inside a job: one line each, grouped by where they stand; open a line for the detail */
+.group-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 16px 0 6px;
+}
+details.person-row {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  margin-bottom: 6px;
+}
+details.person-row > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+details.person-row > summary::-webkit-details-marker {
+  display: none;
+}
+.person-row-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.person-row-who span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+details.person-row > .person {
+  margin: 0 8px 8px;
+}
+details.person-row > .person .person-head {
+  display: none;
+}
+.section-row {
+  margin-top: 20px;
+}
+.section-row .section-title {
+  margin: 0 2px;
+}
+.section-row + .kpis {
+  margin-top: 8px;
+}
+.pipeline-note {
+  margin: -4px 2px 12px;
+}
+
+/* "your turn" and "waiting" use a warm amber, not a muddy brown */
+.run.warn {
+  background: linear-gradient(150deg, #b45309, #d97706);
+}
+.run.warn .btn.primary {
+  color: #9a4a06;
+}

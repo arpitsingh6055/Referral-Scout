@@ -4,7 +4,22 @@ import { node, icon, pad } from './core';
 
 /* ---------- derived status ---------- */
 export function runStatus(s: NetworkState): { tone: 'ok' | 'warn' | 'idle'; pill: string; title: string; sub: string } {
-  const settings = s.settings ?? defaultSettings;
+  const settings = s.settings ?? defaultSettings,
+    openJobs = (s.referralJobs ?? []).filter(j => j.finishedAt === undefined);
+  if (!s.paused && s.jobSearch?.status === 'choosing' && s.jobSearch.found.length)
+    return {
+      tone: 'warn',
+      pill: 'Your turn',
+      title: 'Choose your companies',
+      sub: `${s.jobSearch.found.length} companies found. Tick the ones worth going after. Nobody is contacted before you confirm.`,
+    };
+  if (!s.paused && openJobs.length && openJobs.every(j => j.waiting))
+    return {
+      tone: 'warn',
+      pill: 'Your turn',
+      title: 'One question before we continue',
+      sub: 'Answer under “Needs you” below, then the search carries on.',
+    };
   if (s.paused)
     return {
       tone: 'idle',

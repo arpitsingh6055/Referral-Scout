@@ -972,3 +972,56 @@ it('does not drop a request that arrives while the previous step is still finish
   expect(vi.getTimerCount()).toBeGreaterThan(0); // a follow-up run is scheduled
   vi.useRealTimers();
 });
+
+it('reads who has replied from the messaging list: only someone who was asked, whose latest message is theirs, and never a shared name', async () => {
+  const { repliesFrom } = await import('../src/shared/network');
+  const asked = (slug: string) => person(slug, { state: 'messaged', messagedAt: 5 });
+  const rows = [
+    { name: 'Ananya Rao (She/Her)', mine: false },
+    { name: 'rahul mehta', mine: true },
+    { name: 'Sam Lee', mine: false },
+    { name: 'A Stranger', mine: false },
+  ];
+  const twins = [asked('sam-lee'), { ...asked('sam-lee'), url: 'https://www.linkedin.com/in/sam-lee-2/' }];
+  expect(repliesFrom(rows, [asked('ananya-rao'), asked('rahul-mehta'), ...twins])).toEqual(['https://www.linkedin.com/in/ananya-rao/']);
+});
+
+it('"Check now" looks at LinkedIn messaging straight away, even with sending off, and marks who replied', async () => {
+  await seed({ active: false, checkRequested: true, contacts: [person('ananya-rao', { state: 'messaged', messagedAt: 5 })] });
+  vi.mocked(networkTab).mockClear();
+  vi.mocked(networkCommand).mockResolvedValueOnce([{ name: 'Ananya Rao', mine: false }]);
+  await networkTick();
+  const saved = await getNetwork();
+  expect(urls()[0]!.pathname).toBe('/messaging/');
+  expect(saved.contacts[0]).toMatchObject({ outcome: 'replied' });
+  expect(saved.checkRequested).toBeUndefined();
+  expect(saved.status).toBe('Checked just now: 0 new acceptances, 1 new reply.');
+});
+
+it('takes turns between searching and sending, so people already found are contacted while other companies are still searched', async () => {
+  const job = (n: number) => ({
+    url: `https://www.linkedin.com/jobs/view/5${n}/`,
+    title: 'Ops Intern',
+    company: `Co ${n}`,
+    location: '',
+    mode: 'referral' as const,
+    addedAt: n,
+    cursor: 3,
+    found: 0,
+    infoTried: true,
+    lookupTried: true,
+    strategyTried: true,
+  });
+  await seed({ scope: 'referrals', referralJobs: [job(1), job(2)], contacts: [person('ready', { referralJob: job(1).url, auto: true })] });
+  vi.mocked(networkCommand).mockResolvedValue([]);
+  const firstUrl = async (): Promise<string> => {
+    vi.mocked(networkTab).mockClear();
+    await networkTick();
+    return urls()[0]!.pathname;
+  };
+  // Whichever goes first, the next step is the other kind: one search, one send, with the second company still unsearched.
+  const steps = [await firstUrl(), await firstUrl()];
+  expect(steps.filter(p => p.includes('/search/results/people'))).toHaveLength(1);
+  expect(steps).toContain('/in/ready/');
+  expect((await getNetwork()).referralJobs![1]!.finishedAt).toBeUndefined();
+});

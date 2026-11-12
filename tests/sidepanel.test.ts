@@ -329,3 +329,56 @@ it('warns in the company list when the choice adds up to more than a careful day
   expect(caution.hidden).toBe(false);
   expect(caution.textContent).toContain('11 companies × 3 people is up to 33 invitations');
 });
+
+it('says when it is the person’s turn, and takes them to the company list the moment a search finishes', async () => {
+  const found = [
+    {
+      id: '111111',
+      url: 'https://www.linkedin.com/jobs/view/111111/',
+      title: 'Ops Intern',
+      company: 'Acme',
+      location: 'India',
+      insight: '',
+      term: 'x',
+      score: 5,
+      picked: true,
+    },
+  ];
+  await open({ jobSearch: { status: 'finding', cursor: 0, found, startedAt: Date.now() } });
+  expect(byText('button', 'Stop here and choose from 1 jobs found')).toBeTruthy();
+  expect($<HTMLElement>('.tab[aria-selected=true]')!.textContent).toContain('Home');
+  state = { ...state, jobSearch: { status: 'choosing', cursor: 1, found, startedAt: 1 } };
+  await vi.advanceTimersByTimeAsync(2600);
+  await vi.waitFor(() => expect($<HTMLElement>('.tab[aria-selected=true]')!.textContent).toContain('Jobs'));
+  expect(byText('.eyebrow', 'Step 2 of 4 · your turn')).toBeTruthy();
+  byText('.tab', 'Home')!.click();
+  expect($('.run-title')!.textContent).toBe('Choose your companies');
+  expect($('.pill')!.textContent).toBe('Your turn');
+});
+
+it('shows the people of a job as one line each, grouped by where they stand, with control over that company', async () => {
+  const jobUrl = 'https://www.linkedin.com/jobs/view/1/';
+  await open({
+    referralJobs: [
+      { url: jobUrl, title: 'Ops Intern', company: 'Stripe', location: '', mode: 'referral', addedAt: 1, cursor: 1, found: 4 },
+    ],
+    contacts: [
+      person('replied', 'messaged', { referralJob: jobUrl, messagedAt: 5, outcome: 'replied' }),
+      person('asked', 'pending', { referralJob: jobUrl, requestedAt: 3 }),
+      person('queued', 'shortlisted', { referralJob: jobUrl }),
+      person('seen', 'found', { referralJob: jobUrl }),
+    ],
+  });
+  expect(byText('button', 'Stop searching, reach out to who was found')).toBeTruthy();
+  expect(byText('button', 'Check for replies now')).toBeTruthy();
+  byText('.tab', 'Jobs')!.click();
+  expect([...document.querySelectorAll('.group-title')].map(e => e.textContent)).toEqual([
+    'Replied (1)',
+    'Asked, waiting for an answer (1)',
+    'In the queue (1)',
+    'Found, not contacted (1)',
+  ]);
+  expect(document.querySelectorAll('details.person-row')).toHaveLength(4);
+  byText('button', 'Stop asking here')!.click();
+  await vi.waitFor(() => expect(sent.find(r => r.action === 'stopCompany')).toMatchObject({ url: jobUrl }));
+});
