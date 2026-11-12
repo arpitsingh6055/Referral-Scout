@@ -15,6 +15,10 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.37.2: checks wait their turn; no "Resume" on a panel that never started
+- **The automatic check for acceptances and replies no longer runs in the middle of other work.** It runs about every 2 hours only when no job search is running, no company is being searched and nobody is waiting to be contacted, or straight away when you press **Check LinkedIn now**. It also runs when reaching out is switched off, as long as you are not paused.
+- **Fixed: a "Resume" button on first load.** Installing or reloading the extension used to mark it as paused with "Ready when you are… press Start". Nothing is paused on install or update now, and a panel left in that state is cleared once.
+
 ## 0.37.1: marking a reply clears "Needs you"; the conversation card stays on the page
 - **Fixed: someone under "Needs you" stayed there after you pressed "They replied".** Marking what happened (replied, will refer, cannot help) now moves the person to Introduced with "You are in conversation with them", and nothing automatic is sent to them any more.
 - **Conversations you carried on yourself are recognised.** When you open a conversation where they answered or you wrote something beyond the invitation note, the same happens by itself: no automatic follow-up on top of your own messages, and no "Needs you". The invitation note on its own does not count, so the planned follow-up still goes out.

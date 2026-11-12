@@ -460,7 +460,7 @@ function render(s: NetworkState): void {
         node('b', 'Who accepted? Who replied?', 'sending-title'),
         node(
           'span',
-          `Your LinkedIn connections and messages are checked every 2 hours while reaching out is on${s.repliesCheckedAt ? `. Last checked ${ago(s.repliesCheckedAt)}` : ''}.`,
+          `Checked by itself about every 2 hours, but only when no search is running and nobody is waiting to be contacted${s.repliesCheckedAt ? `. Last checked ${ago(s.repliesCheckedAt)}` : ''}.`,
         ),
       );
       check.append(

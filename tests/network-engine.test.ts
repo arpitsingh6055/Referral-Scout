@@ -1073,3 +1073,45 @@ it('closes invitations that are no longer waiting on LinkedIn, but only when the
   expect(await sweep(true)).toEqual(['pending', 'skipped', 'pending']); // gone from LinkedIn; the one sent a minute ago is left alone
   expect((await getNetwork()).contacts[1]!.reason).toMatch(/withdrawn or declined/);
 });
+
+it('checks acceptances and replies by itself only when nothing else is going on', async () => {
+  const pending = () => person('waiting', { state: 'pending', requestedAt: Date.now() - 3 * 3600_000 });
+  const actions = () => vi.mocked(networkCommand).mock.calls.map(c => (c[1] as { action: string }).action);
+  const job = {
+    url: 'https://www.linkedin.com/jobs/view/66/',
+    title: 'Ops Intern',
+    company: 'Acme',
+    location: '',
+    mode: 'referral' as const,
+    addedAt: 1,
+    cursor: 3,
+    found: 0,
+    infoTried: true,
+    lookupTried: true,
+    strategyTried: true,
+  };
+
+  // 1. A company is still being searched: the search step runs, no check.
+  await seed({ active: false, contacts: [pending()], referralJobs: [job] });
+  vi.mocked(networkCommand).mockReset();
+  vi.mocked(networkCommand).mockResolvedValue([]);
+  await networkTick();
+  expect(actions()).not.toContain('connections');
+
+  // 2. Someone is waiting to be contacted: no check either.
+  await seed({ contacts: [pending(), person('queued')], nextActionAt: Date.now() + 60_000 });
+  vi.mocked(networkCommand).mockReset();
+  vi.mocked(networkCommand).mockResolvedValue([]);
+  await networkTick();
+  expect(actions()).not.toContain('connections');
+
+  // 3. Nothing is going on, even with reaching out switched off: now the check runs.
+  await seed({ active: false, contacts: [pending()] });
+  vi.mocked(networkCommand).mockReset();
+  vi.mocked(networkCommand)
+    .mockResolvedValueOnce({ urls: [], ids: {} })
+    .mockResolvedValueOnce({ urls: ['https://www.linkedin.com/in/waiting/'], complete: true });
+  await networkTick();
+  expect(actions()).toEqual(['connections', 'sentInvitations']);
+  expect((await getNetwork()).nextSweepAt! - Date.now()).toBeGreaterThan(3600_000); // and not again for about two hours
+});

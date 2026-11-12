@@ -1,7 +1,7 @@
 import { openDatabase } from '../storage/database';
 import { registerAiMessages } from './network-ai';
 import { registerNetworkMessages } from './network-messages';
-import { getNetwork, networkTick, pauseNetwork } from './network';
+import { networkTick, updateNetwork } from './network';
 registerNetworkMessages();
 registerAiMessages();
 chrome.alarms.onAlarm.addListener(alarm => {
@@ -17,12 +17,19 @@ async function initialize(): Promise<void> {
   chrome.power.releaseKeepAwake();
   if (!(await chrome.alarms.get('network-tick'))) await chrome.alarms.create('network-tick', { periodInMinutes: 1 });
 }
-// A first install starts paused. An update must not interrupt a running 24-hour cycle: initialize() re-creates the alarm.
-chrome.runtime.onInstalled.addListener(details => {
-  void initialize().then(async () => {
-    if (details.reason === 'install' || !(await getNetwork()).active)
-      await pauseNetwork('Ready when you are. Review your LinkedIn outreach and press Start.');
-  });
+// Installing or updating never pauses anything: a new install simply has nothing running, and an update carries on.
+// Earlier versions paused here on every reload, which left a "Resume" button on a panel that had never been started.
+chrome.runtime.onInstalled.addListener(() => {
+  void initialize().then(() =>
+    updateNetwork(s => {
+      if (s.paused && /^Ready when you are\./.test(s.status)) {
+        delete s.paused;
+        delete s.resumeTo;
+        s.status = '';
+      }
+      return s;
+    }),
+  );
 });
 chrome.runtime.onStartup.addListener(() => {
   void initialize().then(() => networkTick());

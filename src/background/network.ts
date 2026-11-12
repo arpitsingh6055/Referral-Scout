@@ -1284,6 +1284,24 @@ async function run(): Promise<void> {
       }
     }
     lastWasSearch = false;
+    // Acceptances and replies are looked at only when nothing else is going on: no job search, no company being
+    // searched, nobody waiting to be contacted. (Or straight away when "Check LinkedIn now" is pressed, above.)
+    const searching = s.jobSearch?.status === 'finding' || (s.referralJobs ?? []).some(j => j.finishedAt === undefined && !j.waiting),
+      reachingOut = s.active && !!nextContact(scoped) && !idleReason(scoped);
+    if (!searching && !reachingOut) {
+      const waiting =
+          s.contacts.some(p => p.state === 'pending' && p.requestedAt > 0) ||
+          (s.saved ?? []).some(i => i.type === 'person' && i.relation === 'pending'),
+        awaitingReply = s.contacts.some(p => p.messagedAt > 0 && !p.outcome),
+        sweepDue = waiting && Date.now() >= (s.nextSweepAt ?? 0),
+        repliesDue = awaitingReply && Date.now() - (s.repliesCheckedAt ?? 0) > 2 * 60 * 60000;
+      if (sweepDue || repliesDue) {
+        worked = true;
+        if (sweepDue) await sweepAcceptances(s, abort.signal, true);
+        if (awaitingReply) await checkReplies(abort.signal);
+        return;
+      }
+    }
     if (!s.active) {
       await closeWorkWindow().catch(() => undefined);
       return;
@@ -1311,22 +1329,6 @@ async function run(): Promise<void> {
           'A different LinkedIn account is signed in. Sign in as the account you set up, or clear saved data and read the new profile.',
         );
       await updateNetwork(c => ({ ...c, ownerVerifiedAt: Date.now() }));
-      return;
-    }
-    // Every 2 hours, one look at the connections list shows everyone who accepted, however many invitations are out.
-    const waiting =
-      s.contacts.some(p => p.state === 'pending' && p.requestedAt > 0) ||
-      (s.saved ?? []).some(i => i.type === 'person' && i.relation === 'pending');
-    const awaitingReply = s.contacts.some(p => p.messagedAt > 0 && !p.outcome);
-    if (!waiting && awaitingReply && Date.now() - (s.repliesCheckedAt ?? 0) > 2 * 60 * 60000) {
-      worked = true;
-      await checkReplies(abort.signal);
-      return;
-    }
-    if (waiting && Date.now() >= (s.nextSweepAt ?? 0)) {
-      worked = true;
-      await sweepAcceptances(s, abort.signal);
-      if (awaitingReply) await checkReplies(abort.signal);
       return;
     }
     // In referrals-only running, general contacts are left exactly as they are.
