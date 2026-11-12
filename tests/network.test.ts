@@ -233,6 +233,7 @@ it('finds the signed-in person through linkedin.com/in/me/ and reads that profil
   vi.mocked(networkCommand).mockResolvedValueOnce({ url: profile.url }).mockResolvedValueOnce(profile);
   registerNetworkMessages();
   const listener = vi.mocked(chrome.runtime.onMessage.addListener).mock.calls[0]![0];
+  await updateNetwork(s => ({ ...s, usageConsent: true })); // the gate is accepted before a profile is read
   const reply = await new Promise(resolve =>
     listener(
       { kind: 'network', action: 'import' },

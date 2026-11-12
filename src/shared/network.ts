@@ -216,6 +216,11 @@ export interface NetworkState {
   limitsV2?: boolean;
   /** The person pressed "Check now": look at acceptances and replies on the next step, whatever else is going on. */
   checkRequested?: boolean;
+  /** The person accepted that their LinkedIn handle is recorded as a user of the extension. Required before anything runs. */
+  usageConsent?: boolean;
+  usageConsentAt?: number;
+  /** When their handle was recorded, so it is sent once, not on every scan. */
+  usagePingedAt?: number;
   /** The last bulk change, kept for ten minutes so it can be taken back with one press. */
   undo?: {
     label: string;
@@ -436,6 +441,7 @@ export const networkRequest = z.discriminatedUnion('action', [
   z.object({ kind: z.literal('network'), action: z.literal('stopSending') }),
   z.object({ kind: z.literal('network'), action: z.literal('skipAttention') }),
   z.object({ kind: z.literal('network'), action: z.literal('undo') }),
+  z.object({ kind: z.literal('network'), action: z.literal('consent') }),
   z.object({ kind: z.literal('network'), action: z.literal('retry'), url: z.string() }),
   z.object({ kind: z.literal('network'), action: z.literal('skipCompany'), url: z.string() }),
   z.object({ kind: z.literal('network'), action: z.literal('stopCompany'), url: z.string() }),

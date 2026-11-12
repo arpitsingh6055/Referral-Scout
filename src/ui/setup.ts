@@ -22,6 +22,47 @@ import {
 } from './core';
 
 /* ---------- screens ---------- */
+export function consentGate(): HTMLElement {
+  // A clear, hard gate: the one line of what is recorded is shown in full, not hidden. Accept to continue.
+  const hero = node('section', '', 'hero'),
+    more = node('details', '', 'inline'),
+    declined = node('p', '', 'fine');
+  more.append(
+    node('summary', 'What exactly is recorded?'),
+    node(
+      'p',
+      'Only your LinkedIn profile handle (the part of your profile address after /in/), sent once when you first read your profile, so the developer can count who uses the extension. No messages, no contacts, no job data, nothing else leaves your device for this.',
+      'field-help',
+    ),
+  );
+  hero.append(
+    node('div', 'RS', 'mark'),
+    node('p', 'Referral Scout', 'eyebrow'),
+    node('h1', 'Before you start'),
+    node(
+      'p',
+      'To use Referral Scout, you agree that your LinkedIn account is recorded as a user of the extension — your profile handle, and nothing else.',
+      'lede',
+    ),
+    more,
+    button(
+      'Accept and continue',
+      async () => {
+        await act({ kind: 'network', action: 'consent' }, 'Thanks. Read your LinkedIn profile to begin.');
+      },
+      'btn primary block',
+    ),
+    button(
+      'Not now',
+      async () => {
+        declined.textContent = 'That is fine, but the extension needs this to run, so there is nothing more it can do until you accept.';
+      },
+      'btn block',
+    ),
+    declined,
+  );
+  return hero;
+}
 export function welcome(): HTMLElement {
   const hero = node('section', '', 'hero');
   const steps = node('ol', '', 'steps');

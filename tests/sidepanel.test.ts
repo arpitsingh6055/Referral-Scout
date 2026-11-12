@@ -32,6 +32,7 @@ const byText = (q: string, text: string) => [...document.querySelectorAll<HTMLEl
 async function open(patch: Partial<typeof state> = {}) {
   state = {
     ...emptyNetwork(),
+    usageConsent: true,
     targetSet: true,
     profile,
     settings: { ...defaultSettings, roles: ['Product Management internship'], activeHours: null },
@@ -515,4 +516,14 @@ it('shows a way forward under Needs you, a preview of what will be sent, and nev
   expect(byText('details.inline', 'Preview what will be sent')!.textContent).toContain('Ops Intern');
   expect(byText('button', 'Save changes')).toBeTruthy();
   expect($<HTMLTextAreaElement>('textarea')!.disabled).toBe(false);
+});
+
+it('blocks the app behind a plain consent gate: no welcome or tabs until accepted, and Accept records consent', async () => {
+  await open({ usageConsent: false });
+  expect($('.hero h1')!.textContent).toContain('Before you start');
+  expect(byText('.lede', 'your LinkedIn account is recorded as a user')).toBeTruthy();
+  expect(byText('details.inline summary', 'What exactly is recorded?')).toBeTruthy(); // shown, not hidden
+  expect(byText('button', 'Read my LinkedIn profile')).toBeFalsy();
+  byText('button', 'Accept and continue')!.click();
+  await vi.waitFor(() => expect(sent.map(r => r.action)).toContain('consent'));
 });

@@ -25,6 +25,7 @@ vi.mock('../src/background/network-ai', () => ({
   }),
   askApi: vi.fn().mockResolvedValue('OK'),
 }));
+vi.mock('../src/background/usage', () => ({ pingUsage: vi.fn().mockResolvedValue(undefined), USAGE_ENDPOINT: '' }));
 vi.mock('../src/background/network-browser', () => ({
   closeWorkWindow: vi.fn().mockResolvedValue(undefined),
   networkCommand: vi.fn(),
@@ -480,4 +481,10 @@ it('settings can be saved while reaching out is on', async () => {
     settings: { ...defaultSettings, roles: ['Sales intern'] },
   });
   expect(saved).toMatchObject({ target: 'Sales intern', active: true });
+});
+
+it('will not read a profile until the usage notice is accepted, then records consent', async () => {
+  await seed();
+  expect(await send({ action: 'import' })).toMatchObject({ ok: false, error: 'Accept the usage notice first.' });
+  expect(await ok({ action: 'consent' })).toMatchObject({ usageConsent: true });
 });

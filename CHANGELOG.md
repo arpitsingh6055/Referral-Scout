@@ -15,6 +15,10 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.40.0: usage consent gate
+- A one-time consent screen is shown before anything else. You cannot read your profile or use the extension until you accept. It states plainly what is recorded: your LinkedIn profile handle, once, and nothing else. An expandable "What exactly is recorded?" gives the detail; nothing is hidden in fine print.
+- After you accept and read your profile, your handle is sent once to the usage endpoint (`src/background/usage.ts`). Until that endpoint is configured nothing is sent. The dashboard that shows the counts, its Cloudflare Worker endpoint and the Pages action live on the separate `usage-dashboard` branch.
+
 ## 0.39.0: the seven workflow gaps from the user audit
 1. **Home is short.** It shows what is happening (status and live tracker), the queue switch, and what needs you. Your pipeline (with the LinkedIn check), the suggestions and the latest activity are folded into three lines you can open.
 2. **A "done" moment.** When the last company has been searched, Home comes forward with "Search finished: N people are lined up at M companies", and buttons to see them or start reaching out.

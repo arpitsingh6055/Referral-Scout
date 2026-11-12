@@ -13,7 +13,7 @@ import {
 } from '../shared/network';
 import { type Tab, ui, page, toaster, node, icon, ago, request, notify, button, act, flags, onRedraw, accordion } from './core';
 import { runStatus, usage, journey, meter, tick, live } from './live';
-import { welcome, askTarget, buildSetup } from './setup';
+import { consentGate, welcome, askTarget, buildSetup } from './setup';
 import { buildSaved, buildReferrals } from './jobs';
 import { buildPeople } from './people';
 import { buildActivity } from './activity';
@@ -28,6 +28,10 @@ function render(s: NetworkState): void {
   flags.uid = 0;
   const scroll = document.scrollingElement?.scrollTop ?? 0;
   page.replaceChildren();
+  if (!s.usageConsent) {
+    page.append(consentGate());
+    return;
+  }
   if (!s.profile) {
     ui.tab = 'home';
     page.append(welcome());

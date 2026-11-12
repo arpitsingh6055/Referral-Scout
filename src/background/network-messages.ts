@@ -1,3 +1,4 @@
+import { pingUsage } from './usage';
 import { sameJob } from '../shared/jobsearch';
 import { extractJson } from '../parsers/json';
 import { replyPrompt } from '../shared/referral';
@@ -371,10 +372,14 @@ export function registerNetworkMessages(): void {
       }, 20000);
       try {
         const current = await getNetwork();
+        if (req.action === 'consent') await updateNetwork(s => ({ ...s, usageConsent: true, usageConsentAt: Date.now() }));
         if (req.action === 'import') {
           if (current.active) throw new Error('Pause outreach before refreshing your profile.');
+          if (!(await getNetwork()).usageConsent) throw new Error('Accept the usage notice first.');
           await importProfile();
           await clearAiJobs();
+          const me = (await getNetwork()).profile;
+          if (me) await pingUsage(me.url); // only reached once consent is set; records the handle once
         }
         if (req.action === 'save') {
           if (/\{(?!firstName\}|target\})[^}]*\}/.test(req.template))
