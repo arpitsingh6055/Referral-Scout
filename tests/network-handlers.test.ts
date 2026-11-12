@@ -8,31 +8,105 @@ import { defaultSettings, emptyNetwork, type NetworkContact, type NetworkState }
 import { getNetwork, networkTick, updateNetwork } from '../src/background/network';
 import { clearDatabase, closeDatabase } from '../src/storage/database';
 
-vi.mock('../src/background/network', async original => ({ ...(await original<typeof import('../src/background/network')>()), networkTick: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../src/background/network', async original => ({
+  ...(await original<typeof import('../src/background/network')>()),
+  networkTick: vi.fn().mockResolvedValue(undefined),
+}));
 const savedApi: { value: unknown } = { value: null };
-vi.mock('../src/background/network-ai', () => ({ askChatGpt: vi.fn().mockRejectedValue(new Error('not available')), clearAiJobs: vi.fn(), prepareInvitation: vi.fn(), prepareIntroduction: vi.fn(), prepareDossier: vi.fn(),
-  apiConfig: vi.fn(async () => savedApi.value), saveApiConfig: vi.fn(async (v: unknown) => { savedApi.value = v; }), askApi: vi.fn().mockResolvedValue('OK') }));
-vi.mock('../src/background/network-browser', () => ({ closeWorkWindow: vi.fn().mockResolvedValue(undefined), networkCommand: vi.fn(), networkTab: vi.fn().mockResolvedValue(9), readyNetworkTab: vi.fn(), showWorkTab: vi.fn(), openWorkTab: vi.fn().mockResolvedValue(9) }));
+vi.mock('../src/background/network-ai', () => ({
+  askChatGpt: vi.fn().mockRejectedValue(new Error('not available')),
+  clearAiJobs: vi.fn(),
+  prepareInvitation: vi.fn(),
+  prepareIntroduction: vi.fn(),
+  prepareDossier: vi.fn(),
+  apiConfig: vi.fn(async () => savedApi.value),
+  saveApiConfig: vi.fn(async (v: unknown) => {
+    savedApi.value = v;
+  }),
+  askApi: vi.fn().mockResolvedValue('OK'),
+}));
+vi.mock('../src/background/network-browser', () => ({
+  closeWorkWindow: vi.fn().mockResolvedValue(undefined),
+  networkCommand: vi.fn(),
+  networkTab: vi.fn().mockResolvedValue(9),
+  readyNetworkTab: vi.fn(),
+  showWorkTab: vi.fn(),
+  openWorkTab: vi.fn().mockResolvedValue(9),
+}));
 
 const ID = 'ext-id';
 const me = { name: 'Arpit Singh', url: 'https://www.linkedin.com/in/arpit45/', headline: 'PGDM', location: 'India', about: '' };
-const person = (slug: string, patch: Partial<NetworkContact> = {}): NetworkContact => ({ name: slug, url: `https://www.linkedin.com/in/${slug}/`, headline: 'Recruiter at Acme', location: '', about: '', rawText: '', state: 'shortlisted', reason: '', score: 1, addedAt: 1, checkedAt: 0, requestedAt: 0, messagedAt: 0, message: '', ...patch });
-const job = (n: number, patch = {}) => ({ url: `https://www.linkedin.com/jobs/view/${n}/`, title: 'Ops Intern', company: `Company ${n}`, location: '', mode: 'referral' as const, addedAt: n, cursor: 0, found: 0, ...patch });
+const person = (slug: string, patch: Partial<NetworkContact> = {}): NetworkContact => ({
+  name: slug,
+  url: `https://www.linkedin.com/in/${slug}/`,
+  headline: 'Recruiter at Acme',
+  location: '',
+  about: '',
+  rawText: '',
+  state: 'shortlisted',
+  reason: '',
+  score: 1,
+  addedAt: 1,
+  checkedAt: 0,
+  requestedAt: 0,
+  messagedAt: 0,
+  message: '',
+  ...patch,
+});
+const job = (n: number, patch = {}) => ({
+  url: `https://www.linkedin.com/jobs/view/${n}/`,
+  title: 'Ops Intern',
+  company: `Company ${n}`,
+  location: '',
+  mode: 'referral' as const,
+  addedAt: n,
+  cursor: 0,
+  found: 0,
+  ...patch,
+});
 type Reply = { ok: boolean; data?: NetworkState; error?: string };
 let listener!: (input: unknown, sender: unknown, respond: (r: unknown) => void) => boolean | void;
 
-const seed = (patch: Partial<NetworkState> = {}) => updateNetwork(() => ({ ...emptyNetwork(), profile: me as never, ownerVerifiedAt: Date.now(), settings: { ...defaultSettings, roles: ['Ops intern'] }, ...patch }));
-const send = (request: Record<string, unknown>, sender: Record<string, unknown> = { id: ID }) => new Promise<Reply | 'ignored'>(resolve => {
-  if (listener({ kind: 'network', ...request }, sender, r => resolve(r as Reply)) !== true) setTimeout(() => resolve('ignored'), 20);
-});
-const ok = async (request: Record<string, unknown>): Promise<NetworkState> => { const r = await send(request) as Reply; expect(r.error).toBeUndefined(); return r.data!; };
+const seed = (patch: Partial<NetworkState> = {}) =>
+  updateNetwork(() => ({
+    ...emptyNetwork(),
+    profile: me as never,
+    ownerVerifiedAt: Date.now(),
+    settings: { ...defaultSettings, roles: ['Ops intern'] },
+    ...patch,
+  }));
+const send = (request: Record<string, unknown>, sender: Record<string, unknown> = { id: ID }) =>
+  new Promise<Reply | 'ignored'>(resolve => {
+    if (listener({ kind: 'network', ...request }, sender, r => resolve(r as Reply)) !== true) setTimeout(() => resolve('ignored'), 20);
+  });
+const ok = async (request: Record<string, unknown>): Promise<NetworkState> => {
+  const r = (await send(request)) as Reply;
+  expect(r.error).toBeUndefined();
+  return r.data!;
+};
 
 beforeEach(async () => {
-  savedApi.value = null; vi.mocked(networkTick).mockClear();
-  vi.stubGlobal('chrome', { runtime: { id: ID, onMessage: { addListener: (fn: typeof listener) => { listener = fn; } } }, tabs: { sendMessage: vi.fn().mockResolvedValue(undefined), query: vi.fn().mockResolvedValue([]) }, sidePanel: {} });
+  savedApi.value = null;
+  vi.mocked(networkTick).mockClear();
+  vi.stubGlobal('chrome', {
+    runtime: {
+      id: ID,
+      onMessage: {
+        addListener: (fn: typeof listener) => {
+          listener = fn;
+        },
+      },
+    },
+    tabs: { sendMessage: vi.fn().mockResolvedValue(undefined), query: vi.fn().mockResolvedValue([]) },
+    sidePanel: {},
+  });
   (await import('../src/background/network-messages')).registerNetworkMessages();
 });
-afterEach(async () => { await clearDatabase(); await closeDatabase(); vi.unstubAllGlobals(); });
+afterEach(async () => {
+  await clearDatabase();
+  await closeDatabase();
+  vi.unstubAllGlobals();
+});
 
 it('ignores a request that does not come from the extension itself', async () => {
   await seed();
@@ -45,7 +119,8 @@ it('Pause then Resume restores sending and its mode exactly, and says what conti
   expect(await ok({ action: 'pause' })).toMatchObject({ active: false, paused: true, resumeTo: { active: true, scope: 'all' } });
   const resumed = await ok({ action: 'resume' });
   expect(resumed).toMatchObject({ active: true, scope: 'all' });
-  expect(resumed.paused).toBeUndefined(); expect(resumed.resumeTo).toBeUndefined();
+  expect(resumed.paused).toBeUndefined();
+  expect(resumed.resumeTo).toBeUndefined();
   expect(resumed.status).toBe('Resumed: people searches at 1 company; 1 message or invitation to send.');
   await vi.waitFor(() => expect(networkTick).toHaveBeenCalled());
 });
@@ -74,19 +149,25 @@ it('starting a job search lifts a pause; a refused request does not', async () =
 it('answers the per-company question either way and lets that company carry on', async () => {
   await seed({ referralJobs: [job(1, { waiting: true, known: 2 }), job(2, { waiting: true, known: 1 })] });
   const only = (await ok({ action: 'referralDecision', url: job(1).url, widen: false })).referralJobs![0]!;
-  expect(only.waiting).toBeFalsy(); expect(only.decision).toBe('known');
+  expect(only.waiting).toBeFalsy();
+  expect(only.decision).toBe('known');
   const wider = (await ok({ action: 'referralDecision', url: job(2).url, widen: true })).referralJobs![1]!;
-  expect(wider.waiting).toBeFalsy(); expect(wider.decision).toBe('widen');
+  expect(wider.waiting).toBeFalsy();
+  expect(wider.decision).toBe('widen');
 });
 
 it('records what came of a request, clears it again, and marks a job as applied', async () => {
   await seed({ contacts: [person('a', { state: 'messaged', messagedAt: 5 })], referralJobs: [job(1)] });
   const marked = await ok({ action: 'outcome', url: person('a').url, outcome: 'referred' });
-  expect(marked.contacts[0]).toMatchObject({ outcome: 'referred' }); expect(marked.status).toMatch(/agreed to refer you/);
+  expect(marked.contacts[0]).toMatchObject({ outcome: 'referred' });
+  expect(marked.status).toMatch(/agreed to refer you/);
   expect((await ok({ action: 'outcome', url: person('a').url, outcome: null })).contacts[0]!.outcome).toBeUndefined();
   expect((await ok({ action: 'jobApplied', url: job(1).url, applied: true })).referralJobs![0]!.applied).toBeGreaterThan(0);
   expect((await ok({ action: 'jobApplied', url: job(1).url, applied: false })).referralJobs![0]!.applied).toBeUndefined();
-  expect(await send({ action: 'outcome', url: 'https://www.linkedin.com/in/nobody/', outcome: 'replied' })).toMatchObject({ ok: false, error: 'That person is no longer on your list.' });
+  expect(await send({ action: 'outcome', url: 'https://www.linkedin.com/in/nobody/', outcome: 'replied' })).toMatchObject({
+    ok: false,
+    error: 'That person is no longer on your list.',
+  });
 });
 
 it('saves an API key without ever putting it in the state the panel or an export sees, and removes it again', async () => {
@@ -104,12 +185,26 @@ it('saves an API key without ever putting it in the state the panel or an export
 
 it('refuses a setting that is out of range in plain words instead of going silent', async () => {
   await seed();
-  const r = await send({ action: 'save', target: 'Ops intern', location: 'India', template: 'Hi {firstName}, thanks for connecting!', settings: { ...defaultSettings, roles: ['Ops intern'], paceMinutes: 0.01 } }) as Reply;
-  expect(r).toMatchObject({ ok: false }); expect(r.error).toMatch(/^Not saved\. Please check: Seconds between sends/);
+  const r = (await send({
+    action: 'save',
+    target: 'Ops intern',
+    location: 'India',
+    template: 'Hi {firstName}, thanks for connecting!',
+    settings: { ...defaultSettings, roles: ['Ops intern'], paceMinutes: 0.01 },
+  })) as Reply;
+  expect(r).toMatchObject({ ok: false });
+  expect(r.error).toMatch(/^Not saved\. Please check: Seconds between sends/);
 });
 
 it('Skip stops a person for good, and Approve all approves every waiting draft at once', async () => {
-  await seed({ active: true, contacts: [person('a'), person('b', { state: 'review', approvalKind: 'connect', invitationNote: 'Hi' }), person('c', { state: 'review', approvalKind: 'connect', invitationNote: 'Hi' })] });
+  await seed({
+    active: true,
+    contacts: [
+      person('a'),
+      person('b', { state: 'review', approvalKind: 'connect', invitationNote: 'Hi' }),
+      person('c', { state: 'review', approvalKind: 'connect', invitationNote: 'Hi' }),
+    ],
+  });
   expect((await ok({ action: 'skip', url: person('a').url })).contacts[0]).toMatchObject({ state: 'skipped' });
   expect((await ok({ action: 'approve', url: '*' })).contacts.filter(p => p.approved).map(p => p.name)).toEqual(['b', 'c']);
 });

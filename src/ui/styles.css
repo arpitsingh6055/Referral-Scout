@@ -1,15 +1,93 @@
-:root { font-family: system-ui, sans-serif; color: #17233a; background: #f4f6fa; color-scheme: light; }
-body { margin: 0; } main { max-width: 850px; margin: auto; padding: 24px; }
-h1 { margin-bottom: 6px; } p { line-height: 1.6; }
-fieldset, section { background: white; border: 1px solid #cdd7e5; border-radius: 10px; margin: 20px 0; padding: 20px; }
-legend { font-weight: 700; padding: 0 8px; }
-label { display: grid; gap: 6px; margin: 14px 0; font-weight: 600; }
-input, textarea, button { font: inherit; }
-input, textarea { box-sizing: border-box; width: 100%; border: 1px solid #8293ac; border-radius: 5px; padding: 9px; }
-input[type=checkbox] { width: 20px; height: 20px; } textarea { resize: vertical; }
-button { background: #174c9b; color: white; border: 0; border-radius: 6px; padding: 11px 16px; cursor: pointer; }
-button:disabled { background: #5e6f86; cursor: wait; }
-:focus-visible { outline: 3px solid #d16b00; outline-offset: 3px; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
-[role=status] { white-space: pre-wrap; overflow-wrap: anywhere; }
-button { margin: 4px 6px 4px 0; } details { margin: 18px 0; } summary { cursor: pointer; font-weight: 650; }
+:root {
+  font-family: system-ui, sans-serif;
+  color: #17233a;
+  background: #f4f6fa;
+  color-scheme: light;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 850px;
+  margin: auto;
+  padding: 24px;
+}
+h1 {
+  margin-bottom: 6px;
+}
+p {
+  line-height: 1.6;
+}
+fieldset,
+section {
+  background: white;
+  border: 1px solid #cdd7e5;
+  border-radius: 10px;
+  margin: 20px 0;
+  padding: 20px;
+}
+legend {
+  font-weight: 700;
+  padding: 0 8px;
+}
+label {
+  display: grid;
+  gap: 6px;
+  margin: 14px 0;
+  font-weight: 600;
+}
+input,
+textarea,
+button {
+  font: inherit;
+}
+input,
+textarea {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid #8293ac;
+  border-radius: 5px;
+  padding: 9px;
+}
+input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+}
+textarea {
+  resize: vertical;
+}
+button {
+  background: #174c9b;
+  color: white;
+  border: 0;
+  border-radius: 6px;
+  padding: 11px 16px;
+  cursor: pointer;
+}
+button:disabled {
+  background: #5e6f86;
+  cursor: wait;
+}
+:focus-visible {
+  outline: 3px solid #d16b00;
+  outline-offset: 3px;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+[role='status'] {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+button {
+  margin: 4px 6px 4px 0;
+}
+details {
+  margin: 18px 0;
+}
+summary {
+  cursor: pointer;
+  font-weight: 650;
+}

@@ -15,6 +15,13 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.31.0: code split, formatting, README
+- **The side panel is no longer one file.** `src/ui/sidepanel.ts` is split into `core` (helpers and shared state), `live` (status and tracker), `setup`, `jobs`, `people`, `activity` and `pipeline`; `sidepanel` keeps only the screen itself. No behaviour changed: the split was done by script and all tests pass unchanged.
+- **Prettier formats the whole codebase** (140 columns). The dense one-line style is gone; `pnpm check` and CI now fail on unformatted code. `pnpm format` reformats.
+- ESLint was not added: typescript-eslint does not support the project's TypeScript 7 yet. The TypeScript compiler's strict and unused-code checks remain the lint step.
+- The pipeline board shows each company on its own line with its five stages under it, so company names are readable in a narrow panel.
+- The README describes the current product, with new screenshots.
+
 ## 0.30.0: outcome tracking, optional API key, one work window
 - **Pipeline.** Home shows the whole way to a referral in six numbers: Companies, Asked, Accepted, Replied, Referred, Applied. Jobs shows the same per company as a board. On anyone you have asked, one press marks "They replied", "Will refer me" or "Can't help"; on a job, "I applied". People has Replied and Will refer filters. Replies are marked by you: the extension does not read your LinkedIn inbox.
 - **Optional OpenAI API key** (Settings, ChatGPT connection). With a key and a model name, questions go straight to the API: no ChatGPT tab, no page reading. The default is still the ChatGPT website with nothing to set up. Access to api.openai.com is requested only when you save a key. The key is stored on this device only, is never sent back to the side panel, and is left out of exports. No model name is pre-filled because they change. Not yet tried with a real key.

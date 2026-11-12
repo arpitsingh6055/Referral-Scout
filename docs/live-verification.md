@@ -102,3 +102,9 @@ Covered by tests only (prompt contents, reply checking, one prompt per batch, fa
 1. Choose two or three companies in "Find jobs and referrals". The status should read "Asking ChatGPT who can refer you at N companies…" once, then "ChatGPT planned who to ask at N companies."
 2. Each job card shows "who to ask" with a company type that matches reality (a large company must not list founders or the CEO).
 3. With ChatGPT signed out, the status says built-in rules are used and the search still runs.
+
+## 0.30.0 and 0.31.0 (not yet run live)
+Covered by tests only. Still to confirm in Edge:
+1. **One work window.** Start a job search with the ChatGPT website: ChatGPT opens as a tab in the same background window as LinkedIn and closes after its answer is read. Press Pause: the window closes. Press Resume: it reopens.
+2. **API key.** Settings, ChatGPT connection: save a real key and model name (the browser asks to allow api.openai.com), press "Test the key", then run a job search and confirm no ChatGPT tab opens.
+3. **Outcomes.** Mark "They replied" and "Will refer me" on a person and "I applied" on a job; the Home numbers and the Jobs board follow.

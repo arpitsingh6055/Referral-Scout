@@ -1,13 +1,17 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 
-vi.mock('../src/storage/state', () => ({ read: vi.fn(async (key: string) => key === 'work-window' ? 3 : key === 'network-tab' ? 7 : undefined), write: vi.fn() }));
+vi.mock('../src/storage/state', () => ({
+  read: vi.fn(async (key: string) => (key === 'work-window' ? 3 : key === 'network-tab' ? 7 : undefined)),
+  write: vi.fn(),
+}));
 const tabs = { get: vi.fn(), update: vi.fn(), create: vi.fn(), sendMessage: vi.fn(), query: vi.fn() };
 const windows = { update: vi.fn(), get: vi.fn(), create: vi.fn(), remove: vi.fn() };
 
 beforeEach(() => {
   vi.clearAllMocks();
   tabs.get.mockResolvedValue({ id: 7, windowId: 3, status: 'complete', url: 'https://www.linkedin.com/in/alex/' });
-  tabs.update.mockResolvedValue({}); tabs.sendMessage.mockResolvedValue({ ok: true });
+  tabs.update.mockResolvedValue({});
+  tabs.sendMessage.mockResolvedValue({ ok: true });
   vi.stubGlobal('chrome', { tabs, windows, scripting: { executeScript: vi.fn() } });
 });
 
@@ -32,7 +36,9 @@ it('opens its pages in a separate window that is not focused, so the person keep
 it('opens ChatGPT as a tab in the same work window instead of a second window, and closes a ChatGPT window left by an older version', async () => {
   const state = await import('../src/storage/state');
   vi.mocked(state.read).mockResolvedValueOnce(44); // the old separate ChatGPT window
-  windows.get.mockResolvedValue({ id: 3 }); windows.remove.mockResolvedValue(undefined); tabs.create.mockResolvedValue({ id: 31 });
+  windows.get.mockResolvedValue({ id: 3 });
+  windows.remove.mockResolvedValue(undefined);
+  tabs.create.mockResolvedValue({ id: 31 });
   const { openWorkTab } = await import('../src/background/network-browser');
   expect(await openWorkTab('https://chatgpt.com/', 'chatgpt')).toBe(31);
   expect(windows.remove).toHaveBeenCalledWith(44);
