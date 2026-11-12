@@ -45,7 +45,7 @@ export interface SearchPlan {
   at: number;
 }
 export const MAX_COMPANIES = 20,
-  PRETICKED = 15,
+  PRETICKED = 10,
   MAX_TERMS = 6;
 
 /* ---------- parallel job titles (rules; ChatGPT improves on these) ---------- */

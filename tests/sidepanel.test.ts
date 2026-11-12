@@ -295,3 +295,37 @@ it('goes back to Home after Save changes in Settings', async () => {
   expect($<HTMLElement>('.tab[aria-selected=true]')!.textContent).toContain('Home');
   expect(sent.map(r => r.action)).toContain('save');
 });
+
+it('warns in Settings as soon as a limit leaves the safe range, and stays quiet inside it', async () => {
+  await open();
+  const risk = $<HTMLElement>('.callout.bad')!,
+    daily = [...document.querySelectorAll<HTMLInputElement>('input[type=number]')].find(i => i.value === '30')!;
+  expect(risk.hidden).toBe(true);
+  daily.value = '60';
+  daily.dispatchEvent(new Event('input', { bubbles: true }));
+  expect(risk.hidden).toBe(false);
+  expect(risk.textContent).toMatch(/60 invitations a day \(recommended: 30 or fewer\).*LinkedIn may warn or restrict your account/);
+  expect(byText('.field-help', 'LinkedIn does not allow automated activity')).toBeTruthy();
+});
+
+it('warns in the company list when the choice adds up to more than a careful day of invitations', async () => {
+  const found = Array.from({ length: 12 }, (_, i) => ({
+    id: String(100000 + i),
+    url: `https://www.linkedin.com/jobs/view/${100000 + i}/`,
+    title: 'Ops Intern',
+    company: `Co ${i}`,
+    location: 'India',
+    insight: '',
+    term: 'x',
+    score: 50,
+    picked: i < 10,
+  }));
+  await open({ jobSearch: { status: 'choosing', cursor: 1, found, startedAt: 1 } });
+  const caution = byText('.callout', 'LinkedIn does not allow automated activity')!;
+  expect(caution.hidden).toBe(true); // 10 companies × 3 people = 30: inside the range
+  const eleventh = document.querySelectorAll<HTMLInputElement>('.job-row input')[10]!;
+  eleventh.checked = true;
+  eleventh.dispatchEvent(new Event('change', { bubbles: true }));
+  expect(caution.hidden).toBe(false);
+  expect(caution.textContent).toContain('11 companies × 3 people is up to 33 invitations');
+});

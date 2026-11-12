@@ -64,6 +64,8 @@ function settingsOf(s: NetworkState): NonNullable<NetworkState['settings']> {
     ...(s.paceV2 ? {} : { paceMinutes: defaultSettings.paceMinutes }),
     ...(!s.noteV2 && s.settings?.noteTemplate === legacyNoteTemplate ? { noteTemplate: defaultSettings.noteTemplate } : {}),
     ...(s.hoursV2 ? {} : { activeHours: null }),
+    // The default went from 15 to 30 a day; an install still on the old default follows it once, a chosen value is kept.
+    ...(!s.limitsV2 && s.settings?.dailyInvites === 15 ? { dailyInvites: 30 } : {}),
   };
 }
 export async function getNetwork(): Promise<NetworkState> {
@@ -108,6 +110,7 @@ export async function updateNetwork(fn: (s: NetworkState) => NetworkState): Prom
     next.aiDefaultV3 = true;
     next.paceV2 = true;
     next.hoursV2 = true;
+    next.limitsV2 = true;
     // Every new status line is also kept in a short activity log the side panel can show.
     if (next.status && next.status !== before)
       next.log = [

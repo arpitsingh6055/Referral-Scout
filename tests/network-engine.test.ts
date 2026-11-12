@@ -114,7 +114,7 @@ it('never piles more than three people from one company onto the shortlist', asy
 });
 
 it('explains itself and does not search when the daily limit is reached', async () => {
-  const sent = Array.from({ length: 15 }, (_, i) => ({
+  const sent = Array.from({ length: 30 }, (_, i) => ({
     at: Date.now() - 1000 * (i + 1),
     kind: 'connect' as const,
     url: `https://www.linkedin.com/in/s${i}/`,
@@ -123,7 +123,7 @@ it('explains itself and does not search when the daily limit is reached', async 
   await seed({ contacts: [person('next')], actions: sent });
   await networkTick();
   expect(networkTab).not.toHaveBeenCalled();
-  expect((await getNetwork()).status).toMatch(/Daily invitation limit reached \(15\)/);
+  expect((await getNetwork()).status).toMatch(/Daily invitation limit reached \(30\)/);
 });
 
 it('stops searching while plenty of people are already queued', async () => {

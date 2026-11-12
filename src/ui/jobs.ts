@@ -1,6 +1,6 @@
 /** Jobs and Saved screens: the company shortlist, one card per job, and remembered people and jobs. */
 import { board } from './pipeline';
-import { type NetworkState, dueReminders, staleRequests, jobStatuses, type JobStatus, type SavedItem } from '../shared/network';
+import { type NetworkState, dueReminders, staleRequests, jobStatuses, type JobStatus, type SavedItem, SAFE } from '../shared/network';
 import { referralPlan } from '../shared/referral';
 import { type JobSearch } from '../shared/jobsearch';
 import { node, link, button, act, kit, accordion, flags } from './core';
@@ -195,7 +195,12 @@ export function jobChooser(search: JobSearch): HTMLElement {
     const n = search.found.filter(j => isOn(j.id, j.picked)).length;
     go.textContent = n ? `Find referrers at ${n} ${n === 1 ? 'company' : 'companies'}` : 'Tick at least one company';
     go.disabled = !n || n > 20;
+    // Say plainly what this choice means in invitations, and warn when it is more than a careful day's worth.
+    const total = n * perCompanyChoice;
+    caution.hidden = n <= SAFE.companies && total <= SAFE.daily;
+    caution.textContent = `${n} companies × ${perCompanyChoice} people is up to ${total} invitations. LinkedIn does not allow automated activity and flags accounts that send many invitations quickly, so these go out slowly, within your daily limit, over several days. ${SAFE.companies} companies at a time is the careful choice.`;
   };
+  const caution = node('p', '', 'callout');
   card.append(
     node('h2', 'Choose companies', 'card-title'),
     node(
@@ -232,6 +237,7 @@ export function jobChooser(search: JobSearch): HTMLElement {
   select.value = String(perCompanyChoice);
   select.addEventListener('change', () => {
     perCompanyChoice = Number(select.value);
+    count();
   });
   count();
   if (search.dropped?.length) {
@@ -256,6 +262,7 @@ export function jobChooser(search: JobSearch): HTMLElement {
     go,
     button('Close this list', () => act({ kind: 'network', action: 'cancelJobSearch' }, 'List closed.'), 'btn sm ghost'),
   );
+  go.before(caution);
   return card;
 }
 export function buildReferrals(s: NetworkState): HTMLElement {

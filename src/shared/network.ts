@@ -158,7 +158,7 @@ export const defaultSettings: OutreachSettings = {
   noteMode: 'preferred',
   followupMode: 'review',
   paceMinutes: 0.5,
-  dailyInvites: 15,
+  dailyInvites: 30,
   dailyMessages: 20,
   maxPending: 100,
   companyAllowlist: [],
@@ -209,6 +209,7 @@ export interface NetworkState {
   noteV2?: boolean;
   paceV2?: boolean;
   hoursV2?: boolean;
+  limitsV2?: boolean;
   /** The person has said what they are looking for; until then setup asks instead of assuming. */ targetSet?: boolean;
   /** Shown to the side panel only: whether an API key is saved, its model and its last four characters. Never the key. */ api?: {
     model: string;
@@ -498,5 +499,18 @@ export function unfinished(s: NetworkState, sending = s.resumeTo?.active ?? s.ac
     ).length;
   if (sending && queue) out.push(`${queue} ${queue === 1 ? 'message or invitation' : 'messages and invitations'} to send`);
   if (asks) out.push(`${asks} ${asks === 1 ? 'company waits' : 'companies wait'} for your answer`);
+  return out;
+}
+
+/** The range that rarely draws LinkedIn's attention. Above it the person is warned, never blocked. */
+export const SAFE = { daily: 30, weekly: 100, paceSeconds: 20, companies: 10 };
+/** Plain-words reasons why these limits are riskier than recommended; empty when they are within the safe range. */
+export function riskNotes(daily: number | null, weekly: number | null, paceSeconds: number): string[] {
+  const out: string[] = [];
+  if (daily === null) out.push('no daily limit on invitations');
+  else if (daily > SAFE.daily) out.push(`${daily} invitations a day (recommended: ${SAFE.daily} or fewer)`);
+  if (weekly === null) out.push('no weekly limit');
+  else if (weekly > SAFE.weekly) out.push(`${weekly} invitations a week (LinkedIn itself allows about ${SAFE.weekly})`);
+  if (paceSeconds < SAFE.paceSeconds) out.push(`only ${paceSeconds} seconds between sends (recommended: ${SAFE.paceSeconds} or more)`);
   return out;
 }

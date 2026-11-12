@@ -228,7 +228,7 @@ describe('who goes next', () => {
   });
   it('ships safe defaults that protect a public user’s LinkedIn account', () => {
     expect(defaultSettings).toMatchObject({
-      dailyInvites: 15,
+      dailyInvites: 30,
       weeklyInvites: 80,
       maxPending: 100,
       aiMode: 'template',

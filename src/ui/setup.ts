@@ -1,6 +1,6 @@
 /** Setup and Settings screens: welcome, the target question, messages, limits, the API key and the CV. */
 import { errorText } from './render';
-import { defaultSettings, introduction, renderNote, type NetworkState, type OutreachSettings } from '../shared/network';
+import { defaultSettings, introduction, renderNote, type NetworkState, type OutreachSettings, SAFE, riskNotes } from '../shared/network';
 import { completeCvText } from './cv-text';
 import {
   node,
@@ -226,17 +226,25 @@ export function buildSetup(
   const advanced = accordion('advanced', 'Pace, limits and safety', 'recommended defaults');
   const grid = node('div', '', 'grid2');
   grid.append(invites.wrap, weekly.wrap, messages.wrap, pendingCap.wrap, pace.wrap);
+  // The standing caution, and a live warning the moment a value leaves the safe range.
+  const caution = node(
+      'p',
+      `Keep these low. LinkedIn does not allow automated activity, and it restricts or flags accounts that send many invitations in a short time. Up to ${SAFE.daily} invitations a day and ${SAFE.weekly} a week rarely draws attention. Above that the chance of a warning or a restricted account rises quickly, and that risk is yours. An empty box means no limit, which is not recommended.`,
+      'field-help',
+    ),
+    risk = node('p', '', 'callout bad');
+  const weigh = (): void => {
+    const notes = riskNotes(optional(invites.input.value), optional(weekly.input.value), Number(pace.input.value) || 0);
+    risk.hidden = !notes.length;
+    risk.textContent = notes.length
+      ? `Riskier than recommended: ${notes.join('; ')}. LinkedIn may warn or restrict your account. Lower these unless you accept that.`
+      : '';
+  };
+  for (const f of [invites, weekly, pace]) f.input.addEventListener('input', weigh);
+  weigh();
   const behaviour = node('div');
   behaviour.append(outreachMode.wrap, followupMode.wrap, noteMode.wrap, hours.wrap);
-  advanced.body.append(
-    behaviour,
-    grid,
-    node('p', 'Empty means no limit. LinkedIn restricts accounts that send too many invitations, so keep these low.', 'field-help'),
-    node('div', '', 'gap'),
-    allow.wrap,
-    exclude.wrap,
-    aiMode.wrap,
-  );
+  advanced.body.append(behaviour, grid, caution, risk, node('div', '', 'gap'), allow.wrap, exclude.wrap, aiMode.wrap);
 
   const chatGpt = buildChatGpt(s),
     api = buildApi(s);

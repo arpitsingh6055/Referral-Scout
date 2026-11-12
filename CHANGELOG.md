@@ -15,6 +15,11 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.33.0: new defaults and a clear account warning
+- **Ten companies are ticked by default** in the shortlist (was 15); you can still tick up to 20.
+- **The daily invitation limit defaults to 30** (was 15). An install still on the old default moves to 30 once; a value you chose yourself is kept. The weekly limit stays at 80.
+- **Warnings where the decision is made.** Settings explains that LinkedIn does not allow automated activity and restricts accounts that send too much, and shows a red warning the moment a limit goes above 30 a day or 100 a week, has no limit, or the pause drops under 20 seconds. The shortlist shows how many invitations your choice adds up to and warns above 10 companies or a day's worth.
+
 ## 0.32.0: setup ends on Home
 - After you answer "what are you looking for?", the panel always opens on **Home**. Before, it could land on Settings if that was the last screen open (for example after "Delete everything").
 - **Save changes** in Settings returns to Home.

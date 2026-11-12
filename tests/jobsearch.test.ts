@@ -266,3 +266,18 @@ it('never guesses a company from a loose name match', () => {
     ),
   ).toBe('https://www.linkedin.com/company/ketto/');
 });
+
+it('ticks ten companies by default, never more', () => {
+  const jobs = Array.from({ length: 14 }, (_, i) => ({
+    id: String(i),
+    url: '',
+    title: 'Ops Intern',
+    company: `Co ${i}`,
+    location: '',
+    insight: '',
+    term: 'x',
+    score: 50 - i,
+    picked: false,
+  }));
+  expect(shortlist(jobs).filter(j => j.picked)).toHaveLength(10);
+});

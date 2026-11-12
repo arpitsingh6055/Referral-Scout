@@ -68,11 +68,11 @@ LinkedIn's User Agreement does not allow automated activity, and accounts that s
 
 | Setting | Default |
 |---|---|
-| Invitations | 15 a day, 80 a week |
+| Invitations | 30 a day, 80 a week |
 | Pending invitations | Stops at 100 outstanding |
 | Pause between sends | 30 seconds or more, never a fixed rhythm |
 | People per company | 3 (you can choose 4 or 5) |
-| Companies per search | Up to 20, confirmed by you |
+| Companies per search | 10 ticked for you, up to 20, confirmed by you |
 | Hours | Any time; an "only 08:00 to 22:00" option is in Settings |
 
 **Pause everything** stops searches and sending at once, and **Resume** continues exactly what was running. A LinkedIn sign-out or checkpoint pauses everything with the reason. All background work happens in one separate window that is never brought to the front and closes when the work is done.
