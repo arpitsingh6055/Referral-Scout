@@ -435,3 +435,49 @@ it('does not take on the same opening twice when companies are chosen', async ()
   await seed({ referralJobs: [job(1)], jobSearch: { status: 'choosing', cursor: 1, found, startedAt: 1 } }); // job(1) is "Ops Intern" at "Company 1" under another address
   expect((await ok({ action: 'pickJobs', ids: ['700001'], perCompany: 3 })).referralJobs).toHaveLength(1);
 });
+
+it('a bulk stop can be undone within ten minutes, and never undoes someone contacted since', async () => {
+  await seed({
+    referralJobs: [job(1)],
+    contacts: [
+      person('a', { referralJob: job(1).url, auto: true }),
+      person('b', { referralJob: job(1).url, state: 'review', approved: true }),
+    ],
+  });
+  const stopped = await ok({ action: 'stopCompany', url: job(1).url });
+  expect(stopped.undo).toMatchObject({ label: 'Stopped asking at Company 1' });
+  expect(stopped.contacts.map(p => p.state)).toEqual(['found', 'found']);
+  await updateNetwork(s => {
+    s.contacts[1]!.state = 'pending';
+    return s;
+  }); // contacted in the meantime
+  const undone = await ok({ action: 'undo' });
+  expect(undone.contacts.map(p => p.state)).toEqual(['shortlisted', 'pending']);
+  expect(undone.referralJobs![0]!.finishedAt).toBeUndefined();
+  expect(undone.undo).toBeUndefined();
+  expect(await send({ action: 'undo' })).toMatchObject({ ok: false, error: 'There is nothing to undo any more.' });
+});
+
+it('"Try again" puts someone who needed attention back in the queue at the step they had reached', async () => {
+  await seed({
+    contacts: [person('fresh', { state: 'attention', failures: 2 }), person('accepted', { state: 'attention', acceptedAt: 5 })],
+  });
+  expect((await ok({ action: 'retry', url: person('fresh').url })).contacts[0]).toMatchObject({
+    state: 'shortlisted',
+    failures: 0,
+    reason: 'Trying again.',
+  });
+  expect((await ok({ action: 'retry', url: person('accepted').url })).contacts[1]).toMatchObject({ state: 'connected' });
+});
+
+it('settings can be saved while reaching out is on', async () => {
+  await seed({ active: true });
+  const saved = await ok({
+    action: 'save',
+    target: 'Sales intern',
+    location: 'India',
+    template: 'Hi {firstName}, thanks for connecting!',
+    settings: { ...defaultSettings, roles: ['Sales intern'] },
+  });
+  expect(saved).toMatchObject({ target: 'Sales intern', active: true });
+});

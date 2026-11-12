@@ -10,8 +10,8 @@ import {
   type SavedItem,
   SAFE,
 } from '../shared/network';
-import { referralPlan } from '../shared/referral';
-import { type JobSearch } from '../shared/jobsearch';
+import { referralAsk, referralNote, referralPlan } from '../shared/referral';
+import { fill, type JobSearch } from '../shared/jobsearch';
 import { node, link, button, act, kit, accordion, flags, ui, stateLabels } from './core';
 import { personCard } from './people';
 
@@ -199,7 +199,7 @@ export function jobChooser(search: JobSearch): HTMLElement {
       );
       chosen.clear();
     },
-    'btn primary block',
+    'btn primary block savebar',
   );
   const count = (): void => {
     const n = search.found.filter(j => isOn(j.id, j.picked)).length;
@@ -290,9 +290,15 @@ export function buildReferrals(s: NetworkState): HTMLElement {
         'callout',
       ),
     );
-  if (search && search.status !== 'finding' && search.found.length) panel.append(jobChooser(search));
+  const choosing = !!search && search.status !== 'finding' && search.found.length > 0;
+  if (choosing) panel.append(jobChooser(search!));
+  // While companies are being chosen, everything already in progress is folded away below the list.
+  const rest =
+      choosing && jobs.length ? accordion('progress', `Already in progress: ${jobs.length} ${jobs.length === 1 ? 'job' : 'jobs'}`) : null,
+    target = rest ? rest.body : panel;
+  if (rest) panel.append(rest.box);
   const pipeline = board(s, kit);
-  if (pipeline) panel.append(pipeline);
+  if (pipeline) target.append(pipeline);
   if (s.plan) {
     const d = node('details', '', 'inline');
     d.append(
@@ -435,6 +441,33 @@ export function buildReferrals(s: NetworkState): HTMLElement {
           'muted small',
         ),
       );
+    if (job.mode === 'referral' && s.profile) {
+      // What goes out in your name at this company, before it goes: the exact wording, with a sample name.
+      const me = s.profile.name,
+        sample = { name: 'Priya Sharma', category: 'recruiter' },
+        words = { firstName: 'Priya', myFirstName: me.split(/\s+/)[0] ?? me, title: job.title, company: job.company, jobUrl: job.url },
+        wording = {
+          note: job.strategy?.note ?? s.plan?.note,
+          ask: job.strategy?.ask ?? s.plan?.ask,
+          followUp: job.strategy?.followUp ?? s.plan?.followUp,
+        };
+      const preview = node('details', '', 'inline');
+      preview.append(node('summary', 'Preview what will be sent'));
+      for (const [label, text] of [
+        ['Connection note, to people you do not know yet', wording.note ? fill(wording.note, words) : referralNote(job, sample, me)],
+        ['Message to people you already know', wording.ask ? fill(wording.ask, words) : referralAsk(job, sample, me, false)],
+        ['Follow-up once someone accepts', wording.followUp ? fill(wording.followUp, words) : referralAsk(job, sample, me, true)],
+      ] as const)
+        preview.append(node('p', label, 'field-help'), node('div', text, 'bubble'));
+      preview.append(
+        node(
+          'p',
+          'Shown for a sample person called Priya; each person gets their own name. To change the wording for one person, open their line below.',
+          'field-help',
+        ),
+      );
+      body.append(preview);
+    }
     // People in the order that matters: who answered, who was asked, who is queued, who was only found.
     const groups: [string, (p: NetworkContact) => boolean][] = [
       ['Replied', p => !!p.outcome],
@@ -489,7 +522,7 @@ export function buildReferrals(s: NetworkState): HTMLElement {
         'btn sm ghost danger',
       ),
     );
-    panel.append(box);
+    target.append(box);
   }
   return panel;
 }

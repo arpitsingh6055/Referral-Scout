@@ -302,39 +302,18 @@ export function buildSetup(
     ),
   );
   panel.append(who, wordsAcc.box, advanced.box, chatGpt, api, general.box);
-  if (!s.active)
-    panel.append(
-      button(
-        'Save changes',
-        async () => {
-          await save();
-          ui.tab = 'home'; // saved: back to Home, where the result of the change shows
-          await act({ kind: 'network', action: 'status' }, 'Changes saved.');
-          document.scrollingElement?.scrollTo({ top: 0 });
-        },
-        'btn primary block savebar',
-      ),
-    );
-  else panel.append(node('p', 'Pause outreach to change settings.', 'fine'));
-  for (const f of [
-    roles,
-    location,
-    noteTemplate,
-    template,
-    outreachMode,
-    followupMode,
-    noteMode,
-    hours,
-    pace,
-    invites,
-    weekly,
-    messages,
-    pendingCap,
-    allow,
-    exclude,
-    aiMode,
-  ])
-    f.input.disabled = s.active;
+  panel.append(
+    button(
+      'Save changes',
+      async () => {
+        await save();
+        ui.tab = 'home'; // saved: back to Home, where the result of the change shows
+        await act({ kind: 'network', action: 'status' }, 'Changes saved.');
+        document.scrollingElement?.scrollTo({ top: 0 });
+      },
+      'btn primary block savebar',
+    ),
+  );
   return { panel, save, aiMode: aiMode.input };
 }
 
@@ -411,7 +390,6 @@ export function buildChatGpt(s: NetworkState): HTMLElement {
   );
   const cv = node('input', '', 'input');
   cv.type = 'file';
-  cv.disabled = s.active;
   cv.accept = '.pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain';
   const cvField = node('div', '', 'field');
   cvField.append(

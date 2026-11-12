@@ -1799,3 +1799,26 @@ details.person-row > .person .person-head {
   margin: 0 0 12px;
   padding: 0;
 }
+
+/* the "search finished" summary and the undo bar */
+.done {
+  border-color: var(--ok);
+  margin-top: 12px;
+}
+.undo {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+.acc-body .sending {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.acc-body .linkish {
+  margin-top: 8px;
+}
+.inline .bubble {
+  margin: 4px 0 10px;
+}

@@ -6,6 +6,7 @@ import {
   rememberMessage,
   threadMessage,
   contactForThread,
+  type NetworkContact,
   inConversation,
   wroteYourself,
   historyLine,
@@ -101,6 +102,13 @@ function statusView(s: NetworkState): NetworkState {
     }),
   };
 }
+const snapshot = (p: NetworkContact): NonNullable<NetworkState['undo']>['people'][number] => ({
+  url: p.url,
+  state: p.state,
+  reason: p.reason,
+  ...(p.approved ? { approved: true } : {}),
+  ...(p.auto ? { auto: true } : {}),
+});
 export function registerNetworkMessages(): void {
   chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
     const auth = authorization.safeParse(input);
@@ -369,7 +377,6 @@ export function registerNetworkMessages(): void {
           await clearAiJobs();
         }
         if (req.action === 'save') {
-          if (current.active) throw new Error('Pause outreach before editing settings.');
           if (/\{(?!firstName\}|target\})[^}]*\}/.test(req.template))
             throw new Error('Only {firstName} and {target} are supported in the optional manual template.');
           const settings = req.settings ?? {
@@ -772,6 +779,13 @@ export function registerNetworkMessages(): void {
           await updateNetwork(s => {
             const j = (s.referralJobs ?? []).find(j => j.url === req.url);
             if (!j) throw new Error('That job is no longer on your list.');
+            const before = {
+              url: j.url,
+              ...(j.finishedAt !== undefined ? { finishedAt: j.finishedAt } : {}),
+              ...(j.waiting ? { waiting: true } : {}),
+            };
+            const people = s.contacts.filter(p => p.referralJob === j.url && ['shortlisted', 'review'].includes(p.state)).map(snapshot);
+            s.undo = { label: `Stopped asking at ${j.company}`, at: Date.now(), people, jobs: [before] };
             if (j.finishedAt === undefined) j.finishedAt = Date.now();
             delete j.waiting;
             let held = 0;
@@ -785,9 +799,50 @@ export function registerNetworkMessages(): void {
             s.status = `${j.company}: stopped. ${held} ${held === 1 ? 'person was' : 'people were'} taken out of the queue; anyone already asked is unchanged.`;
             return s;
           });
+        if (req.action === 'undo')
+          await updateNetwork(s => {
+            const u = s.undo;
+            if (!u || Date.now() - u.at > 10 * 60000) throw new Error('There is nothing to undo any more.');
+            for (const was of u.people) {
+              const p = s.contacts.find(x => x.url === was.url);
+              if (!p || !['found', 'skipped'].includes(p.state)) continue; // someone already contacted since is left alone
+              p.state = was.state;
+              p.reason = was.reason;
+              if (was.approved) p.approved = true;
+              if (was.auto) p.auto = true;
+            }
+            for (const was of u.jobs) {
+              const j = (s.referralJobs ?? []).find(x => x.url === was.url);
+              if (!j) continue;
+              if (was.finishedAt === undefined) delete j.finishedAt;
+              if (was.waiting) j.waiting = true;
+            }
+            s.status = `Undone: ${u.label.charAt(0).toLowerCase()}${u.label.slice(1)}.`;
+            delete s.undo;
+            return s;
+          });
+        // "Try again" on someone under Needs you: back into the queue, at the step they had reached.
+        if (req.action === 'retry')
+          await updateNetwork(s => {
+            const p = s.contacts.find(x => x.url === req.url);
+            if (!p || p.state !== 'attention') throw new Error('That person does not need attention any more.');
+            p.state = p.acceptedAt ? 'connected' : 'shortlisted';
+            p.failures = 0;
+            delete p.retryAfter;
+            delete p.lastError;
+            p.reason = 'Trying again.';
+            s.status = `${p.name} is back in the queue.`;
+            return s;
+          });
         if (req.action === 'skipAttention')
           await updateNetwork(s => {
             let n = 0;
+            s.undo = {
+              label: 'Skipped everyone who needed attention',
+              at: Date.now(),
+              people: s.contacts.filter(p => p.state === 'attention').map(snapshot),
+              jobs: [],
+            };
             for (const p of s.contacts)
               if (p.state === 'attention') {
                 p.state = 'skipped';

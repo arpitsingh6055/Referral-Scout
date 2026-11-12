@@ -15,6 +15,15 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.39.0: the seven workflow gaps from the user audit
+1. **Home is short.** It shows what is happening (status and live tracker), the queue switch, and what needs you. Your pipeline (with the LinkedIn check), the suggestions and the latest activity are folded into three lines you can open.
+2. **A "done" moment.** When the last company has been searched, Home comes forward with "Search finished: N people are lined up at M companies", and buttons to see them or start reaching out.
+3. **A way forward under "Needs you".** Each person there has "Open on LinkedIn" and "Try again", which puts them back in the queue at the step they had reached.
+4. **Preview what will be sent.** Every company card shows the exact connection note, message to people you know and follow-up, filled in for a sample person.
+5. **Settings are never locked.** They can be changed and saved while reaching out is on. This also fixes "Find more jobs" failing with "Pause outreach before editing settings" while reaching out was on.
+6. **Undo.** "Stop asking here" and "Skip all" can be taken back for ten minutes from a bar on Home. Anyone contacted in the meantime is left alone.
+7. **Choosing companies is one job.** While you choose, the list comes first with its confirm button always in view, and everything already in progress is folded underneath.
+
 ## 0.38.0: people you already talk to, job duplicates, visible filters
 - **Fixed: someone you already have a conversation with ended up under "Needs you"** with "Critical selector/state did not become ready". Two causes. The chat window of an existing conversation shows only LinkedIn's encoded id, so the extension did not recognise the window it had just opened; it is now also recognised by the name in its header, or as the one window that opened. And an existing conversation is no longer an error: the person is filed as "You already have a conversation with them, so nothing was sent", nothing is typed, and it does not count against the daily limit.
 - When a message window really does not open, the person is retried and then skipped with "was NOT sent", not left under "Needs you" with a doubt about whether it went out.

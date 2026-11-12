@@ -216,6 +216,13 @@ export interface NetworkState {
   limitsV2?: boolean;
   /** The person pressed "Check now": look at acceptances and replies on the next step, whatever else is going on. */
   checkRequested?: boolean;
+  /** The last bulk change, kept for ten minutes so it can be taken back with one press. */
+  undo?: {
+    label: string;
+    at: number;
+    people: { url: string; state: ContactState; approved?: boolean; auto?: boolean; reason: string }[];
+    jobs: { url: string; finishedAt?: number; waiting?: boolean }[];
+  };
   /** When replies were last looked for in LinkedIn messaging. */
   repliesCheckedAt?: number;
   /** The person has said what they are looking for; until then setup asks instead of assuming. */ targetSet?: boolean;
@@ -428,6 +435,8 @@ export const networkRequest = z.discriminatedUnion('action', [
   z.object({ kind: z.literal('network'), action: z.literal('clearApi') }),
   z.object({ kind: z.literal('network'), action: z.literal('stopSending') }),
   z.object({ kind: z.literal('network'), action: z.literal('skipAttention') }),
+  z.object({ kind: z.literal('network'), action: z.literal('undo') }),
+  z.object({ kind: z.literal('network'), action: z.literal('retry'), url: z.string() }),
   z.object({ kind: z.literal('network'), action: z.literal('skipCompany'), url: z.string() }),
   z.object({ kind: z.literal('network'), action: z.literal('stopCompany'), url: z.string() }),
   z.object({ kind: z.literal('network'), action: z.literal('finishScans') }),

@@ -5,7 +5,13 @@ import { type ContactState, type NetworkRequest, type NetworkState } from '../sh
 import { createToaster, type ToastKind } from './toast';
 
 export type Tab = 'home' | 'referrals' | 'people' | 'saved' | 'activity' | 'setup';
-export const ui = { tab: 'home' as Tab, filter: 'all', open: new Set<string>() };
+export const ui = {
+  tab: 'home' as Tab,
+  filter: 'all',
+  open: new Set<string>(),
+  /** Set when the last company finishes being searched, until the person has seen the summary. */
+  done: null as { people: number; companies: number } | null,
+};
 export const root = appRoot();
 /** What every screen shares: whether something is in progress, whether the person is typing, and the state last drawn. */
 export const flags = {

@@ -11,7 +11,7 @@ import {
   dueReminders,
   staleRequests,
 } from '../shared/network';
-import { type Tab, ui, page, toaster, node, icon, ago, request, notify, button, act, flags, onRedraw } from './core';
+import { type Tab, ui, page, toaster, node, icon, ago, request, notify, button, act, flags, onRedraw, accordion } from './core';
 import { runStatus, usage, journey, meter, tick, live } from './live';
 import { welcome, askTarget, buildSetup } from './setup';
 import { buildSaved, buildReferrals } from './jobs';
@@ -365,6 +365,66 @@ function render(s: NetworkState): void {
   home.append(hello, run);
   const tracker = live(s, stage);
   if (tracker) home.append(tracker);
+  if (s.undo && Date.now() - s.undo.at < 10 * 60000) {
+    const bar = node('div', '', 'todo info undo');
+    bar.append(
+      node('span', `${s.undo.label}.`),
+      button('Undo', () => act({ kind: 'network', action: 'undo' }), 'btn sm'),
+    );
+    home.append(bar);
+  }
+  if (ui.done && !s.paused) {
+    // The moment the search for people is over: say what came of it and where to look.
+    const done = node('section', '', 'card done'),
+      actions = node('div', '', 'todo-actions');
+    done.append(
+      node('h3', 'Search finished', 'card-title'),
+      node(
+        'p',
+        ui.done.people
+          ? `${ui.done.people} ${ui.done.people === 1 ? 'person is' : 'people are'} lined up at ${ui.done.companies} ${ui.done.companies === 1 ? 'company' : 'companies'}. ${s.active ? 'They are being contacted one at a time.' : 'Nobody is contacted until you start reaching out.'}`
+          : `No suitable people were found at ${ui.done.companies === 1 ? 'that company' : `those ${ui.done.companies} companies`}. Try other roles or companies.`,
+        'card-sub',
+      ),
+    );
+    const seen = (): void => {
+      ui.done = null;
+    };
+    if (ui.done.people)
+      actions.append(
+        button(
+          'See who',
+          async () => {
+            seen();
+            setTab('referrals', true);
+          },
+          'btn sm primary',
+        ),
+      );
+    if (ui.done.people && !s.active)
+      actions.append(
+        button(
+          'Start reaching out',
+          async () => {
+            seen();
+            await act({ kind: 'network', action: 'resume' });
+          },
+          'btn sm',
+        ),
+      );
+    actions.append(
+      button(
+        'OK',
+        async () => {
+          seen();
+          render(s);
+        },
+        'btn sm ghost',
+      ),
+    );
+    done.append(actions);
+    home.append(done);
+  }
   // Suggestions that make the results better, shown on Home instead of sending a new user into Settings.
   const openSetting = (key: string, title: string): void => {
     ui.open.add(key);
@@ -374,6 +434,7 @@ function render(s: NetworkState): void {
       .find(d => d.querySelector('summary')?.textContent?.startsWith(title))
       ?.scrollIntoView?.({ block: 'start' });
   };
+  const below: HTMLElement[] = []; // secondary sections, folded, after what is happening and what is needed
   const tips: [string, string, string, () => void][] = [];
   if (!s.cv)
     tips.push([
@@ -397,8 +458,11 @@ function render(s: NetworkState): void {
       () => openSetting('api', 'ChatGPT connection'),
     ]);
   if (tips.length) {
-    const card = node('section', '', 'card tips');
-    card.append(node('h3', stage < 0 ? 'Before you start (optional)' : 'Make your messages stronger', 'card-title'));
+    const tipsBox = accordion('tips', stage < 0 ? 'Before you start (optional)' : 'Make your messages stronger', String(tips.length)),
+      card = tipsBox.body;
+    card.classList.add('tips');
+    if (stage < 0) tipsBox.box.open = true; // a new user sees the suggestions; afterwards they stay folded
+    below.push(tipsBox.box);
     for (const [title, text, label, go] of tips) {
       const row = node('div', '', 'tip'),
         words = node('div'),
@@ -409,7 +473,6 @@ function render(s: NetworkState): void {
       row.append(words, open);
       card.append(row);
     }
-    home.append(card);
   }
   if (needs || s.active || jobs.length || s.contacts.length) {
     // Reaching out has its own switch, separate from searching: the queue, whether sending is on, and one button.
@@ -451,7 +514,10 @@ function render(s: NetworkState): void {
       );
       home.append(card);
     }
-    home.append(todos, node('h3', 'Your pipeline', 'section-title'), kpis);
+    const pipe = accordion('pipeline', 'Your pipeline', `${counts[0]} asked · ${counts[2]} replied`);
+    pipe.body.append(kpis);
+    home.append(todos);
+    below.unshift(pipe.box);
     // Acceptances and replies: always one clear button, with when it was last done.
     if (s.contacts.length) {
       const check = node('section', '', 'card sending'),
@@ -467,24 +533,23 @@ function render(s: NetworkState): void {
         words,
         button('Check LinkedIn now', () => act({ kind: 'network', action: 'checkNow' }), 'btn sm primary'),
       );
-      home.append(check);
+      check.classList.remove('card');
+      pipe.body.append(check);
     }
   }
   const log = [...(s.log ?? [])].reverse().slice(0, 3);
   if (log.length) {
-    const recent = node('section', '', 'card recent'),
-      headRow = node('div', '', 'row between'),
+    const latest = accordion('latest', 'Latest activity', ago(log[0]!.at)),
       all = node('button', 'See all', 'linkish');
     all.type = 'button';
     all.addEventListener('click', () => setTab('activity', true));
-    headRow.append(node('h3', 'Latest', 'card-title'), all);
-    recent.append(headRow);
     for (const e of log) {
       const row = node('p', '', `recent-row ${e.kind}`);
       row.append(node('span', e.text), node('time', ago(e.at)));
-      recent.append(row);
+      latest.body.append(row);
     }
-    home.append(recent);
+    latest.body.append(all);
+    below.push(latest.box);
   } else if (stage < 0) {
     const how = node('section', '', 'card how');
     how.append(node('h3', 'How it works', 'card-title'));
@@ -500,6 +565,7 @@ function render(s: NetworkState): void {
     home.append(how);
   }
 
+  home.append(...below);
   page.append(top, panels.setup, panels.home, panels.referrals, panels.people, panels.saved, panels.activity, tabs);
   refreshPeople();
   setTab(ui.tab);
@@ -516,6 +582,18 @@ async function refresh(): Promise<void> {
   const before = flags.last;
   if (before?.jobSearch?.status === 'finding' && current.jobSearch?.status === 'choosing' && current.jobSearch.found.length) {
     ui.tab = 'referrals'; // the list is ready and it is the person's turn: show it
+    document.scrollingElement?.scrollTo({ top: 0 });
+  }
+  const open = (x: NetworkState | null): number => (x?.referralJobs ?? []).filter(j => j.finishedAt === undefined).length;
+  if (before && open(before) > 0 && open(current) === 0 && (current.referralJobs ?? []).length) {
+    const jobUrls = new Set((before.referralJobs ?? []).filter(j => j.finishedAt === undefined).map(j => j.url));
+    ui.done = {
+      companies: jobUrls.size,
+      people: current.contacts.filter(
+        p => !!p.referralJob && jobUrls.has(p.referralJob) && ['shortlisted', 'review', 'connected'].includes(p.state),
+      ).length,
+    };
+    ui.tab = 'home';
     document.scrollingElement?.scrollTo({ top: 0 });
   }
   if (JSON.stringify(current) !== flags.signature) render(current);

@@ -438,3 +438,81 @@ it('keeps "Needs you" current: an answered or closed company drops off, and atte
   byText('.todo button', 'Skip them')!.click();
   await vi.waitFor(() => expect(sent.map(r => r.action)).toContain('skipAttention'));
 });
+
+it('keeps Home short: what is happening and what is needed are open, the rest is folded', async () => {
+  const jobUrl = 'https://www.linkedin.com/jobs/view/1/';
+  await open({
+    log: [{ at: Date.now() - 1000, text: 'Invitation sent.', kind: 'ok' }],
+    contacts: [person('a', 'pending', { referralJob: jobUrl, requestedAt: 3 })],
+    referralJobs: [
+      {
+        url: jobUrl,
+        title: 'Ops Intern',
+        company: 'Stripe',
+        location: '',
+        mode: 'referral',
+        addedAt: 1,
+        cursor: 4,
+        found: 1,
+        finishedAt: 1,
+      },
+    ],
+  });
+  const folded = [...document.querySelectorAll<HTMLDetailsElement>('details.acc')].filter(d => !d.closest('[hidden]'));
+  expect(folded.map(d => d.querySelector('summary')!.firstElementChild!.textContent)).toEqual([
+    'Your pipeline',
+    'Make your messages stronger',
+    'Latest activity',
+  ]);
+  expect(folded.every(d => !d.open)).toBe(true);
+  expect(byText('details.acc summary', 'Your pipeline')!.textContent).toContain('1 asked · 0 replied');
+});
+
+it('says so when the search for people is over, with where to go next, and offers Undo after a bulk stop', async () => {
+  const job = (finished: boolean) => ({
+    url: 'https://www.linkedin.com/jobs/view/1/',
+    title: 'Ops Intern',
+    company: 'Stripe',
+    location: '',
+    mode: 'referral' as const,
+    addedAt: 1,
+    cursor: 2,
+    found: 2,
+    ...(finished ? { finishedAt: 5 } : {}),
+  });
+  const contacts = [person('a', 'shortlisted', { referralJob: job(true).url }), person('b', 'shortlisted', { referralJob: job(true).url })];
+  await open({ active: false, referralJobs: [job(false)], contacts });
+  state = { ...state, referralJobs: [job(true)], undo: { label: 'Stopped asking at Stripe', at: Date.now(), people: [], jobs: [] } };
+  await vi.advanceTimersByTimeAsync(2600);
+  await vi.waitFor(() => expect(byText('.done', 'Search finished')).toBeTruthy());
+  expect(byText('.done', '2 people are lined up at 1 company. Nobody is contacted until you start reaching out.')).toBeTruthy();
+  expect(byText('.done button', 'Start reaching out')).toBeTruthy();
+  byText('.undo button', 'Undo')!.click();
+  await vi.waitFor(() => expect(sent.map(r => r.action)).toContain('undo'));
+});
+
+it('shows a way forward under Needs you, a preview of what will be sent, and never locks Settings', async () => {
+  const jobUrl = 'https://www.linkedin.com/jobs/view/1/';
+  await open({
+    active: true,
+    contacts: [person('stuck', 'attention', { referralJob: jobUrl })],
+    referralJobs: [
+      {
+        url: jobUrl,
+        title: 'Ops Intern',
+        company: 'Stripe',
+        location: '',
+        mode: 'referral',
+        addedAt: 1,
+        cursor: 4,
+        found: 1,
+        finishedAt: 1,
+      },
+    ],
+  });
+  expect(byText('a', 'Open on LinkedIn')!.getAttribute('href')).toContain('/in/');
+  expect(byText('button', 'Try again')).toBeTruthy();
+  expect(byText('details.inline', 'Preview what will be sent')!.textContent).toContain('Ops Intern');
+  expect(byText('button', 'Save changes')).toBeTruthy();
+  expect($<HTMLTextAreaElement>('textarea')!.disabled).toBe(false);
+});

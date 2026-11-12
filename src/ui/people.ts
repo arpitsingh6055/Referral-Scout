@@ -185,6 +185,11 @@ export function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
         'btn sm ghost',
       ),
     );
+  if (p.state === 'attention')
+    actions.append(
+      link('Open on LinkedIn ↗', p.url, 'btn sm'),
+      button('Try again', () => act({ kind: 'network', action: 'retry', url: p.url }), 'btn sm primary'),
+    );
   if (!['messaged', 'skipped', 'requesting', 'messaging'].includes(p.state))
     actions.append(
       button(
