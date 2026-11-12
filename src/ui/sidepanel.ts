@@ -18,6 +18,8 @@ import { buildSaved, buildReferrals } from './jobs';
 import { buildPeople } from './people';
 import { buildActivity } from './activity';
 
+/** The running build, so it is easy to tell whether the extension was reloaded after an update. */
+const version = (globalThis as { chrome?: typeof chrome }).chrome?.runtime?.getManifest?.().version ?? '';
 function render(s: NetworkState): void {
   announcedUpTo = Math.max(announcedUpTo, (s.log ?? []).at(-1)?.at ?? 0);
   flags.last = s;
@@ -61,7 +63,7 @@ function render(s: NetworkState): void {
     };
   people.append(peopleList);
   for (const [tab, title, sub] of [
-    ['setup', 'Settings', 'What you are looking for, your messages and your limits.'],
+    ['setup', 'Settings', `What you are looking for, your messages and your limits.${version ? ` Version ${version}.` : ''}`],
     ['referrals', 'Jobs', 'The companies you chose and who can refer you at each.'],
     ['people', 'People', 'Everyone queued, invited or contacted.'],
     ['saved', 'Saved', 'Jobs and people you remembered on LinkedIn.'],

@@ -588,3 +588,24 @@ export function historyLine(p: NetworkContact): string {
   if (p.outcome) parts.push(p.outcome === 'referred' ? 'agreed to refer you' : p.outcome === 'declined' ? 'cannot help' : 'replied');
   return parts.length ? parts.join(' · ') : 'on your list, not contacted yet';
 }
+
+/**
+ * The person and you are already in conversation (they replied, or you wrote to them yourself), so the extension
+ * steps back: nothing automatic is sent any more, and they stop showing under "Needs you".
+ */
+export function inConversation(p: NetworkContact, now = Date.now()): void {
+  if (['attention', 'connected', 'review', 'shortlisted', 'pending', 'found'].includes(p.state)) {
+    p.state = 'messaged';
+    p.reason = 'You are in conversation with them. Nothing automatic is sent.';
+    if (!p.messagedAt) p.messagedAt = now;
+    if (!p.acceptedAt && p.requestedAt > 0) p.acceptedAt = now;
+    delete p.approved;
+    delete p.approvalKind;
+  }
+}
+const sameText = (a: string, b: string): boolean =>
+  a.replace(/\s+/g, ' ').trim().toLowerCase() === b.replace(/\s+/g, ' ').trim().toLowerCase();
+/** True when the conversation shows you writing something other than the note that went with the invitation. */
+export function wroteYourself(messages: { mine: boolean; text: string }[], invitationNote = ''): boolean {
+  return messages.some(m => m.mine && !(invitationNote && sameText(m.text, invitationNote)));
+}

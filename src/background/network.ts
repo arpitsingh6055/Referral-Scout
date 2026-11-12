@@ -19,6 +19,7 @@ import {
   type NetworkState,
   type NetworkContact,
   repliesFrom,
+  inConversation,
 } from '../shared/network';
 import { classify, geoFor, normalizeCompany, planSearch, companyOf } from '../shared/targeting';
 import { companyFromCurrent } from '../parsers/network';
@@ -755,6 +756,7 @@ async function checkReplies(signal: AbortSignal): Promise<number> {
       if (urls.includes(p.url)) {
         p.outcome = 'replied';
         p.outcomeAt = Date.now();
+        inConversation(p); // they wrote back: no automatic follow-up, and no "needs you"
         found++;
       }
     c.repliesCheckedAt = Date.now();

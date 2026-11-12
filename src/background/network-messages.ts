@@ -5,6 +5,8 @@ import {
   rememberMessage,
   threadMessage,
   contactForThread,
+  inConversation,
+  wroteYourself,
   historyLine,
   type SavedItem,
   networkRequest,
@@ -195,7 +197,11 @@ export function registerNetworkMessages(): void {
           person = contactForThread(state.contacts, id, name, url ? (profileUrl(url) ?? undefined) : undefined);
         if (!person || !state.profile)
           return action === 'draft' ? { ok: false, error: 'This person is not on your Referral Scout list.' } : { ours: false };
-        const changed = (!!id && person.messagingId !== id) || JSON.stringify(person.thread ?? []) !== JSON.stringify(messages);
+        const changed =
+          (['attention', 'connected', 'review'].includes(person.state) &&
+            (messages.some(m => !m.mine) || wroteYourself(messages, person.invitationNote))) ||
+          (!!id && person.messagingId !== id) ||
+          JSON.stringify(person.thread ?? []) !== JSON.stringify(messages);
         if (changed)
           await updateNetwork(s => {
             const p = s.contacts.find(x => x.url === person.url);
@@ -207,6 +213,8 @@ export function registerNetworkMessages(): void {
               p.outcome = 'replied';
               p.outcomeAt = Date.now();
             }
+            // They answered, or you wrote to them yourself: the extension stops sending and stops asking for attention.
+            if (messages.some(m => !m.mine) || wroteYourself(messages, p.invitationNote)) inConversation(p);
             return s;
           });
         const job = (state.referralJobs ?? []).find(j => j.url === person.referralJob),
@@ -687,6 +695,7 @@ export function registerNetworkMessages(): void {
             if (req.outcome) {
               p.outcome = req.outcome;
               p.outcomeAt = Date.now();
+              inConversation(p); // marked by you: they no longer need attention and nothing automatic follows
             } else {
               delete p.outcome;
               delete p.outcomeAt;

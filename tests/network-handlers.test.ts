@@ -367,3 +367,53 @@ it('"Skip all" clears everyone who needed attention in one press', async () => {
   expect(after.contacts.map(p => p.state)).toEqual(['skipped', 'skipped', 'shortlisted']);
   expect(after.status).toBe('2 people skipped. Nothing more is sent to them.');
 });
+
+it('marking what happened takes the person out of "Needs you" and stops anything automatic for them', async () => {
+  await seed({
+    contacts: [person('digjay', { state: 'attention', requestedAt: 5, acceptedAt: 6, approvalKind: 'message', message: 'prepared' })],
+  });
+  const after = (await ok({ action: 'outcome', url: person('digjay').url, outcome: 'replied' })).contacts[0]!;
+  expect(after).toMatchObject({
+    state: 'messaged',
+    outcome: 'replied',
+    reason: 'You are in conversation with them. Nothing automatic is sent.',
+  });
+  expect(after.messagedAt).toBeGreaterThan(0);
+});
+
+it('a conversation you carried on yourself is recognised: no automatic follow-up, no "Needs you"; the invitation note alone does not count', async () => {
+  const page = {
+    id: ID,
+    frameId: 0,
+    tab: { id: 4 },
+    url: 'https://www.linkedin.com/messaging/thread/2-abc==/',
+    origin: 'https://www.linkedin.com',
+  };
+  const sync = (name: string, messages: { mine: boolean; text: string }[]) =>
+    new Promise(resolve => {
+      listener({ kind: 'network.thread', action: 'sync', id: `ACoAAB-${name.replace(/\s/g, '')}`, name, messages }, page, resolve);
+    });
+  const note = 'Hi Digjay, I came across the Product Analyst Intern opening at Voy and would love to connect.';
+  await seed({
+    contacts: [
+      person('digjay', { name: 'Digjay Johri', state: 'attention', requestedAt: 5, acceptedAt: 6, invitationNote: note }),
+      person('charu', {
+        name: 'Charu Garg',
+        state: 'connected',
+        requestedAt: 5,
+        acceptedAt: 6,
+        invitationNote: 'Hi Charu, I would love to connect.',
+      }),
+    ],
+  });
+  await sync('Digjay Johri', [
+    { mine: true, text: note },
+    { mine: false, text: 'Share resume' },
+    { mine: true, text: 'Hi Digjay, thanks for connecting. Here is my CV.' },
+  ]);
+  await sync('Charu Garg', [{ mine: true, text: 'Hi Charu,  I would love to connect.' }]); // only the note that went with the invitation
+  const [digjay, charu] = (await getNetwork()).contacts;
+  expect(digjay).toMatchObject({ state: 'messaged', outcome: 'replied' });
+  expect(charu).toMatchObject({ state: 'connected' }); // the planned follow-up still goes out
+  expect(charu!.outcome).toBeUndefined();
+});

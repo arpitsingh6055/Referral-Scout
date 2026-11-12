@@ -139,6 +139,8 @@ mini.addEventListener('click', () => {
 });
 
 async function look(): Promise<void> {
+  // LinkedIn rebuilds parts of the page as you move around; put the card back if it was dropped.
+  if (!host.isConnected) (document.body ?? document.documentElement).append(host);
   const open = current();
   if (!open) {
     ours = false;
@@ -162,6 +164,7 @@ async function look(): Promise<void> {
     pill.textContent = LABEL;
   }
   shownFor = key;
+  if (!!reply?.ours && !ours) console.info('[Referral Scout] This conversation is with someone on your list.');
   ours = !!reply?.ours;
   if (reply?.info) {
     const { first, job, history: line } = reply.info;
@@ -217,6 +220,7 @@ if (!installed.__referralScoutReply && location.hostname.endsWith('linkedin.com'
   installed.__referralScoutReply = true;
   pill.textContent = LABEL;
   (document.body ?? document.documentElement).append(host);
+  console.info('[Referral Scout] Watching LinkedIn conversations on this tab.');
   setInterval(() => {
     void look();
   }, 1500);

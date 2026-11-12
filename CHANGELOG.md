@@ -15,6 +15,12 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.37.1: marking a reply clears "Needs you"; the conversation card stays on the page
+- **Fixed: someone under "Needs you" stayed there after you pressed "They replied".** Marking what happened (replied, will refer, cannot help) now moves the person to Introduced with "You are in conversation with them", and nothing automatic is sent to them any more.
+- **Conversations you carried on yourself are recognised.** When you open a conversation where they answered or you wrote something beyond the invitation note, the same happens by itself: no automatic follow-up on top of your own messages, and no "Needs you". The invitation note on its own does not count, so the planned follow-up still goes out.
+- The same applies when the LinkedIn check finds a reply.
+- **The card in LinkedIn messaging is put back if LinkedIn removes it** while rebuilding the page, which is the likely reason it did not appear. The page console now says "[Referral Scout] Watching LinkedIn conversations on this tab" when it is running.
+
 ## 0.37.0: "Needs you" stays current
 - **Old invitations no longer sit there for ever.** The LinkedIn check now also reads your sent invitations. Anyone still marked "invited" who is neither a connection nor on that list any more (withdrawn or declined) is closed, so they stop counting as waiting or as "unanswered for over 3 weeks". Nothing is concluded unless the whole list was read, and invitations sent in the last 15 minutes are left alone. The sent-invitations page was checked live on 12 November 2026 (ten per page with a "Load more" button, profile addresses shown).
 - **People needing attention can be cleared in one press** ("Skip all N" next to "Show"). Someone who needed attention but has since accepted moves to Accepted at the next check.
