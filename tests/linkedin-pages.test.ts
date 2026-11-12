@@ -1,6 +1,8 @@
 import { beforeEach, expect, it } from 'vitest';
 import {
   companyFromCurrent,
+  inboxRows,
+  recentConnections,
   networkPeople,
   ownProfileEditLink,
   profileHeader,
@@ -120,4 +122,49 @@ it('ignores LinkedIn\'s hidden "1st" line and a bare pronoun line (the bug that 
     headline: 'Talent Acquisition Specialist',
     location: 'Bengaluru, Karnataka, India',
   });
+});
+
+/* The messaging list as it is on the live page (12 November 2026): old-style "msg-" classes, the name as the person
+   wrote it on their profile, and "You:" in front of the snippet when the latest message is your own. */
+const conversation = (name: string, snippet: string, pill = '') => `
+  <li class="ember-view scaffold-layout__list-item msg-conversation-listitem msg-conversations-container__convo-item">
+    <div class="msg-conversation-listitem__link msg-conversations-container__convo-item-link">
+      <h3 class="msg-conversation-listitem__participant-names msg-conversation-card__participant-names"><span class="truncate">${name}</span></h3>
+      <time class="msg-conversation-listitem__time-stamp">Nov 12</time>
+      ${pill ? `<span class="msg-conversation-card__pill">${pill}</span>` : ''}
+      <p class="msg-conversation-card__message-snippet">${snippet}</p>
+    </div>
+  </li>`;
+it('reads the messaging list: who the conversation is with and whether the latest message is theirs', () => {
+  const doc = parse(`<main><ul class="list-style-none msg-conversations-container__conversations-list">
+    ${conversation('Ananya Rao', 'Ananya: Sure, send me your CV')}
+    ${conversation('Rahul Mehta', 'You: Hi Rahul, thanks for connecting!')}
+    ${conversation('Priya Sharma, MBA(She/Her)', 'Priya: Happy to help')}
+    ${conversation('Karan Gupta, Neha Verma and 2 others', 'Karan: hello all')}
+    ${conversation('LinkedIn Offers', 'Try Premium for free', 'Sponsored')}
+  </ul></main>`);
+  expect(inboxRows(doc)).toEqual([
+    { name: 'Ananya Rao', mine: false },
+    { name: 'Rahul Mehta', mine: true },
+    { name: 'Priya Sharma, MBA(She/Her)', mine: false },
+  ]);
+});
+
+it('matches a reply to the person who was asked even when their name carries a credential or pronouns', async () => {
+  const { repliesFrom } = await import('../src/shared/network');
+  const asked = (name: string, slug: string) =>
+    ({ name, url: `https://www.linkedin.com/in/${slug}/`, messagedAt: 5, requestedAt: 0 }) as never;
+  const rows = [
+    { name: 'Priya Sharma, MBA(She/Her)', mine: false },
+    { name: 'Ananya Rao', mine: false },
+  ];
+  expect(
+    repliesFrom(rows, [asked('Priya Sharma, MBA (She/Her)', 'priya'), asked('Ananya Rao', 'ananya'), asked('Someone Else', 'x')]),
+  ).toEqual(['https://www.linkedin.com/in/priya/', 'https://www.linkedin.com/in/ananya/']);
+});
+
+it('reads accepted invitations from the connections page as profile addresses, newest first', () => {
+  const doc = parse(`<main><div><a href="/in/new-person/">New Person</a><p>Connected on November 12, 2026</p></div>
+    <div><a href="https://www.linkedin.com/in/older-person?miniProfileUrn=x">Older Person</a><p>Connected on October 15, 2026</p></div></main>`);
+  expect(recentConnections(doc)).toEqual(['https://www.linkedin.com/in/new-person/', 'https://www.linkedin.com/in/older-person/']);
 });

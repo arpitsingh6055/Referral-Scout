@@ -15,6 +15,12 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.34.1: reply and acceptance checks validated
+- **Fixed: "Check for replies now" failed while sending was off.** The acceptance check refused to run unless outreach was active, which stopped the whole check and paused everything. It now runs on request whatever the sending state. Found by a new end-to-end test of the check.
+- **Fixed: a person whose name carries a credential ("Priya Sharma, MBA") was treated as a group chat** and skipped. Only real group chats ("… and 2 others") and sponsored messages are left out now.
+- Both readers were run against the live pages on 12 November 2026: the messaging list (three conversations: names and "latest message is mine" read correctly) and the connections page (three connections, three profile addresses, newest first).
+- New tests: the messaging list from a fixture shaped like the live page, name matching with credentials and pronouns, the connections page, and one check that marks an acceptance and a reply together.
+
 ## 0.34.0: you stay in command; replies are checked for you
 - **Leave any stage.** During a job search: "Stop here and choose from the N jobs found", or cancel. While people are being found: "Stop searching, reach out to who was found" on Home, and per company "Stop searching here". While reaching out: per company "Stop asking here" takes everyone not yet contacted out of the queue; people already asked are untouched. Pause and Resume work as before.
 - **Searching and sending take turns.** People already found at one company are contacted while other companies are still being searched, instead of waiting for every search to finish.

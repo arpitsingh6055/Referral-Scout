@@ -143,6 +143,30 @@ export function recentConnections(doc: ParentNode): string[] {
   }
   return [...found];
 }
+export interface InboxRow {
+  name: string;
+  mine: boolean;
+}
+/**
+ * The conversation list in LinkedIn messaging (checked live, 12 November 2026, on an account with three conversations):
+ * one list item per conversation, the other person's name exactly as on their profile (including any "(She/Her)" or
+ * credential they added), and a snippet that starts with "You:" when the latest message is your own.
+ * Group chats ("… and 2 others") and LinkedIn's own sponsored messages are left out: neither is one person's reply.
+ */
+export function inboxRows(doc: ParentNode): InboxRow[] {
+  const rows: InboxRow[] = [];
+  for (const li of doc.querySelectorAll('li.msg-conversation-listitem')) {
+    const name = textOf(li.querySelector('.msg-conversation-listitem__participant-names'));
+    if (
+      !name ||
+      / and \d+ others?$/i.test(name) ||
+      /\bsponsored\b|linkedin offer/i.test(textOf(li.querySelector('.msg-conversation-card__pill')))
+    )
+      continue;
+    rows.push({ name: name.slice(0, 200), mine: /^you:/i.test(textOf(li.querySelector('.msg-conversation-card__message-snippet'))) });
+  }
+  return rows.slice(0, 60);
+}
 export interface JobRow {
   id: string;
   title: string;

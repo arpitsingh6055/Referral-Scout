@@ -763,11 +763,13 @@ async function checkReplies(signal: AbortSignal): Promise<number> {
   });
   return found;
 }
-async function sweepAcceptances(s: NetworkState, signal: AbortSignal): Promise<void> {
+/** `onRequest`: asked for with "Check now", so it runs even while sending is off. It only reads. */
+async function sweepAcceptances(s: NetworkState, signal: AbortSignal, onRequest = false): Promise<void> {
   await note(s, 'Checking your connections list for people who accepted…');
   const tab = await networkTab('https://www.linkedin.com/mynetwork/invite-connect/connections/', signal);
   const connected = new Set(z.array(z.string()).parse(await networkCommand(tab, { action: 'connections' }, signal)));
-  await currentRun(s.revision, signal);
+  if (onRequest) signal.throwIfAborted();
+  else await currentRun(s.revision, signal);
   await updateNetwork(current => {
     const names: string[] = [],
       now = Date.now();
@@ -1167,7 +1169,7 @@ async function run(): Promise<void> {
         delete c.checkRequested;
         return c;
       });
-      if (s.contacts.some(p => p.state === 'pending' && p.requestedAt > 0)) await sweepAcceptances(s, abort.signal);
+      if (s.contacts.some(p => p.state === 'pending' && p.requestedAt > 0)) await sweepAcceptances(s, abort.signal, true);
       const replies = await checkReplies(abort.signal);
       const accepted = (await getNetwork()).contacts.filter(p => p.acceptedAt).length - s.contacts.filter(p => p.acceptedAt).length;
       await updateNetwork(c => ({

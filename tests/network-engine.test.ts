@@ -1025,3 +1025,28 @@ it('takes turns between searching and sending, so people already found are conta
   expect(steps).toContain('/in/ready/');
   expect((await getNetwork()).referralJobs![1]!.finishedAt).toBeUndefined();
 });
+
+it('"Check now" does both in one go: marks an accepted invitation from the connections page and a reply from messaging', async () => {
+  await seed({
+    active: false,
+    checkRequested: true,
+    contacts: [
+      person('new-friend', { state: 'pending', requestedAt: Date.now() - 3600_000 }),
+      person('ananya-rao', { state: 'messaged', messagedAt: 5 }),
+    ],
+  });
+  vi.mocked(networkTab).mockClear();
+  vi.mocked(networkCommand)
+    .mockResolvedValueOnce(['https://www.linkedin.com/in/new-friend/'])
+    .mockResolvedValueOnce([
+      { name: 'Ananya Rao', mine: false },
+      { name: 'new friend', mine: true },
+    ]);
+  await networkTick();
+  const saved = await getNetwork();
+  expect(urls().map(u => u.pathname)).toEqual(['/mynetwork/invite-connect/connections/', '/messaging/']);
+  expect(saved.contacts.find(p => p.name === 'new friend')!.acceptedAt).toBeGreaterThan(0);
+  expect(saved.contacts.find(p => p.name === 'ananya rao')).toMatchObject({ outcome: 'replied' });
+  expect(saved.contacts.find(p => p.name === 'new friend')!.outcome).toBeUndefined(); // the latest message there is your own
+  expect(saved.status).toBe('Checked just now: 1 new acceptance, 1 new reply.');
+});
