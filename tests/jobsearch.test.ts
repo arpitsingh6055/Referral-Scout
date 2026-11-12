@@ -281,3 +281,29 @@ it('ticks ten companies by default, never more', () => {
   }));
   expect(shortlist(jobs).filter(j => j.picked)).toHaveLength(10);
 });
+
+it('never offers a job that was already taken on, even reposted under a new address, but does offer a different job at the same company', () => {
+  const found = (id: string, title: string, company: string) => ({
+    id,
+    url: `https://www.linkedin.com/jobs/view/${id}/`,
+    title,
+    company,
+    location: '',
+    insight: '',
+    term: 'x',
+    score: 50,
+    picked: false,
+  });
+  const done = [{ url: 'https://www.linkedin.com/jobs/view/111111/', title: 'Product Intern', company: 'Acme Pvt Ltd' }];
+  const list = shortlist(
+    [
+      found('111111', 'Product Intern', 'Acme'),
+      found('222222', 'Product  intern', 'Acme'),
+      found('333333', 'Strategy Intern', 'Acme'),
+      found('444444', 'Product Intern', 'Other Co'),
+    ],
+    [],
+    done,
+  );
+  expect(list.map(j => j.id).sort()).toEqual(['333333', '444444']);
+});

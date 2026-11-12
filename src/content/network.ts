@@ -216,10 +216,26 @@ async function connect(cmd: NetworkPageCommand, signal: AbortSignal): Promise<un
   });
   return { state: 'pending', noteSent };
 }
-/** The chat window for exactly this recipient. It lives in LinkedIn's messaging shadow root. */
-const conversations = (url: string) =>
-  queryAll('[role="dialog"][aria-label="Messaging"], .msg-overlay-conversation-bubble').filter(
-    e => visible(e) && [...e.querySelectorAll<HTMLAnchorElement>('a[href*="/in/"]')].some(a => profileUrl(a.href) === url),
+const chatWindows = (): HTMLElement[] =>
+  queryAll('[role="dialog"][aria-label="Messaging"], .msg-overlay-conversation-bubble').filter(visible);
+const plain = (name: string): string =>
+  name
+    .replace(/\([^)]*\)/g, ' ')
+    .split(',')[0]!
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+/**
+ * The chat window for exactly this recipient. It lives in LinkedIn's messaging shadow root. A new conversation links
+ * to the person's profile address; one with history shows only LinkedIn's encoded id (checked live, November 2026),
+ * so the window is also recognised by the person's name in its header.
+ */
+const conversations = (url: string, name = '') =>
+  chatWindows().filter(
+    e =>
+      [...e.querySelectorAll<HTMLAnchorElement>('a[href*="/in/"]')].some(a => profileUrl(a.href) === url) ||
+      (!!name &&
+        plain(textOf(e.querySelector('.msg-overlay-bubble-header__title, .msg-entity-lockup__entity-title, header h2'))) === plain(name)),
   );
 const HISTORY = '.msg-s-event-listitem__body, .msg-s-event-listitem__attachment';
 async function message(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unknown> {
@@ -227,25 +243,38 @@ async function message(cmd: NetworkPageCommand, signal: AbortSignal): Promise<un
   if (relationship(top) !== 'connected') throw new Error('A first-degree connection is required before messaging.');
   const open = control(top, /^message\b/i);
   if (!open) throw new Error('The Message button is unavailable on this profile.');
-  if (!conversations(cmd.url).length) open.click();
+  const name = textOf(top.querySelector('h1, h2')),
+    before = new Set(chatWindows());
+  const mine = (): HTMLElement[] => {
+    const found = conversations(cmd.url, name);
+    if (found.length) return found;
+    // Last resort: the one window that opened because Message was just pressed.
+    const opened = chatWindows().filter(w => !before.has(w));
+    return opened.length === 1 ? opened : [];
+  };
+  if (!conversations(cmd.url, name).length) open.click();
   const conversation = await wait(
     () => {
-      const found = conversations(cmd.url);
+      const found = mine();
       return found.length === 1 ? found[0] : null;
     },
     signal,
     12000,
-  );
+  ).catch(() => {
+    throw new Error('The message window for this person did not open, so the message was NOT sent.');
+  });
   const editor = await wait(
     () =>
       [...conversation.querySelectorAll<HTMLElement>('[role="textbox"][contenteditable="true"], .msg-form__contenteditable')].find(visible),
     signal,
     6000,
-  );
+  ).catch(() => {
+    throw new Error('The message box did not appear, so the message was NOT sent.');
+  });
   // Give an existing thread time to load: its messages appear a moment after the window does.
   await sleep(3000, signal);
-  if (conversation.querySelector(HISTORY))
-    throw new Error('You already have a conversation with this person. Continue it yourself in LinkedIn.');
+  // Already in touch: nothing is typed or sent. The engine files this person as "in conversation", not as a problem.
+  if (conversation.querySelector(HISTORY)) return { state: 'conversation' };
   if (readEditor(editor).trim()) throw new Error('This conversation has an unsent draft. It has been left untouched.');
   insert(editor, cmd.body);
   if (!sameText(readEditor(editor), cmd.body)) throw new Error('The introduction could not be verified.');
@@ -259,12 +288,12 @@ async function message(cmd: NetworkPageCommand, signal: AbortSignal): Promise<un
   ).catch(() => {
     throw new Error('The message is ready, but LinkedIn’s Send button is unavailable.');
   });
-  if (!conversation.isConnected || conversations(cmd.url)[0] !== conversation) throw new Error('The conversation changed before sending.');
+  if (!conversation.isConnected || !chatWindows().includes(conversation)) throw new Error('The conversation changed before sending.');
   await authorize(cmd, true, signal);
   send.click();
   await wait(
     () =>
-      conversations(cmd.url).some(c =>
+      [conversation, ...conversations(cmd.url, name)].some(c =>
         [...c.querySelectorAll<HTMLElement>('.msg-s-event-listitem__body')].some(e => sameText(e.innerText, cmd.body)),
       ),
     signal,

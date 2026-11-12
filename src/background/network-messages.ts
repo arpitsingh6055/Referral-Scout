@@ -1,3 +1,4 @@
+import { sameJob } from '../shared/jobsearch';
 import { extractJson } from '../parsers/json';
 import { replyPrompt } from '../shared/referral';
 import { z } from 'zod';
@@ -634,7 +635,8 @@ export function registerNetworkMessages(): void {
             if (!chosen.length) throw new Error('Tick at least one company.');
             const list = s.referralJobs ?? (s.referralJobs = []);
             for (const j of chosen.reverse())
-              if (!list.some(r => r.url === j.url))
+              if (!list.some(r => sameJob(r, j)))
+                // the same opening is never taken on twice
                 list.unshift({
                   url: j.url,
                   title: j.title,

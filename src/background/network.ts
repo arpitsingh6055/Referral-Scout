@@ -381,10 +381,7 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
   const term = s.plan.terms[search.cursor];
   if (term === undefined) {
     // Before the person sees the list, ChatGPT takes out adverts and poor matches. If it cannot, the list is shown as it is.
-    const list = shortlist(
-      search.found,
-      (s.referralJobs ?? []).map(r => r.company),
-    );
+    const list = shortlist(search.found, [], s.referralJobs ?? []);
     let drop = new Map<string, string>(),
       why = '';
     if (list.length > 1) {
@@ -1069,7 +1066,7 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
   });
   try {
     const result = z
-      .object({ state: z.enum(['pending', 'connected', 'messaged']), noteSent: z.boolean().optional() })
+      .object({ state: z.enum(['pending', 'connected', 'messaged', 'conversation']), noteSent: z.boolean().optional() })
       .parse(
         await networkCommand(
           tab,
@@ -1078,8 +1075,16 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
         ),
       );
     if (kind === 'connect' && result.state !== 'pending') throw new Error('The invitation did not produce a confirmed Pending indicator.');
-    if (kind === 'message' && result.state !== 'messaged') throw new Error('The sent message bubble could not be confirmed.');
-    if (kind === 'connect') {
+    if (kind === 'message' && result.state === 'conversation') {
+      // Already in touch with this person: nothing was typed or sent, and nothing automatic will be.
+      inConversation(p);
+      p.reason = 'You already have a conversation with them, so nothing was sent. Continue it yourself in LinkedIn.';
+      await updateNetwork(current => {
+        current.actions = current.actions.filter(a => !(a.at === intent.at && a.url === p.url && a.kind === kind)); // not a send: it does not count against the daily limit
+        return current;
+      });
+    } else if (kind === 'message' && result.state !== 'messaged') throw new Error('The sent message bubble could not be confirmed.');
+    else if (kind === 'connect') {
       p.requestedAt = Date.now();
       p.nextCheckAt = p.requestedAt + 3 * DAY;
       p.state = 'pending';

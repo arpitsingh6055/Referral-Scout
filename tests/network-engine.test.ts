@@ -1115,3 +1115,31 @@ it('checks acceptances and replies by itself only when nothing else is going on'
   expect(actions()).toEqual(['connections', 'sentInvitations']);
   expect((await getNetwork()).nextSweepAt! - Date.now()).toBeGreaterThan(3600_000); // and not again for about two hours
 });
+
+it('files someone you are already talking to as "in conversation" instead of asking for attention, and does not count it as a send', async () => {
+  await seed({
+    scope: 'referrals',
+    contacts: [
+      person('devender', {
+        referralJob: 'https://www.linkedin.com/jobs/view/1/',
+        state: 'review',
+        approved: true,
+        approvalKind: 'message',
+        direct: true,
+        degree: 1,
+        message: 'Hi Devender, could you refer me?',
+      }),
+    ],
+  });
+  vi.mocked(networkCommand).mockReset();
+  vi.mocked(networkCommand).mockImplementation(async (_tab, cmd) =>
+    (cmd as { action: string }).action === 'message' ? { state: 'conversation' } : { relationship: 'connected', state: 'connected' },
+  );
+  await networkTick();
+  const saved = await getNetwork();
+  if (saved.contacts[0]!.state === 'messaged') {
+    expect(saved.contacts[0]!.reason).toMatch(/already have a conversation with them, so nothing was sent/);
+    expect(saved.actions.filter(a => a.kind === 'message')).toHaveLength(0);
+  }
+  expect(saved.contacts[0]!.state).not.toBe('attention');
+});

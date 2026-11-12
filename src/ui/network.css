@@ -1791,3 +1791,11 @@ details.person-row > .person .person-head {
   white-space: normal;
   text-align: center;
 }
+
+/* People filters wrap onto more lines, so every filter is always visible */
+.filters {
+  flex-wrap: wrap;
+  overflow-x: visible;
+  margin: 0 0 12px;
+  padding: 0;
+}

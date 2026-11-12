@@ -417,3 +417,21 @@ it('a conversation you carried on yourself is recognised: no automatic follow-up
   expect(charu).toMatchObject({ state: 'connected' }); // the planned follow-up still goes out
   expect(charu!.outcome).toBeUndefined();
 });
+
+it('does not take on the same opening twice when companies are chosen', async () => {
+  const found = [
+    {
+      id: '700001',
+      url: 'https://www.linkedin.com/jobs/view/700001/',
+      title: 'Ops Intern',
+      company: 'Company 1',
+      location: '',
+      insight: '',
+      term: 'x',
+      score: 5,
+      picked: true,
+    },
+  ];
+  await seed({ referralJobs: [job(1)], jobSearch: { status: 'choosing', cursor: 1, found, startedAt: 1 } }); // job(1) is "Ops Intern" at "Company 1" under another address
+  expect((await ok({ action: 'pickJobs', ids: ['700001'], perCompany: 3 })).referralJobs).toHaveLength(1);
+});

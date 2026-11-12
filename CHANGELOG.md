@@ -15,6 +15,12 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.38.0: people you already talk to, job duplicates, visible filters
+- **Fixed: someone you already have a conversation with ended up under "Needs you"** with "Critical selector/state did not become ready". Two causes. The chat window of an existing conversation shows only LinkedIn's encoded id, so the extension did not recognise the window it had just opened; it is now also recognised by the name in its header, or as the one window that opened. And an existing conversation is no longer an error: the person is filed as "You already have a conversation with them, so nothing was sent", nothing is typed, and it does not count against the daily limit.
+- When a message window really does not open, the person is retried and then skipped with "was NOT sent", not left under "Needs you" with a doubt about whether it went out.
+- **The same opening is never taken on twice**, including a repost of the same title at the same company under a new address. A different job at a company you already pursued is now offered (before, the whole company was hidden).
+- **People filters wrap onto more lines**, so "Needs you" and the others are always visible. Before, the row scrolled sideways with no scrollbar.
+
 ## 0.37.2: checks wait their turn; no "Resume" on a panel that never started
 - **The automatic check for acceptances and replies no longer runs in the middle of other work.** It runs about every 2 hours only when no job search is running, no company is being searched and nobody is waiting to be contacted, or straight away when you press **Check LinkedIn now**. It also runs when reaching out is switched off, as long as you are not paused.
 - **Fixed: a "Resume" button on first load.** Installing or reloading the extension used to mark it as paused with "Ready when you are… press Start". Nothing is paused on install or update now, and a panel left in that state is cleared once.

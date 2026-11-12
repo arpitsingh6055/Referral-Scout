@@ -230,13 +230,28 @@ export function scoreJob(
   else if (/company alum/i.test(job.insight)) score += 8;
   return score;
 }
-/** One job per company (the best fit), best companies first, the top ones ticked for the person to confirm. */
-export function shortlist(jobs: FoundJob[], alreadyPursued: string[] = []): FoundJob[] {
+const titleKey = (title: string): string =>
+  title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+/** The same opening: the same LinkedIn job, or the same title at the same company (a repost gets a new address). */
+export const sameJob = (a: { url: string; title: string; company: string }, b: { url: string; title: string; company: string }): boolean =>
+  a.url === b.url || (normalizeCompany(a.company) === normalizeCompany(b.company) && titleKey(a.title) === titleKey(b.title));
+/**
+ * One job per company (the best fit), best companies first, the top ones ticked for the person to confirm.
+ * A job that was already taken on is never offered again; a different job at the same company is.
+ */
+export function shortlist(
+  jobs: FoundJob[],
+  alreadyPursued: string[] = [],
+  done: { url: string; title: string; company: string }[] = [],
+): FoundJob[] {
   const taken = new Set(alreadyPursued.map(normalizeCompany)),
     best = new Map<string, FoundJob>();
   for (const job of jobs) {
     const key = normalizeCompany(job.company);
-    if (!key || taken.has(key)) continue;
+    if (!key || taken.has(key) || done.some(d => sameJob(d, job))) continue;
     const held = best.get(key);
     if (!held || job.score > held.score) best.set(key, job);
   }
