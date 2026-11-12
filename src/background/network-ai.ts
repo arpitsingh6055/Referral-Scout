@@ -1,3 +1,4 @@
+import { read as readState, write as writeState } from '../storage/state';
 /** Durable ChatGPT tasks, executed through an ordinary visible ChatGPT tab. */
 import { z } from 'zod';
 import { all, put, remove } from '../storage/database';
@@ -120,7 +121,32 @@ async function dispatch(job: AiJob, signal: AbortSignal): Promise<void> {
 export async function aiJobId(prompt:string,kind:AiJob['kind'],owner:string,parentId=''):Promise<string>{
   return digest(`${kind}\n${owner}\n${parentId}\n${prompt}`);
 }
+/** Optional: the person's own OpenAI API key. With it, questions go straight to the API and no ChatGPT page is opened or read. */
+export interface ApiConfig { key: string; model: string }
+export const API_ORIGIN = 'https://api.openai.com';
+export async function apiConfig(): Promise<ApiConfig | null> {
+  const saved = await readState<ApiConfig | null>('llm-api');
+  return saved && saved.key && saved.model ? saved : null;
+}
+export async function saveApiConfig(config: ApiConfig | null): Promise<void> { await writeState('llm-api', config); }
+export async function askApi(prompt: string, signal: AbortSignal, api: ApiConfig): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_ORIGIN}/v1/chat/completions`, { method: 'POST', signal, headers: { 'content-type': 'application/json', authorization: `Bearer ${api.key}` },
+      body: JSON.stringify({ model: api.model, messages: [{ role: 'user', content: prompt }] }) });
+  } catch (error) { if (signal.aborted) throw error; throw new Error('The OpenAI API could not be reached. Check your connection, and that access to api.openai.com was allowed.'); }
+  if (!res.ok) {
+    let detail = ''; try { detail = String(((await res.json()) as { error?: { message?: string } }).error?.message ?? ''); } catch { /* no body */ }
+    const hint = res.status === 401 ? 'The API key was not accepted.' : res.status === 404 ? 'That model name was not found.' : res.status === 429 ? 'The API rate or spending limit was reached.' : `The OpenAI API answered with error ${res.status}.`;
+    throw new Error(`${hint} ${detail}`.trim().slice(0, 300));
+  }
+  const text = ((await res.json()) as { choices?: { message?: { content?: unknown } }[] }).choices?.[0]?.message?.content;
+  if (typeof text !== 'string' || !text.trim()) throw new Error('The OpenAI API returned no text.');
+  return text;
+}
 export async function askChatGpt(prompt: string, signal: AbortSignal, kind: AiJob['kind']='LEGACY', owner='', parentId='', limits?: { startMs: number; totalMs: number; onStage?: (stage: string) => void }): Promise<string> {
+  const api = await apiConfig();
+  if (api) return askApi(prompt, signal, api);
   const id = await aiJobId(prompt,kind,owner,parentId);
   let job = await load(id);
   if (job?.result) return job.result;

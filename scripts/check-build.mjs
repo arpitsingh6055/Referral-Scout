@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 const manifest = JSON.parse(await readFile("dist/manifest.json", "utf8"));
 assert.equal(manifest.manifest_version, 3);
 assert.deepEqual(manifest.host_permissions, ["https://www.linkedin.com/*", "https://linkedin.com/*", "https://chatgpt.com/*"]);
-assert(!manifest.optional_host_permissions?.length, "The LinkedIn build must not request broad website access");
+// The only optional site is the OpenAI API, asked for when the person saves their own API key. Nothing broad, ever.
+assert.deepEqual(manifest.optional_host_permissions ?? [], ["https://api.openai.com/*"], "The build must not request broad website access");
 for (const file of [manifest.background.service_worker,
   manifest.side_panel.default_path, ...manifest.content_scripts.flatMap(s => s.js),
   ...Object.values(manifest.icons ?? {})]) {

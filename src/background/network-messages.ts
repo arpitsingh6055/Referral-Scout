@@ -7,7 +7,7 @@ import { getNetwork, updateNetwork, pauseNetwork, networkTick, queueBest } from 
 import { networkCommand, networkTab } from './network-browser';
 import { acquire, release, renew } from './lease';
 import { all, remove } from '../storage/database';
-import { prepareDossier, prepareInvitation, prepareIntroduction, clearAiJobs, recoverDossier } from './network-ai';
+import { prepareDossier, prepareInvitation, prepareIntroduction, clearAiJobs, recoverDossier, apiConfig, askApi, saveApiConfig } from './network-ai';
 import { validatedDossier } from '../shared/dossier';
 
 const authorization=z.object({kind:z.literal('network.authorize'),id:z.uuid(),claim:z.boolean()});
@@ -135,6 +135,7 @@ export function registerNetworkMessages():void{
       const signal=new AbortController().signal;
       // Only reading your own profile needs the LinkedIn tab to itself. Everything else (approving, editing, skipping,
       // saving, a ChatGPT rewrite in its own window) runs alongside whatever outreach is doing and never waits for it.
+      let accepted=false;
       const exclusive=req.action==='import';
       const owner=crypto.randomUUID();if(exclusive&&!await acquire(owner))throw new Error('Outreach is in the middle of a LinkedIn step. Your profile will be readable in a few seconds; try again.');
       const timer=setInterval(()=>{if(exclusive)void renew(owner);},20000);
@@ -286,10 +287,32 @@ export function registerNetworkMessages():void{
           return s;
         });
         if(req.action==='forget')await updateNetwork(s=>({...s,saved:(s.saved??[]).filter(x=>x.url!==req.url)}));
+        if(req.action==='outcome')await updateNetwork(s=>{
+          const p=s.contacts.find(p=>p.url===req.url);if(!p)throw new Error('That person is no longer on your list.');
+          if(req.outcome){p.outcome=req.outcome;p.outcomeAt=Date.now();}else{delete p.outcome;delete p.outcomeAt;}
+          s.status=req.outcome==='referred'?`${p.name} agreed to refer you. Apply through their referral, then mark the job as applied.`:req.outcome==='replied'?`Marked: ${p.name} replied.`:req.outcome==='declined'?`Marked: ${p.name} cannot help this time.`:`Cleared the mark on ${p.name}.`;return s;});
+        if(req.action==='jobApplied')await updateNetwork(s=>{
+          const j=(s.referralJobs??[]).find(j=>j.url===req.url);if(!j)throw new Error('That job is no longer on your list.');
+          if(req.applied)j.applied=Date.now();else delete j.applied;
+          s.status=req.applied?`Marked as applied: ${j.title} at ${j.company}.`:`${j.title} at ${j.company} is no longer marked as applied.`;return s;});
+        if(req.action==='saveApi'){
+          await saveApiConfig({key:req.key,model:req.model});
+          await updateNetwork(s=>({...s,api:{model:req.model,ending:req.key.slice(-4)},status:`API key saved. ChatGPT questions now go to the OpenAI API (${req.model}); no ChatGPT page is opened.`}));
+        }
+        if(req.action==='clearApi'){
+          await saveApiConfig(null);
+          await updateNetwork(s=>{delete s.api;s.status='API key removed from this device. The ChatGPT website is used again.';return s;});
+        }
+        if(req.action==='testApi'){
+          const api=await apiConfig();if(!api)throw new Error('Save an API key and a model name first.');
+          await askApi('Reply with the single word OK.',signal,api);
+          await updateNetwork(s=>({...s,status:`The API key works with ${api.model}.`}));
+        }
         if(req.action==='skip')await updateNetwork(s=>{const p=s.contacts.find(p=>p.url===req.url);if(p){p.state='skipped';p.reason='Skipped. No future action is scheduled.';}return s;});
-        if(req.action==='clear')await clearAllNetwork();
+        if(req.action==='clear'){await clearAllNetwork();await saveApiConfig(null);}
+        accepted=true;
         return statusView(await getNetwork());
-      }finally{clearInterval(timer);if(exclusive)await release(owner);if(['start','askReferral','findJobs','pickJobs','referralDecision','resume'].includes(req.action))void updateNetwork(s=>{delete s.paused;return s;}).then(()=>networkTick());}
+      }finally{clearInterval(timer);if(exclusive)await release(owner);if(accepted&&['start','askReferral','findJobs','pickJobs','referralDecision','resume'].includes(req.action))void updateNetwork(s=>{delete s.paused;return s;}).then(()=>networkTick());}
     })().then(data=>respond({ok:true,data})).catch((error:unknown)=>respond({ok:false,error:error instanceof Error?error.message:String(error)}));return true;
   });
 }

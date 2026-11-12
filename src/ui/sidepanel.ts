@@ -1,4 +1,5 @@
 import './network.css';
+import { board, outcomeLabels, outcomeRow, referralPeople, stageCounts, STAGES, type Kit } from './pipeline';
 import { appRoot, element, errorText } from './render';
 import { unfinished, DAY, defaultSettings, introduction, renderNote, withinActiveHours, type ContactState, type NetworkContact, type NetworkRequest, type NetworkState, type OutreachSettings, dueReminders, staleRequests, jobStatuses, type JobStatus, type SavedItem } from '../shared/network';
 import { completeCvText } from './cv-text';
@@ -87,6 +88,8 @@ function button(text: string, action: () => Promise<void>, className = 'btn', do
 async function act(data: NetworkRequest, done?: string): Promise<void> {
   const state = await request(data); render(state); notify('success', done ?? (state.status || 'Done.'));
 }
+
+const kit: Kit = { node, button, act };
 
 /* ---------- form building blocks ---------- */
 interface FieldOptions { label: string; value: string; help?: string; multiline?: boolean; rows?: number; type?: string; min?: string; max?: string }
@@ -288,6 +291,7 @@ function buildReferrals(s: NetworkState): HTMLElement {
   const panel = node('div'), jobs = s.referralJobs ?? [], search = s.jobSearch;
   if (search?.status === 'finding') panel.append(node('p', s.plan ? `Searching LinkedIn jobs: title ${Math.min(search.cursor + 1, s.plan.terms.length)} of ${s.plan.terms.length}. ${search.found.length} jobs read so far.` : 'Planning the search…', 'callout'));
   if (search && search.status !== 'finding' && search.found.length) panel.append(jobChooser(search));
+  const pipeline = board(s, kit); if (pipeline) panel.append(pipeline);
   if (s.plan) {
     const d = node('details', '', 'inline'); d.append(node('summary', `Search plan (${s.plan.source === 'chatgpt' ? 'from ChatGPT' : 'built-in'})`),
       node('p', `Job titles searched: ${s.plan.terms.join(', ')}`, 'field-help'),
@@ -333,6 +337,7 @@ function buildReferrals(s: NetworkState): HTMLElement {
     if (job.mode === 'referral' && !s.active && people.some(p => ['shortlisted', 'connected'].includes(p.state))) body.append(node('p', 'Outreach is paused, so nothing is being sent. Press “Resume sending” on Home to continue.', 'field-help'));
     if (!people.length) body.append(node('p', job.finishedAt ? (job.mode === 'connections' ? 'You have no 1st-degree connections at this company. On the job page, press “Ask for referrals” to find its recruiters, the team and people you share connections with.' : 'Nobody suitable was found at this company.') : 'Results appear here as each search finishes.', 'muted small'));
     for (const p of people) body.append(personCard(s, p));
+    body.append(button(job.applied ? 'Applied ✓ (undo)' : 'I applied', () => act({ kind: 'network', action: 'jobApplied', url: job.url, applied: !job.applied }), job.applied ? 'btn sm' : 'btn sm primary'));
     body.append(button('Remove this job', async () => { if (confirm(`Remove ${job.title} at ${job.company} from Referrals? People already contacted stay on the People list.`)) await act({ kind: 'network', action: 'removeReferralJob', url: job.url }, 'Job removed from Referrals.'); }, 'btn sm ghost danger'));
     panel.append(box);
   }
@@ -510,10 +515,11 @@ function render(s: NetworkState): void {
   todos.prepend(node('h3', needs ? `Needs you (${needs})` : 'Needs you', 'section-title'));
   if (!needs) todos.append(node('p', s.active ? 'Nothing right now. You can close this panel; work continues in the background.' : 'Nothing right now.', 'all-clear'));
 
-  const kpis = node('div', '', 'kpis');
-  for (const [label, value, go] of [['Companies', jobs.length, () => setTab('referrals', true)], ['Invited', count('pending'), () => openPeople('pending')],
-    ['Accepted', s.contacts.filter(p => p.acceptedAt).length, () => openPeople('connected')], ['Asked', count('messaged'), () => openPeople('messaged')]] as const) {
-    const k = node('button', '', 'kpi'); k.type = 'button'; k.append(node('b', String(value)), node('span', label)); k.addEventListener('click', go); kpis.append(k);
+  // The whole way to a referral in six numbers: each opens the list behind it.
+  const kpis = node('div', '', 'kpis'), counts = stageCounts(referralPeople(s), jobs);
+  const opens = [() => openPeople('all'), () => openPeople('connected'), () => openPeople('replied'), () => openPeople('referred'), () => setTab('referrals', true)];
+  for (const [label, value, go] of [['Companies', jobs.length, () => setTab('referrals', true)], ...STAGES.map((label, i) => [label, counts[i]!, opens[i]!] as const)] as const) {
+    const k = node('button', '', `kpi${value && (label === 'Referred' || label === 'Applied') ? ' win' : ''}`); k.type = 'button'; k.append(node('b', String(value)), node('span', label)); k.addEventListener('click', go); kpis.append(k);
   }
   home.append(hello, run);
   const tracker = live(s, stage); if (tracker) home.append(tracker);
@@ -575,7 +581,7 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
   const behaviour = node('div'); behaviour.append(outreachMode.wrap, followupMode.wrap, noteMode.wrap, hours.wrap);
   advanced.body.append(behaviour, grid, node('p', 'Empty means no limit. LinkedIn restricts accounts that send too many invitations, so keep these low.', 'field-help'), node('div', '', 'gap'), allow.wrap, exclude.wrap, aiMode.wrap);
 
-  const chatGpt = buildChatGpt(s);
+  const chatGpt = buildChatGpt(s), api = buildApi(s);
   async function save(): Promise<void> {
     const nextRoles = roles.input.value.split(/[\n;,]+/).map(x => x.trim()).filter(Boolean);
     if (!nextRoles.length) throw new Error('Enter at least one role you are looking for.');
@@ -593,11 +599,37 @@ function buildSetup(s: NetworkState, settings: OutreachSettings): { panel: HTMLE
       if (s.active && s.scope !== 'referrals') { await act({ kind: 'network', action: 'pause' }, 'General outreach stopped.'); return; }
       await save(); await act({ kind: 'network', action: 'start' }, 'General outreach started.');
     }, 'btn block'));
-  panel.append(who, wordsAcc.box, advanced.box, chatGpt, general.box);
+  panel.append(who, wordsAcc.box, advanced.box, chatGpt, api, general.box);
   if (!s.active) panel.append(button('Save changes', async () => { await save(); await act({ kind: 'network', action: 'status' }, 'Changes saved.'); }, 'btn primary block savebar'));
   else panel.append(node('p', 'Pause outreach to change settings.', 'fine'));
   for (const f of [roles, location, noteTemplate, template, outreachMode, followupMode, noteMode, hours, pace, invites, weekly, messages, pendingCap, allow, exclude, aiMode]) f.input.disabled = s.active;
   return { panel, save, aiMode: aiMode.input };
+}
+
+/* Optional: an OpenAI API key instead of the ChatGPT website. The key itself is never sent back to this panel. */
+function buildApi(s: NetworkState): HTMLElement {
+  const { box, body } = accordion('api', 'ChatGPT connection', s.api ? 'API key' : 'website (default)');
+  body.append(node('p', 'By default the ChatGPT website is used in a background tab and there is nothing to set up. If you have an OpenAI API key, answers come straight from the API instead: faster, and no ChatGPT tab is opened. OpenAI bills API use to your account. The key stays on this device and is left out of exports.', 'card-sub'));
+  if (s.api) {
+    body.append(node('p', `Using the API: model ${s.api.model}, key ending in ${s.api.ending}.`, 'field-label'),
+      button('Test the key', () => withProgress('Asking the OpenAI API for a one-word answer', () => act({ kind: 'network', action: 'testApi' })), 'btn sm primary'),
+      button('Remove the key', async () => { if (confirm('Remove the API key from this device and go back to the ChatGPT website?')) await act({ kind: 'network', action: 'clearApi' }); }, 'btn sm ghost danger'));
+    return box;
+  }
+  const key = field({ label: 'OpenAI API key', value: '', type: 'password', help: 'Created in your OpenAI account under API keys.' });
+  const model = field({ label: 'Model', value: '', help: 'The model name exactly as OpenAI lists it for your account. Model names change, so none is filled in for you.' });
+  for (const f of [key, model]) f.input.addEventListener('input', () => { dirty = true; });
+  (key.input as HTMLInputElement).autocomplete = 'off';
+  body.append(key.wrap, model.wrap, button('Save the key', async () => {
+    if (key.input.value.trim().length < 20) throw new Error('Paste the whole API key.');
+    if (model.input.value.trim().length < 2) throw new Error('Type the model name.');
+    // Access to api.openai.com is asked for only now, when a key is actually saved.
+    const permissions = (globalThis as { chrome?: typeof chrome }).chrome?.permissions;
+    if (permissions?.request && !(await permissions.request({ origins: ['https://api.openai.com/*'] }))) throw new Error('Access to api.openai.com was not allowed, so the key was not saved.');
+    dirty = false;
+    await act({ kind: 'network', action: 'saveApi', key: key.input.value.trim(), model: model.input.value.trim() });
+  }, 'btn sm primary'));
+  return box;
 }
 
 /* optional ChatGPT personalisation: CV, dossier and recovery */
@@ -631,7 +663,7 @@ function buildPeople(s: NetworkState, list: HTMLElement, redraw: () => void): vo
   list.replaceChildren();
   const filters: [string, string, (p: NetworkContact) => boolean][] = [
     ['all', 'All', p => p.state !== 'skipped' && p.state !== 'found'], ['review', 'To approve', p => p.state === 'review'], ['shortlisted', 'Queued', p => p.state === 'shortlisted'],
-    ['pending', 'Invited', p => p.state === 'pending'], ['connected', 'Accepted', p => p.state === 'connected'], ['messaged', 'Introduced', p => p.state === 'messaged'],
+    ['pending', 'Invited', p => p.state === 'pending'], ['connected', 'Accepted', p => p.state === 'connected'], ['messaged', 'Introduced', p => p.state === 'messaged'], ['replied', 'Replied', p => !!p.outcome], ['referred', 'Will refer', p => p.outcome === 'referred'],
     ['attention', 'Needs you', p => p.state === 'attention'], ['skipped', 'Skipped', p => p.state === 'skipped']];
   const bar = node('div', '', 'filters');
   for (const [key, label, test] of filters) {
@@ -656,7 +688,9 @@ function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
   const badges = node('div', '', 'badges');
   if (p.degree) badges.append(node('span', p.degree === 1 ? '1st · message' : p.degree === 2 ? '2nd · invite' : '3rd · invite', 'chip'));
   if (p.category && categoryLabels[p.category]) badges.append(node('span', categoryLabels[p.category]!, `type ${p.category}`));
-  badges.append(node('span', p.state === 'review' && p.approved ? 'Sending soon' : stateLabels[p.state], `badge ${p.state === 'review' && p.approved ? 'connected' : p.state}`)); card.append(badges);
+  badges.append(node('span', p.state === 'review' && p.approved ? 'Sending soon' : stateLabels[p.state], `badge ${p.state === 'review' && p.approved ? 'connected' : p.state}`));
+  if (p.outcome) badges.append(node('span', outcomeLabels[p.outcome], `badge ${p.outcome === 'declined' ? '' : 'connected'}`));
+  card.append(badges);
   const line = p.state === 'pending' ? `Invited ${when(p.requestedAt)} · acceptance is checked every 2 hours`
     : p.acceptedAt ? `Accepted ${when(p.acceptedAt)}${p.messagedAt ? ` · introduced ${when(p.messagedAt)}` : ''}` : p.reason;
   card.append(node('p', line, 'reason'));
@@ -693,6 +727,7 @@ function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
   if (!['messaged', 'skipped', 'requesting', 'messaging'].includes(p.state)) actions.append(button('Skip', () => act({ kind: 'network', action: 'skip', url: p.url }, `${p.name} skipped. Nothing more will be sent.`), 'btn sm ghost'));
   actions.append(button('Delete', async () => { if (confirm(`Delete the saved record for ${p.name}? This does not undo anything on LinkedIn.`)) await act({ kind: 'network', action: 'removeContact', url: p.url }, `Record for ${p.name} deleted.`); }, 'btn sm ghost danger'));
   card.append(actions);
+  const outcome = outcomeRow(p, kit); if (outcome) card.append(outcome);
   return card;
 }
 

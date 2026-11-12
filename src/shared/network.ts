@@ -47,6 +47,8 @@ export interface NetworkContact extends NetworkProfile {
   companyName?:string;companyUrl?:string;approvalKind?:'connect'|'message';approved?:boolean;attemptedAt?:number;
   /** Already a 1st-degree connection when found: no invitation is needed, only a message. */
   direct?:boolean;
+  /** What came of it, marked by the person: they wrote back, agreed to refer, or said no. */
+  outcome?:'replied'|'referred'|'declined';outcomeAt?:number;
   /** The job (its LinkedIn address) this person was found for, when the aim is a referral. */
   referralJob?:string;
   /** Queued by the person's own "Ask for referrals" click: that click is the approval, so no second one is asked for. */
@@ -90,7 +92,7 @@ export interface NetworkState {
   dossier?:string;dossierSavedAt?:number;profileCapturedAt?:number;
   active:boolean;/** Everything is stopped (by the person or by an account-level problem) until something is started or resumed. */paused?:boolean;/** What was running when everything was paused, so Resume restores exactly that. */resumeTo?:{active:boolean;scope?:'all'|'referrals'};revision:number;status:string;contacts:NetworkContact[];ownerVerifiedAt?:number;nextSweepAt?:number;jobSearch?:JobSearch;plan?:SearchPlan;
   /** 'referrals' = only people from Referrals jobs are contacted; general searching and outreach stay off. */
-  scope?:'all'|'referrals';referralJobs?:ReferralJob[];saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;hoursV2?:boolean;/** The person has said what they are looking for; until then setup asks instead of assuming. */targetSet?:boolean;
+  scope?:'all'|'referrals';referralJobs?:ReferralJob[];saved?:SavedItem[];aiDefaultV3?:boolean;noteV2?:boolean;paceV2?:boolean;hoursV2?:boolean;/** The person has said what they are looking for; until then setup asks instead of assuming. */targetSet?:boolean;/** Shown to the side panel only: whether an API key is saved, its model and its last four characters. Never the key. */api?:{model:string;ending:string};
   settings?:OutreachSettings;log?:{at:number;text:string;kind:'ok'|'info'|'warn'}[];searchCursor:number;failureStreak?:number;nextDiscoveryAt:number;nextActionAt:number;
   actions:{at:number;kind:'connect'|'message'|'check';url:string;confirmed?:boolean;idempotencyKey?:string}[];
   intent:{id:string;tabId:number;url:string;kind:'connect'|'message';at:number;body:string;revision:number;claimed:boolean}|null;
@@ -187,6 +189,11 @@ export const networkRequest=z.discriminatedUnion('action',[
   z.object({kind:z.literal('network'),action:z.literal('saveCv'),name:z.string().trim().min(1).max(200),type:z.string().max(120),text:z.string().min(1),pages:z.number().int().optional()}),
   z.object({kind:z.literal('network'),action:z.literal('prepare'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('skip'),url:z.string()}),
+  z.object({kind:z.literal('network'),action:z.literal('outcome'),url:z.string(),outcome:z.enum(['replied','referred','declined']).nullable()}),
+  z.object({kind:z.literal('network'),action:z.literal('jobApplied'),url:z.string(),applied:z.boolean()}),
+  z.object({kind:z.literal('network'),action:z.literal('saveApi'),key:z.string().trim().min(20).max(400),model:z.string().trim().min(2).max(80)}),
+  z.object({kind:z.literal('network'),action:z.literal('clearApi')}),
+  z.object({kind:z.literal('network'),action:z.literal('testApi')}),
   z.object({kind:z.literal('network'),action:z.literal('forget'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('askReferral'),url:z.string()}),
   z.object({kind:z.literal('network'),action:z.literal('findJobs')}),

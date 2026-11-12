@@ -7,7 +7,7 @@ import { prepareInvitation } from '../src/background/network-ai';
 import { clearDatabase, closeDatabase } from '../src/storage/database';
 
 vi.mock('../src/background/network-ai', () => ({ askChatGpt: vi.fn().mockRejectedValue(new Error('not available')), clearAiJobs: vi.fn(), prepareInvitation: vi.fn().mockResolvedValue('AI note'), prepareIntroduction: vi.fn().mockResolvedValue('AI intro'), prepareDossier: vi.fn().mockResolvedValue('dossier') }));
-vi.mock('../src/background/network-browser', () => ({ networkCommand: vi.fn(), networkTab: vi.fn().mockResolvedValue(9), readyNetworkTab: vi.fn(), showWorkTab: vi.fn(), openWorkTab: vi.fn().mockResolvedValue(9) }));
+vi.mock('../src/background/network-browser', () => ({ closeWorkWindow: vi.fn().mockResolvedValue(undefined), networkCommand: vi.fn(), networkTab: vi.fn().mockResolvedValue(9), readyNetworkTab: vi.fn(), showWorkTab: vi.fn(), openWorkTab: vi.fn().mockResolvedValue(9) }));
 
 const me = { name: 'Arpit Singh', url: 'https://www.linkedin.com/in/arpit45/', headline: 'PGDM', location: 'India', about: '' };
 const card = (slug: string, headline: string, degree = 2) => ({ name: slug.replace(/-/g, ' '), url: `https://www.linkedin.com/in/${slug}/`, headline, location: 'Pune, Maharashtra, India', about: '', degree });

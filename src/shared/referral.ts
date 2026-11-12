@@ -44,6 +44,8 @@ export interface ReferralJob extends z.infer<typeof referralJobInput> {
   failures?: number; error?: string;
   /** The company page was looked up through LinkedIn's company search, because the job itself did not give it. */
   lookupTried?: boolean;
+  /** When the person marked this job as applied for. */
+  applied?: number;
 }
 /** How many people one "Ask for referrals" click contacts by itself: the strongest few. A whole recruiting team is not messaged at once. */
 export const REFERRAL_AUTO = 8;

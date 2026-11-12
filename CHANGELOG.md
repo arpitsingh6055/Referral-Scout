@@ -15,6 +15,13 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.30.0: outcome tracking, optional API key, one work window
+- **Pipeline.** Home shows the whole way to a referral in six numbers: Companies, Asked, Accepted, Replied, Referred, Applied. Jobs shows the same per company as a board. On anyone you have asked, one press marks "They replied", "Will refer me" or "Can't help"; on a job, "I applied". People has Replied and Will refer filters. Replies are marked by you: the extension does not read your LinkedIn inbox.
+- **Optional OpenAI API key** (Settings, ChatGPT connection). With a key and a model name, questions go straight to the API: no ChatGPT tab, no page reading. The default is still the ChatGPT website with nothing to set up. Access to api.openai.com is requested only when you save a key. The key is stored on this device only, is never sent back to the side panel, and is left out of exports. No model name is pre-filled because they change. Not yet tried with a real key.
+- **One work window.** LinkedIn and ChatGPT now share a single background window; ChatGPT opens as a tab in it and is closed when its answer is read. The window closes by itself when you pause or when nothing is left to do, and a ChatGPT window left by an older version is closed.
+- A request that is refused (for example a job search before a profile is read) no longer lifts a pause.
+- Ten new tests cover the handlers behind the buttons: pause, resume, job search, the per-company question, outcomes, the API key, validation errors, skip and approve all.
+
 ## 0.29.0: ChatGPT's answer is now read back
 - **Fixed: ChatGPT answered but the extension never picked the answer up** ("ChatGPT took too long to answer" while the reply was on screen). The reader depended on ChatGPT's markup: it gave up when turns were nested more than eight levels deep, and read only the first content block of a reply, which is empty when a "thinking" block comes first.
 - The reply is now also read **by position**: everything between the end of our own prompt and the message box, whatever the markup looks like. All content blocks of a reply are read, not the first.

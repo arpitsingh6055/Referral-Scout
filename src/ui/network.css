@@ -248,3 +248,14 @@ textarea.draft:focus{outline:2px solid var(--primary);outline-offset:1px}
 .target .btn{flex:none;color:var(--primary);border-color:var(--primary)}
 
 .hero.ask{padding-top:28px}.hero.ask .card{text-align:left;margin-bottom:16px}.hero.ask h1{font-size:26px}
+
+/* outcomes and the pipeline board */
+.kpis{grid-template-columns:repeat(3,1fr)}.kpi.win{border-color:var(--ok)}.kpi.win b{color:var(--ok)}
+.outcome{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.outcome .field-help{margin-right:4px}
+.btn.choice{font-weight:600;color:var(--muted)}.btn.choice.on{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)}
+.board-grid{display:grid;grid-template-columns:minmax(0,1fr) repeat(5,auto);gap:8px 10px;align-items:center}
+.board-head{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);text-align:center}.board-head:first-child{text-align:left}
+.board-company{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.board-cell{min-width:30px;height:26px;border-radius:8px;display:grid;place-items:center;font-weight:700;font-variant-numeric:tabular-nums;color:var(--faint);background:var(--surface-2)}
+.board-cell.on{color:var(--primary);background:var(--primary-soft)}.board-cell.win{color:var(--ok);background:var(--ok-soft)}

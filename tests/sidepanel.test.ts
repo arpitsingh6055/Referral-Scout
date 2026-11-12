@@ -121,3 +121,26 @@ it('asks what the person is looking for during setup instead of assuming a role,
   byText('button', 'Continue')!.click();
   await vi.waitFor(() => expect(sent.find(r => r.action === 'save')).toMatchObject({ target: 'Operations intern', location: 'Bengaluru', settings: { roles: ['Operations intern'] } }));
 });
+
+it('tracks outcomes: a pipeline row per company, one-press marks on a person, and "I applied" on the job', async () => {
+  const jobUrl = 'https://www.linkedin.com/jobs/view/1/';
+  await open({ referralJobs: [{ url: jobUrl, title: 'Ops Intern', company: 'Stripe', location: '', mode: 'referral', addedAt: 1, cursor: 4, found: 2, finishedAt: 1 }],
+    contacts: [person('a', 'messaged', { referralJob: jobUrl, messagedAt: 5, acceptedAt: 4, outcome: 'referred' }), person('b', 'pending', { referralJob: jobUrl, requestedAt: 3 })] });
+  expect([...document.querySelectorAll('.kpi')].map(k => k.textContent)).toEqual(['1Companies', '2Asked', '1Accepted', '1Replied', '1Referred', '0Applied']);
+  byText('.tab', 'Jobs')!.click();
+  expect([...document.querySelectorAll('.board-cell')].map(c => c.textContent)).toEqual(['2', '1', '1', '1', '·']);
+  byText('button', 'I applied')!.click();
+  await vi.waitFor(() => expect(sent.find(r => r.action === 'jobApplied')).toMatchObject({ url: jobUrl, applied: true }));
+  await new Promise(r => setTimeout(r, 30)); // the first press finishes before the next
+  byText('.outcome button', 'They replied')!.click();
+  await vi.waitFor(() => expect(sent.find(r => r.action === 'outcome')).toMatchObject({ outcome: 'replied' }));
+});
+
+it('offers an API key as an option in Settings, shows only its last characters once saved, and never the key', async () => {
+  await open();
+  expect(byText('details.acc summary', 'ChatGPT connection')!.textContent).toContain('website (default)');
+  await open({ api: { model: 'some-model', ending: 'WXYZ' } });
+  expect(byText('details.acc', 'ChatGPT connection')!.textContent).toContain('model some-model, key ending in WXYZ');
+  expect(document.querySelector('input[type=password]')).toBeNull();
+  expect(byText('button', 'Remove the key')).toBeTruthy();
+});

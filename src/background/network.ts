@@ -7,7 +7,7 @@ import { acquire, release, renew } from './lease';
 import { referralAsk, referralNote, referralPlan, referralSearchUrl, rankReferral, type ReferralJob, pickCompany } from '../shared/referral';
 import { reviewFromReply, reviewPrompt, companyPlanPrompt, fallbackTitles, fill, jobsSearchUrl, planFromReply, planPrompt, rulesPlan, scoreJob, shortlist, sizeForType, sizeOf, strategiesFromReply, withRecruiters, type CompanyStrategy } from '../shared/jobsearch';
 import { extractJson } from '../parsers/json';
-import { networkCommand, networkTab, showWorkTab } from './network-browser';
+import { networkCommand, networkTab, showWorkTab, closeWorkWindow } from './network-browser';
 import { prepareIntroduction, prepareInvitation, askChatGpt } from './network-ai';
 
 /** Saved settings with defaults filled in. Templates are the default for the first note; v0.10.0 briefly defaulted to ChatGPT, so existing installs are moved back once. A later choice is kept. */
@@ -46,6 +46,7 @@ export async function pauseNetwork(reason='Paused. Your saved people and progres
   controller?.abort();
   const tab=await read<number>('network-tab');
   if(tab!==undefined)await chrome.tabs.sendMessage(tab,{kind:'network.cancel'}).catch(()=>undefined);
+  await closeWorkWindow().catch(()=>undefined); // nothing runs while paused, so the background window goes away too
 }
 export async function currentRun(revision:number,signal:AbortSignal):Promise<NetworkState>{
   signal.throwIfAborted();const s=await getNetwork();
@@ -499,7 +500,7 @@ async function run():Promise<void>{
       }
       return;
     }
-    if(!s.active)return;
+    if(!s.active){await closeWorkWindow().catch(()=>undefined);return;} // all searches done and sending is off: tidy up
     // A send that was cut off (browser closed, tab crashed) is sorted out by itself and outreach carries on.
     if(s.intent||s.contacts.some(p=>['requesting','messaging'].includes(p.state))){await recoverNetwork();worked=true;return;}
     const settings=s.settings??defaultSettings;

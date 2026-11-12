@@ -32,21 +32,33 @@ export async function readyNetworkTab(tabId: number, signal: AbortSignal): Promi
  * person can keep using their own window and tabs while outreach runs.
  */
 export async function openWorkTab(url: string, kind: "linkedin" | "chatgpt" = "linkedin"): Promise<number> {
-  // LinkedIn and ChatGPT each get their own window: a tab hidden behind another one is slowed down by the browser,
-  // and two windows let a ChatGPT rewrite run while outreach carries on.
-  const key = kind === "chatgpt" ? "chatgpt-window" : "work-window";
-  let windowId = await read<number>(key);
-  if (windowId !== undefined) { try { await chrome.windows.get(windowId); } catch { windowId = undefined; } }
+  void kind;
+  // One window for everything done in the background, LinkedIn and ChatGPT alike. Steps run one at a time, each tab is
+  // brought to the front of that window while it is used, and ChatGPT tabs are closed as soon as their answer is read.
+  const stale = await read<number>("chatgpt-window"); // the separate ChatGPT window of earlier versions
+  if (stale !== undefined && stale >= 0) { await chrome.windows.remove(stale).catch(() => undefined); await write("chatgpt-window", -1); }
+  let windowId = await read<number>("work-window");
+  if (windowId !== undefined) { try { if (windowId < 0) throw new Error("closed"); await chrome.windows.get(windowId); } catch { windowId = undefined; } }
   if (windowId === undefined) {
-    const created = await chrome.windows.create({ url, focused: false, type: "normal", width: kind === "chatgpt" ? 900 : 1180, height: kind === "chatgpt" ? 760 : 860 });
+    const created = await chrome.windows.create({ url, focused: false, type: "normal", width: 1180, height: 860 });
     const tabId = created?.tabs?.[0]?.id;
     if (created?.id === undefined || tabId === undefined) throw new Error("Could not open the Referral Scout work window.");
-    await write(key, created.id);
+    await write("work-window", created.id);
     return tabId;
   }
   const tab = await chrome.tabs.create({ windowId, url, active: true });
   if (tab.id === undefined) throw new Error("Could not open a tab in the work window.");
   return tab.id;
+}
+/** Closes the work window once nothing is using it. A ChatGPT task still open in it keeps it alive. */
+export async function closeWorkWindow(): Promise<void> {
+  const windowId = await read<number>("work-window"); if (windowId === undefined || windowId < 0) return;
+  try {
+    const tabs = await chrome.tabs.query({ windowId });
+    if (tabs.some(t => /^https:\/\/chatgpt\.com\//.test(t.url ?? ""))) return;
+    await chrome.windows.remove(windowId);
+  } catch { /* already closed by the person */ }
+  await write("work-window", -1);
 }
 /** Shows a tab inside the work window without focusing that window. */
 export async function showWorkTab(tabId: number): Promise<void> { await chrome.tabs.update(tabId, { active: true }).catch(() => undefined); }
