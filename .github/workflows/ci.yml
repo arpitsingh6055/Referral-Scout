@@ -34,7 +34,7 @@ jobs:
       - name: Package extension
         run: pnpm package
       - name: Upload extension package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: referral-scout-extension
           path: referral-scout.zip
