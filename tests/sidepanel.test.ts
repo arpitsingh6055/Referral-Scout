@@ -415,3 +415,26 @@ it('gives reaching out its own switch on Home and always offers the LinkedIn che
   byText('button', 'Check LinkedIn now')!.click();
   await vi.waitFor(() => expect(sent.map(r => r.action)).toContain('checkNow'));
 });
+
+it('keeps "Needs you" current: an answered or closed company drops off, and attention can be cleared in one press', async () => {
+  const job = (n: number, patch = {}) => ({
+    url: `https://www.linkedin.com/jobs/view/${n}/`,
+    title: 'Ops Intern',
+    company: `Co ${n}`,
+    location: '',
+    mode: 'referral' as const,
+    addedAt: n,
+    cursor: 1,
+    found: 0,
+    ...patch,
+  });
+  await open({
+    referralJobs: [job(1, { waiting: true, known: 1 }), job(2, { waiting: true, known: 2, finishedAt: 5 })],
+    contacts: [person('x', 'attention')],
+  });
+  const rows = [...document.querySelectorAll('.todo')].map(e => e.textContent);
+  expect(rows.filter(t => t!.includes('You already know'))).toHaveLength(1); // the closed company no longer asks
+  expect($('.todos .section-title')!.textContent).toBe('Needs you (2)');
+  byText('.todo button', 'Skip them')!.click();
+  await vi.waitFor(() => expect(sent.map(r => r.action)).toContain('skipAttention'));
+});

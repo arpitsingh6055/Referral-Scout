@@ -358,3 +358,12 @@ it('"Stop reaching out" turns sending off without pausing searches or emptying t
   expect(after.paused).toBeFalsy();
   expect(after.contacts[0]!.state).toBe('shortlisted');
 });
+
+it('"Skip all" clears everyone who needed attention in one press', async () => {
+  await seed({
+    contacts: [person('a', { state: 'attention', reason: 'No Connect button.' }), person('b', { state: 'attention' }), person('c')],
+  });
+  const after = await ok({ action: 'skipAttention' });
+  expect(after.contacts.map(p => p.state)).toEqual(['skipped', 'skipped', 'shortlisted']);
+  expect(after.status).toBe('2 people skipped. Nothing more is sent to them.');
+});

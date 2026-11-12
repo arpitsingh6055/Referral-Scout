@@ -393,6 +393,27 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
     ).catch(() => null);
     return { companyUrl: item?.companyUrl ?? null, location: item?.location ?? '', suggested: item?.suggested ?? [] };
   }
+  if (cmd.action === 'sentInvitations') {
+    // Invitations still waiting (checked live, 12 November 2026): ten people at a time, each with their profile
+    // address, and a "Load more" button while there are more. The list counts as complete once that button is gone.
+    if (!location.pathname.startsWith('/mynetwork/invitation-manager/sent'))
+      throw new Error('LinkedIn did not open your sent invitations.');
+    const main = (): ParentNode => document.querySelector('main') ?? document;
+    const more = (): HTMLElement | undefined =>
+      [...main().querySelectorAll<HTMLElement>('button')].find(b => visible(b) && /^(load|show) more/i.test(textOf(b)));
+    await wait(
+      () =>
+        recentConnections(document).length ||
+        /no sent invitations|sent \d|sent today|sent yesterday/i.test(textOf(document.querySelector('main'))),
+      signal,
+      12000,
+    ).catch(() => undefined);
+    for (let i = 0; i < 12 && more(); i++) {
+      more()!.click();
+      await sleep(1200 + Math.floor(Math.random() * 600), signal);
+    }
+    return { urls: recentConnections(document), complete: !more() };
+  }
   if (cmd.action === 'inbox') {
     if (!location.pathname.startsWith('/messaging')) throw new Error('LinkedIn did not open messaging.');
     const read = (): InboxRow[] | null => {

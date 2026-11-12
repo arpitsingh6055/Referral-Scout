@@ -84,7 +84,7 @@ function render(s: NetworkState): void {
   };
   const toApprove = s.contacts.filter(p => p.state === 'review' && !p.approved).length,
     attention = count('attention');
-  const waiting = jobs.filter(j => j.waiting),
+  const waiting = jobs.filter(j => j.waiting && j.finishedAt === undefined),
     choosing = search?.status === 'choosing' && search.found.length > 0;
   // A badge means "something here needs you", never a plain total.
   for (const [tab, label, glyph, n] of [
@@ -297,6 +297,11 @@ function render(s: NetworkState): void {
       'bad',
       `${attention} ${attention === 1 ? 'person needs' : 'people need'} your attention.`,
       button('Show', async () => openPeople('attention'), 'btn sm'),
+      button(
+        attention === 1 ? 'Skip them' : `Skip all ${attention}`,
+        () => act({ kind: 'network', action: 'skipAttention' }),
+        'btn sm ghost',
+      ),
     );
   const dueCount = dueReminders(s).length,
     staleCount = staleRequests(s).length;
@@ -315,7 +320,7 @@ function render(s: NetworkState): void {
   if (staleCount)
     todo(
       'info',
-      `${staleCount} connection ${staleCount === 1 ? 'request has' : 'requests have'} been unanswered for over 3 weeks.`,
+      `${staleCount} connection ${staleCount === 1 ? 'request has' : 'requests have'} been unanswered for over 3 weeks. Withdraw them on LinkedIn; they drop off here at the next check.`,
       button(
         'Show',
         async () => {

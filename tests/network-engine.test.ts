@@ -381,7 +381,8 @@ it('every 2 hours reads the connections list once and marks everyone who accepte
   ]);
   await networkTick();
   expect(String(vi.mocked(networkTab).mock.calls[0]![0])).toBe('https://www.linkedin.com/mynetwork/invite-connect/connections/');
-  expect(vi.mocked(networkCommand)).toHaveBeenCalledTimes(1);
+  // One more page while someone is still waiting: the sent invitations, to close any that were withdrawn or declined.
+  expect(vi.mocked(networkCommand).mock.calls.map(c => (c[1] as { action: string }).action)).toEqual(['connections', 'sentInvitations']);
   const saved = await getNetwork();
   expect(saved.contacts.map(c => [c.name, c.state])).toEqual([
     ['alex', 'connected'],
@@ -1049,4 +1050,26 @@ it('"Check now" does both in one go: marks an accepted invitation from the conne
   expect(saved.contacts.find(p => p.name === 'ananya rao')).toMatchObject({ outcome: 'replied' });
   expect(saved.contacts.find(p => p.name === 'new friend')!.outcome).toBeUndefined(); // the latest message there is your own
   expect(saved.status).toBe('Checked just now: 1 new acceptance, 1 new reply.');
+});
+
+it('closes invitations that are no longer waiting on LinkedIn, but only when the whole sent list was read', async () => {
+  const old = Date.now() - 2 * 3600_000;
+  const people = () => [
+    person('still-waiting', { state: 'pending', requestedAt: old }),
+    person('withdrawn', { state: 'pending', requestedAt: old }),
+    person('just-sent', { state: 'pending', requestedAt: Date.now() - 60_000 }),
+  ];
+  const sweep = async (complete: boolean) => {
+    await seed({ active: false, checkRequested: true, contacts: people() });
+    vi.mocked(networkCommand).mockReset();
+    vi.mocked(networkCommand)
+      .mockResolvedValueOnce({ urls: [], ids: {} })
+      .mockResolvedValueOnce({ urls: ['https://www.linkedin.com/in/still-waiting/'], complete })
+      .mockResolvedValueOnce([]);
+    await networkTick();
+    return (await getNetwork()).contacts.map(p => p.state);
+  };
+  expect(await sweep(false)).toEqual(['pending', 'pending', 'pending']); // a partly read list proves nothing
+  expect(await sweep(true)).toEqual(['pending', 'skipped', 'pending']); // gone from LinkedIn; the one sent a minute ago is left alone
+  expect((await getNetwork()).contacts[1]!.reason).toMatch(/withdrawn or declined/);
 });

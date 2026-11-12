@@ -764,6 +764,38 @@ async function checkReplies(signal: AbortSignal): Promise<number> {
   return found;
 }
 /** `onRequest`: asked for with "Check now", so it runs even while sending is off. It only reads. */
+/**
+ * Reads the invitations still waiting on LinkedIn. Someone marked "invited" here who is neither a connection nor on
+ * that list any more was withdrawn or declined: they are closed, so they stop showing as waiting or as stale.
+ * Nothing is concluded unless the whole list was read.
+ */
+async function closeGoneInvitations(connected: Set<string>, signal: AbortSignal): Promise<number> {
+  let sent: { urls: string[]; complete: boolean };
+  try {
+    const tab = await networkTab('https://www.linkedin.com/mynetwork/invitation-manager/sent/', signal);
+    sent = z
+      .object({ urls: z.array(z.string()), complete: z.boolean() })
+      .parse(await networkCommand(tab, { action: 'sentInvitations' }, signal));
+  } catch (error) {
+    const m = error instanceof Error ? error.message : String(error);
+    if (signal.aborted || ACCOUNT_LEVEL.test(m)) throw error;
+    return 0;
+  }
+  if (!sent.complete) return 0;
+  const waiting = new Set(sent.urls);
+  let closed = 0;
+  await updateNetwork(c => {
+    const now = Date.now();
+    for (const p of c.contacts)
+      if (p.state === 'pending' && p.requestedAt > 0 && now - p.requestedAt > 15 * 60000 && !connected.has(p.url) && !waiting.has(p.url)) {
+        p.state = 'skipped';
+        p.reason = 'The invitation is no longer waiting on LinkedIn: it was withdrawn or declined.';
+        closed++;
+      }
+    return c;
+  });
+  return closed;
+}
 async function sweepAcceptances(s: NetworkState, signal: AbortSignal, onRequest = false): Promise<void> {
   await note(s, 'Checking your connections list for people who accepted…');
   const tab = await networkTab('https://www.linkedin.com/mynetwork/invite-connect/connections/', signal);
@@ -782,6 +814,14 @@ async function sweepAcceptances(s: NetworkState, signal: AbortSignal, onRequest 
       const known = ids[p.url];
       if (known) p.messagingId = known;
     }
+    // Someone who needed attention but is a connection now has accepted after all.
+    for (const p of current.contacts)
+      if (p.state === 'attention' && p.requestedAt > 0 && connected.has(p.url)) {
+        p.state = 'connected';
+        p.acceptedAt = now;
+        p.reason = 'Accepted your invitation. A follow-up message is next.';
+        names.push(p.name);
+      }
     for (const p of current.contacts)
       if (p.state === 'pending' && p.requestedAt > 0 && connected.has(p.url)) {
         p.state = 'connected';
@@ -802,6 +842,7 @@ async function sweepAcceptances(s: NetworkState, signal: AbortSignal, onRequest 
       : 'No new acceptances yet. Checking again in about 2 hours.';
     return current;
   });
+  if ((await getNetwork()).contacts.some(p => p.state === 'pending' && p.requestedAt > 0)) await closeGoneInvitations(connected, signal);
 }
 /** Checks are spaced out too, so a laptop waking up never fires a burst of page loads. */
 async function pace(minMs: number, maxMs: number): Promise<void> {

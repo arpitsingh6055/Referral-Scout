@@ -774,6 +774,18 @@ export function registerNetworkMessages(): void {
             s.status = `${j.company}: stopped. ${held} ${held === 1 ? 'person was' : 'people were'} taken out of the queue; anyone already asked is unchanged.`;
             return s;
           });
+        if (req.action === 'skipAttention')
+          await updateNetwork(s => {
+            let n = 0;
+            for (const p of s.contacts)
+              if (p.state === 'attention') {
+                p.state = 'skipped';
+                p.reason = `Skipped by you. Earlier: ${p.reason}`.slice(0, 300);
+                n++;
+              }
+            s.status = `${n} ${n === 1 ? 'person' : 'people'} skipped. Nothing more is sent to them.`;
+            return s;
+          });
         // Sending only: searches carry on and the queue is kept. "Pause everything" is the full stop.
         if (req.action === 'stopSending')
           await updateNetwork(s => {

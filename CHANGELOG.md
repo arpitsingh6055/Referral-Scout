@@ -15,6 +15,11 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.37.0: "Needs you" stays current
+- **Old invitations no longer sit there for ever.** The LinkedIn check now also reads your sent invitations. Anyone still marked "invited" who is neither a connection nor on that list any more (withdrawn or declined) is closed, so they stop counting as waiting or as "unanswered for over 3 weeks". Nothing is concluded unless the whole list was read, and invitations sent in the last 15 minutes are left alone. The sent-invitations page was checked live on 12 November 2026 (ten per page with a "Load more" button, profile addresses shown).
+- **People needing attention can be cleared in one press** ("Skip all N" next to "Show"). Someone who needed attention but has since accepted moves to Accepted at the next check.
+- A company you already answered, or one that was closed, no longer keeps asking "ask only them, or look wider?".
+
 ## 0.36.0: your people are recognised in LinkedIn messages; reaching out has its own switch
 - **A card in the conversation.** When you open a conversation with someone the extension invited or messaged, a card at the bottom left says "<Name> is on your Referral Scout list", which job you reached out about (with a link to it), and what has happened (invited, accepted, messaged, replied). It holds the **Draft a reply with ChatGPT** button and can be made small. Nobody else gets a card.
 - **Recognised exactly, not by name.** A profile address ends in a name that is unique to the person (`abhishek-purushottam-54128535a`); that address is already the key for every person in the extension. LinkedIn messaging does not show it: it shows its own encoded id. The extension now learns that id for each connection from the connections page (every row there has both), during the regular check and "Check LinkedIn now", so conversations are matched exactly. Until the first check a conversation is matched by name, only when one contacted person has that name.
