@@ -618,11 +618,12 @@ it('plans once, searches each planned title, then offers one job per company wit
   await networkTick(); // no terms left: build the shortlist
   saved = await getNetwork();
   expect(saved.jobSearch!.status).toBe('choosing');
+  // 'Senior Operations Manager' is full-time, so it is dropped from an internship search; the two interns remain.
   expect(saved.jobSearch!.found.map(j => [j.company, j.id, j.picked])).toEqual([
     ['Stripe', '11', true],
     ['Lane', '14', true],
-    ['Acme', '12', false],
   ]);
+  expect(saved.jobSearch!.dropped?.some(d => d.company === 'Acme' && /internship/i.test(d.why))).toBe(true);
   expect(vi.mocked(askChatGpt)).toHaveBeenCalledTimes(2);
 });
 

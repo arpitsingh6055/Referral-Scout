@@ -335,7 +335,8 @@ describe('employment type filtering', () => {
     expect(employmentMismatch('Product Management Intern', 'any')).toBeNull();
   });
   it('tells ChatGPT to remove full-time roles when the seeker wants an internship', () => {
-    const prompt = reviewPrompt([found('1', 'Product Manager', 'Acme')], ['Product Management internship'], 'India');
+    const job: FoundJob = { id: '1', url: 'https://www.linkedin.com/jobs/view/1/', title: 'Product Manager', company: 'Acme', location: 'India', insight: '', term: '', score: 1, picked: false };
+    const prompt = reviewPrompt([job], ['Product Management internship'], 'India');
     expect(prompt).toMatch(/wants an INTERNSHIP/);
     expect(prompt).toMatch(/employment type: internship/);
   });
