@@ -6,7 +6,7 @@
 import { read, write } from '../storage/state';
 
 // Set this to the deployed usage endpoint (see usage/README.md). Add its host to manifest host_permissions too.
-export const USAGE_ENDPOINT = '';
+export const USAGE_ENDPOINT = 'https://referral-scout.vercel.app/api/ping';
 
 const slugOf = (url: string): string => /\/in\/([^/?#]+)/.exec(url)?.[1] ?? '';
 
