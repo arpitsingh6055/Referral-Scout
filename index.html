@@ -26,7 +26,8 @@
       <p class="muted" id="updated"></p>
     </main>
     <script>
-      fetch('data.json?t=' + Date.now())
+      // Live from Atlas on each load, through the stats function on this same Vercel project.
+      fetch('/api/stats?t=' + Date.now())
         .then(r => r.json())
         .then(d => {
           const users = d.users || [];
@@ -39,7 +40,7 @@
                 `<tr><td><a href="https://www.linkedin.com/in/${encodeURIComponent(u.id)}/" target="_blank" rel="noopener">${u.id}</a></td><td>${u.at ? new Date(u.at).toISOString().slice(0, 10) : ''}</td></tr>`,
             )
             .join('');
-          document.getElementById('updated').textContent = d.updated ? 'Updated ' + new Date(d.updated).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '';
+          document.getElementById('updated').textContent = 'Live · loaded ' + new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
         })
         .catch(() => {
           document.getElementById('count').textContent = '0';

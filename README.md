@@ -1,78 +1,48 @@
-# Referral Scout — usage dashboard
+# Referral Scout — usage tracking
 
-Isolated branch: only the dashboard and its plumbing live here, nothing from the extension.
+One Vercel project does everything: it records each user and serves a live dashboard.
+Your MongoDB connection string lives only in a Vercel environment variable, never in
+this repo and never in the extension.
 
+- `api/ping.js`  — the extension POSTs `{ id: "<linkedin-handle>" }` here; one row per person.
+- `api/stats.js` — returns the live count + user list (read-only); the dashboard calls it.
+- `index.html`   — the dashboard; fetches `/api/stats` on load, always current.
+
+## Setup (about 10 minutes, no server to run)
+
+### 1. MongoDB Atlas
+1. In your cluster, create database `Referral_Scout`, collection `user_details`.
+2. Collection → Indexes → Create: field `handle`, and tick **Unique**. (Stops duplicates.)
+3. Network Access → Add IP → **Allow access from anywhere** (`0.0.0.0/0`). Vercel has no fixed IP.
+4. You already have the connection string in `atlas-credentials.env` (keep that file gitignored —
+   never commit it). It looks like `mongodb+srv://USER:PASSWORD@cluster.xxxx.mongodb.net/...`.
+
+### 2. Vercel
+1. Push this `usage-dashboard` branch to GitHub (see bottom).
+2. vercel.com → Add New → Project → import the `cold-contact-pro` repo.
+3. **Production Branch: `usage-dashboard`** (Settings → Git, if it didn't pick it up).
+4. Settings → Environment Variables → add `MONGODB_URI` = your full connection string. Save.
+5. Deploy. You get a URL like `https://referral-scout-usage.vercel.app`.
+   - Dashboard: open that URL.
+   - Write endpoint for the extension: that URL + `/api/ping`.
+
+### 3. Point the extension at it
+In the `job-search-pipeline` (main) branch, open `src/background/usage.ts` and set:
+
+```ts
+const USAGE_ENDPOINT = 'https://referral-scout-usage.vercel.app/api/ping';
 ```
-index.html            the page (shows the count + the list of handles)
-data.json             the data, rebuilt hourly from MongoDB Atlas
-build.mjs             reads Atlas -> writes data.json   (run by the Action)
-api/ping.js           the write endpoint (Vercel) that records a user in Atlas
-package.json          the mongodb driver, used by both of the above
-.github/workflows/usage.yml   the hourly Action (see the note in step 4)
+
+Then add that host to `manifest` host permissions and rebuild (`npm run build`).
+Until the endpoint is set it's a no-op, so nothing is recorded and nothing breaks.
+
+## How it stays private
+The extension only ever sends a LinkedIn handle to `/api/ping`. The database credential
+sits in Vercel's env var, which the public extension can't read. The dashboard reads
+through `/api/stats`, so the credential never leaves Vercel.
+
+## Push this branch
 ```
-
-## How it fits together
-
+git push --force origin usage-dashboard
 ```
-extension  --POST { id }-->  Vercel /api/ping  --insert-->  MongoDB Atlas
-                                                               |
-GitHub Action (hourly)  --read--------------------------------+
-        |
-        +--> rebuilds data.json --> publishes index.html to GitHub Pages
-```
-
-Why a Vercel function and not "extension straight to Mongo": MongoDB removed its Data API / HTTPS endpoints
-(end-of-life 30 Sep 2025), and a connection string must never ship inside a public extension (anyone could read or
-wipe the database). So one small server-side piece has to hold the credential. Vercel is the least-friction free host
-that runs the real Mongo driver.
-
----
-
-## Step 1 — MongoDB: collection + index (2 min)
-
-In Atlas, create database **Referral_Scout**, collection **user_details**.
-**Leave Time-Series OFF** (a plain collection). Then add a unique index so each person is stored once:
-
-- Collection -> Indexes -> Create Index: field `handle`, Options: `{ "unique": true }`.
-
-Also: **Network Access -> Add IP Address -> Allow access from anywhere (0.0.0.0/0)**. GitHub Action and Vercel
-runners have no fixed IPs; your username/password still gate access.
-
-## Step 2 — The write endpoint on Vercel (5 min)
-
-1. vercel.com -> sign in with GitHub -> **Add New -> Project** -> import `cold-contact-pro`.
-2. Set **Production Branch** to `usage-dashboard` (Project Settings -> Git), so Vercel deploys this branch.
-3. **Settings -> Environment Variables**: add `MONGODB_URI` = the value from your `atlas-credentials.env`.
-4. Deploy. Your endpoint is `https://<project>.vercel.app/api/ping`.
-   Open it in a browser — it should say the endpoint is running.
-
-## Step 3 — Point the extension at it (on the main branch, 2 min)
-
-1. `src/background/usage.ts`:
-   `export const USAGE_ENDPOINT = 'https://<project>.vercel.app/api/ping';`
-2. `manifest.json` -> add to `host_permissions`: `"https://<project>.vercel.app/*"`
-3. Rebuild (`corepack pnpm build`) and reload the extension.
-
-## Step 4 — The hourly dashboard (GitHub Actions + Pages, 3 min)
-
-1. Repo -> **Settings -> Secrets and variables -> Actions -> New repository secret**:
-   `MONGODB_URI` = the same connection string.
-2. Repo -> **Settings -> Pages -> Source: GitHub Actions**.
-3. **Copy `.github/workflows/usage.yml` onto the main branch.** Scheduled workflows only run from the default
-   branch, so the hourly trigger fires only when this file is on main. It checks out the usage-dashboard branch for
-   the build, so all the logic stays here.
-4. Actions tab -> **Usage dashboard (hourly)** -> **Run workflow** once to publish immediately. After that it runs
-   every hour. The dashboard is at `https://arpitsingh6055.github.io/cold-contact-pro/`.
-
-## Test
-
-In the extension, accept the consent screen and read your profile. `api/ping` writes your handle to Atlas; at the
-next hourly run (or a manual "Run workflow") the dashboard shows the count and your handle.
-
-Reset: delete the documents in user_details.
-
-## Simpler alternative (optional)
-
-Vercel alone can do everything: host index.html, run api/ping, and rebuild hourly with a Vercel Cron — no GitHub
-Pages or Action. Use that if you'd rather keep it on one platform. The GitHub-Actions route above is what you asked
-for.
+(Force because it's an isolated/orphan branch with its own history.)
