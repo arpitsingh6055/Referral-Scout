@@ -368,9 +368,11 @@ export type EmploymentIntent = 'internship' | 'full-time' | 'any';
 /** What employment type the seeker is after: the explicit setting wins; otherwise read it from the role text. */
 export function employmentIntent(employmentType: string | undefined, roles: string[]): EmploymentIntent {
   if (employmentType === 'internship' || employmentType === 'full-time') return employmentType;
-  const text = roles.join(' ').toLowerCase();
-  if (INTERN_TITLE.test(text)) return 'internship';
-  if (/\bfull[\s-]?time\b|\bpermanent\b|\bfte\b/.test(text)) return 'full-time';
+  // No explicit setting: read it from the roles. A role that names an internship means internships; a plain role name
+  // with no intern/trainee word means a regular full-time job, so internships are excluded. A mix of both keeps both.
+  const intern = roles.filter(r => INTERN_TITLE.test(r)).length;
+  if (intern === 0) return 'full-time';
+  if (intern === roles.length) return 'internship';
   return 'any';
 }
 /**

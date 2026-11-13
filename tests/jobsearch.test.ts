@@ -315,7 +315,7 @@ describe('employment type filtering', () => {
   it('reads the intent from the role text when there is no explicit setting', () => {
     expect(employmentIntent('any', ['Product Management internship'])).toBe('internship');
     expect(employmentIntent(undefined, ['Full-time Product Manager'])).toBe('full-time');
-    expect(employmentIntent('any', ['Product Manager'])).toBe('any');
+    expect(employmentIntent('any', ['Product Manager'])).toBe('full-time');
   });
   it('lets the explicit employmentType setting override the role text', () => {
     expect(employmentIntent('full-time', ['Product Management internship'])).toBe('full-time');
@@ -333,6 +333,30 @@ describe('employment type filtering', () => {
     expect(employmentMismatch('Product Management Intern', 'full-time')).toBeTruthy();
     expect(employmentMismatch('Product Manager', 'full-time')).toBeNull();
     expect(employmentMismatch('Product Management Intern', 'any')).toBeNull();
+  });
+  it('a plain role name means full-time, so internships are excluded (the reverse case)', () => {
+    const intent = employmentIntent('any', ['Product Manager']);
+    expect(intent).toBe('full-time');
+    expect(employmentMismatch('Product Management Intern', intent)).toBeTruthy();
+    expect(employmentMismatch('Summer Analyst Intern', intent)).toBeTruthy();
+    expect(employmentMismatch('Senior Product Manager', intent)).toBeNull();
+  });
+  it('a mix of internship and full-time roles keeps both', () => {
+    expect(employmentIntent('any', ['Product Manager', 'Product Management Intern'])).toBe('any');
+    expect(employmentMismatch('Any Intern', 'any')).toBeNull();
+  });
+  it('detects internship for any function, not just product (no function-keyword restriction)', () => {
+    for (const role of ['Marketing intern', 'Marketing internship', 'Finance Internship', 'Data Science Intern', 'HR Trainee']) {
+      expect(employmentIntent('any', [role])).toBe('internship');
+    }
+    // marketing internship search: a full-time marketing role is dropped, the intern role is kept
+    expect(employmentMismatch('Marketing Manager', 'internship')).toBeTruthy();
+    expect(employmentMismatch('Senior Brand Marketer', 'internship')).toBeTruthy();
+    expect(employmentMismatch('Marketing Intern', 'internship')).toBeNull();
+    expect(employmentMismatch('Digital Marketing Internship', 'internship')).toBeNull();
+    // plain function names (any function) mean full-time
+    expect(employmentIntent('any', ['Marketing Manager'])).toBe('full-time');
+    expect(employmentIntent('any', ['Data Analyst'])).toBe('full-time');
   });
   it('tells ChatGPT to remove full-time roles when the seeker wants an internship', () => {
     const job: FoundJob = { id: '1', url: 'https://www.linkedin.com/jobs/view/1/', title: 'Product Manager', company: 'Acme', location: 'India', insight: '', term: '', score: 1, picked: false };
