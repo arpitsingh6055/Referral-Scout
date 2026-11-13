@@ -1143,3 +1143,31 @@ it('files someone you are already talking to as "in conversation" instead of ask
   }
   expect(saved.contacts[0]!.state).not.toBe('attention');
 });
+
+it('sends an email-required connect to Needs you with a clear reason, not skipped and not retried forever', async () => {
+  await seed({
+    scope: 'referrals',
+    contacts: [
+      person('gated', {
+        referralJob: 'https://www.linkedin.com/jobs/view/1/',
+        state: 'review',
+        approved: true,
+        approvalKind: 'connect',
+        degree: 3,
+        invitationNote: 'Hi there',
+      }),
+    ],
+  });
+  vi.mocked(networkCommand).mockReset();
+  vi.mocked(networkCommand).mockImplementation(async (_tab, cmd) => {
+    const a = (cmd as { action: string }).action;
+    if (a === 'relationship') return { state: 'not-connected' };
+    if (a === 'connect') throw new Error('LinkedIn requires a recipient email; no invitation was submitted.');
+    return {};
+  });
+  await networkTick();
+  const p = (await getNetwork()).contacts[0]!;
+  expect(p).toMatchObject({ state: 'attention', emailRequired: true });
+  expect(p.reason).toMatch(/email to confirm the connection/);
+  expect(p.retryAfter).toBeUndefined(); // never retried — LinkedIn's email prompt can't be cleared automatically
+});

@@ -7,7 +7,7 @@ import { ownProfileEditLink, profileHeader, topCardFacts } from '../parsers/netw
  * the details, and every detail has a fallback, so a layout change can make the label less
  * precise but can never make the button disappear.
  */
-export type Relation = 'connected' | 'pending' | 'not-connected' | 'unknown';
+export type Relation = 'connected' | 'pending' | 'not-connected' | 'follow-only' | 'unknown';
 export interface PageItem {
   type: 'person' | 'job';
   url: string;

@@ -13,7 +13,7 @@ import {
   jobRows,
 } from '../parsers/network';
 import { pageItem } from './page-item';
-import { visible, wait, sleep, guard, insert, readEditor, sameText, queryAll } from './dom';
+import { visible, wait, sleep, guard, insert, readEditor, sameText, canon, queryAll } from './dom';
 
 /*
  * Actions on LinkedIn pages. Controls are found by their visible label or aria-label,
@@ -30,6 +30,8 @@ function control(root: ParentNode, pattern: RegExp): HTMLElement | undefined {
 }
 const CONNECT = /^connect$|^invite .+ to connect$/i,
   PENDING = /^pending\b/i,
+  FOLLOW = /^follow\b/i,
+  FOLLOWING = /^following\b|^unfollow\b/i,
   MORE = /^more$|^more actions$/i;
 
 /** The background opens linkedin.com/in/me/, which LinkedIn redirects to the signed-in person's own profile. */
@@ -52,7 +54,7 @@ function topCard(expected: string): HTMLElement {
   if (!top) throw new Error('The profile header is not available yet.');
   return top;
 }
-export function relationship(top: ParentNode): 'connected' | 'pending' | 'not-connected' | 'unknown' {
+export function relationship(top: ParentNode): 'connected' | 'pending' | 'not-connected' | 'follow-only' | 'unknown' {
   // A visible Pending or Connect control is the strongest evidence; the degree line only decides when neither is shown.
   if (control(top, PENDING)) return 'pending';
   if (control(top, CONNECT)) return 'not-connected';
@@ -73,13 +75,39 @@ async function moreMenu(top: HTMLElement, signal: AbortSignal): Promise<{ menu: 
   };
 }
 async function inspectRelationship(url: string, signal: AbortSignal): Promise<ReturnType<typeof relationship>> {
+  // The profile action bar (Connect / Follow / Message) renders a moment AFTER the page reports complete, so judging
+  // too early wrongly reads "unknown". Wait for a decisive control (or a 1st-degree badge) before deciding.
+  await wait(() => {
+    const t = topCard(url);
+    return control(t, CONNECT) || control(t, PENDING) || control(t, FOLLOW) || topCardFacts(t, visible).degree === 1 ? true : null;
+  }, signal, 8000).catch(() => undefined);
   const top = topCard(url),
     state = relationship(top);
   if (state !== 'unknown') return state;
   const { menu, close } = await moreMenu(top, signal);
-  const found = menu ? (control(menu, PENDING) ? 'pending' : control(menu, CONNECT) ? 'not-connected' : 'unknown') : 'unknown';
+  const inMenu = menu ? (control(menu, PENDING) ? 'pending' : control(menu, CONNECT) ? 'not-connected' : null) : null;
   close();
-  return found;
+  if (inMenu) return inMenu;
+  // No Connect or Pending anywhere. A Follow control means LinkedIn does not permit connecting here (a creator /
+  // follow-first profile), which is different from a page that simply failed to load.
+  if (control(top, FOLLOW) || control(top, FOLLOWING)) return 'follow-only';
+  return 'unknown';
+}
+/** Follows a profile LinkedIn will not let you connect with. User-initiated, so no send-authorization handshake. */
+async function follow(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unknown> {
+  const top = topCard(cmd.url);
+  if (control(top, FOLLOWING)) return { state: 'following' }; // already following
+  let btn = control(top, FOLLOW);
+  if (!btn) {
+    const { menu } = await moreMenu(top, signal);
+    btn = menu && control(menu, FOLLOW);
+  }
+  if (!btn) throw new Error('Follow is unavailable on this profile.');
+  btn.click();
+  await wait(() => (control(topCard(cmd.url), FOLLOWING) || !control(topCard(cmd.url), FOLLOW) ? true : null), signal, 6000).catch(() => {
+    throw new Error('LinkedIn did not confirm the follow.');
+  });
+  return { state: 'following' };
 }
 async function authorize(cmd: NetworkPageCommand, claim: boolean, signal: AbortSignal): Promise<void> {
   guard(signal);
@@ -289,16 +317,26 @@ async function message(cmd: NetworkPageCommand, signal: AbortSignal): Promise<un
     throw new Error('The message is ready, but LinkedIn’s Send button is unavailable.');
   });
   if (!conversation.isConnected || !chatWindows().includes(conversation)) throw new Error('The conversation changed before sending.');
+  const bodies = (): string[] =>
+    [conversation, ...conversations(cmd.url, name)].flatMap(c => [...c.querySelectorAll<HTMLElement>('.msg-s-event-listitem__body')].map(e => e.innerText));
+  const bubblesBefore = bodies().length,
+    needle = canon(cmd.body).slice(0, 40).toLowerCase();
   await authorize(cmd, true, signal);
   send.click();
-  await wait(
-    () =>
-      [conversation, ...conversations(cmd.url, name)].some(c =>
-        [...c.querySelectorAll<HTMLElement>('.msg-s-event-listitem__body')].some(e => sameText(e.innerText, cmd.body)),
-      ),
+  // Confirm tolerantly: a new bubble, our text echoed, or the composer emptied all mean it went. Only if none of
+  // these happen is it genuinely unconfirmed. (Exact-text matching alone was too brittle and flagged sent messages.)
+  const confirmed = await wait(
+    () => {
+      const texts = bodies();
+      const echoed = texts.some(t => canon(t).toLowerCase().includes(needle));
+      const grew = texts.length > bubblesBefore;
+      const cleared = !readEditor(editor).trim() && !control(conversation, /^send$/i);
+      return echoed || grew || cleared ? true : null;
+    },
     signal,
     12000,
-  );
+  ).catch(() => false);
+  if (!confirmed) throw new Error('The message may have been sent but could not be confirmed on screen. It will not be sent again.');
   return { state: 'messaged' };
 }
 /** Read-only check of what this page exposes, so a layout change shows up as a clear message instead of a mystery failure. */
@@ -528,7 +566,7 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
   if (cmd.action === 'relationship') return { state: await inspectRelationship(cmd.url, signal) };
   if (claimed.has(cmd.intentId)) throw new Error('This action has already been attempted. Check the contact in LinkedIn.');
   claimed.add(cmd.intentId);
-  return cmd.action === 'connect' ? connect(cmd, signal) : message(cmd, signal);
+  return cmd.action === 'connect' ? connect(cmd, signal) : cmd.action === 'follow' ? follow(cmd, signal) : message(cmd, signal);
 }
 const installed = globalThis as typeof globalThis & { __referralScoutNetworkV1?: boolean };
 if (!installed.__referralScoutNetworkV1)

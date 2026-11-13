@@ -38,7 +38,7 @@ export const savedItemSchema = z
     title: z.string().trim().min(1).max(200),
     subtitle: z.string().max(500).default(''),
     company: z.string().max(200).optional(),
-    relation: z.enum(['connected', 'pending', 'not-connected', 'unknown']).optional(),
+    relation: z.enum(['connected', 'pending', 'not-connected', 'follow-only', 'unknown']).optional(),
     note: z.string().max(300).default(''),
   })
   .refine(i => (i.type === 'person' ? profileUrl(i.url) === i.url : /^https:\/\/www\.linkedin\.com\/jobs\/view\/\d+\/$/.test(i.url)));
@@ -98,6 +98,11 @@ export interface NetworkContact extends NetworkProfile {
   invitationLimit?: number;
   companyName?: string;
   companyUrl?: string;
+  /** LinkedIn only offers Follow for this person (a connection request is not possible). */
+  followOnly?: boolean;
+  followed?: number;
+  /** LinkedIn demands the person's email to connect — can't be automated; the person must do it by hand. */
+  emailRequired?: boolean;
   approvalKind?: 'connect' | 'message';
   approved?: boolean;
   attemptedAt?: number;
@@ -443,6 +448,7 @@ export const networkRequest = z.discriminatedUnion('action', [
   z.object({ kind: z.literal('network'), action: z.literal('undo') }),
   z.object({ kind: z.literal('network'), action: z.literal('consent') }),
   z.object({ kind: z.literal('network'), action: z.literal('retry'), url: z.string() }),
+  z.object({ kind: z.literal('network'), action: z.literal('followNow'), url: z.string() }),
   z.object({ kind: z.literal('network'), action: z.literal('skipCompany'), url: z.string() }),
   z.object({ kind: z.literal('network'), action: z.literal('stopCompany'), url: z.string() }),
   z.object({ kind: z.literal('network'), action: z.literal('finishScans') }),
@@ -492,6 +498,7 @@ export const networkPageCommand = z.object({
     'jobInfo',
     'relationship',
     'connect',
+    'follow',
     'message',
     'selftest',
   ]),

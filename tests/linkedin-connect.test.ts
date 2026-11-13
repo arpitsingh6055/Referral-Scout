@@ -171,3 +171,32 @@ it('finds Connect under More when the profile shows Follow first, and sends from
   expect(reply).toMatchObject({ ok: true, data: { state: 'pending', noteSent: true } });
   expect(sent).toEqual([{ note: 'Hi Alex, would love to connect.' }]);
 });
+
+// A profile whose action bar (Connect/Follow) is injected after the page is already "complete", like the live SPA.
+function bareProfile(actionsHtml: string): void {
+  document.body.innerHTML = `<main><section><div componentkey="com.linkedin.sdui.profile.card.refXYZTopcard" class="i87k8o"><h2>Alex Example</h2><p hidden>· 1st</p><p>· 3rd</p><p>Recruiter at Acme</p><p><a href="/in/alex/overlay/contact-info/">Contact info</a></p><div id="actions">${actionsHtml}</div></div></section></main>`;
+}
+async function askRelationship() {
+  const cmd = { kind: 'network.page', requestId: crypto.randomUUID(), deadline: Date.now() + 60000, action: 'relationship', url: URL_, intentId: crypto.randomUUID(), body: '', noteMode: 'preferred' };
+  return new Promise<{ ok: boolean; data?: { state: string } }>(resolve =>
+    listener(cmd, { id: 'abc', url: 'chrome-extension://abc/service-worker.js', origin: 'chrome-extension://abc' }, resolve as never),
+  );
+}
+
+it('waits for the Connect button to render before judging, instead of calling it unknown', async () => {
+  bareProfile(''); // no action bar yet, only the "· 3rd" degree
+  setTimeout(() => {
+    document.getElementById('actions')!.innerHTML = `<a href="${URL_}" aria-label="Invite Alex Example to connect">Connect</a><button>More</button>`;
+  }, 800);
+  const reply = await askRelationship();
+  expect(reply).toMatchObject({ ok: true, data: { state: 'not-connected' } }); // found once it rendered
+}, 12000);
+
+it('reports follow-only only when LinkedIn truly offers no Connect, just Follow', async () => {
+  bareProfile('<button aria-label="Follow Alex Example">Follow</button><button id="more">More</button>');
+  document.body.insertAdjacentHTML('beforeend', '<div role="menu" hidden><a role="menuitem">Send profile in a message</a><a role="menuitem">Save to PDF</a></div>');
+  const menu = document.querySelector('[role="menu"]')!;
+  document.getElementById('more')!.addEventListener('click', () => menu.toggleAttribute('hidden'));
+  const reply = await askRelationship();
+  expect(reply).toMatchObject({ ok: true, data: { state: 'follow-only' } });
+}, 12000);

@@ -864,7 +864,7 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
   await note(s, `Opening ${p.name}'s profile…`);
   const tab = await networkTab(p.url, signal);
   const relation = z
-    .object({ state: z.enum(['connected', 'pending', 'not-connected', 'unknown']) })
+    .object({ state: z.enum(['connected', 'pending', 'not-connected', 'follow-only', 'unknown']) })
     .parse(await networkCommand(tab, { action: 'relationship', url: p.url }, signal));
   await currentRun(s.revision, signal);
   const now = Date.now();
@@ -937,9 +937,19 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
   }
   const kind = relation.state === 'connected' ? 'message' : 'connect';
   if (kind === 'message' && p.messagedAt) return;
+  if (kind === 'connect' && relation.state === 'follow-only') {
+    // LinkedIn offers only Follow for this person (a creator / follow-first profile). Connecting is not possible;
+    // this is not a failure to retry. Surface it with the real options instead of a vague error.
+    p.state = 'attention';
+    p.followOnly = true;
+    p.reason = `LinkedIn only lets you follow ${p.name.split(/\s+/)[0] || 'this person'}, not send a connection request. Follow them, or open their profile to message if it is open.`;
+    await saveContact(p);
+    return;
+  }
   if (kind === 'connect' && relation.state === 'unknown') {
     p.state = 'attention';
-    p.reason = 'Could not determine LinkedIn connection controls; no invitation was attempted.';
+    delete p.followOnly;
+    p.reason = 'Could not read LinkedIn’s buttons for this person — the page may not have finished loading. Open it, or try again.';
     await saveContact(p);
     return;
   }
@@ -1111,6 +1121,17 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
         return current;
       });
       await pauseNetwork('LinkedIn says you reached its weekly invitation limit. Outreach is paused; resume in a few days.');
+    } else if (/requires a recipient email/i.test(message)) {
+      // LinkedIn wants the person's email to let you connect. It cannot be automated, and retrying never helps, so
+      // surface it for the person to do by hand instead of skipping it silently or retrying forever.
+      p.state = 'attention';
+      p.emailRequired = true;
+      p.reason = `LinkedIn is asking for ${p.name.split(/\s+/)[0] || 'this person'}’s email to confirm the connection, which can’t be automated. Open their profile to connect by hand, or skip.`;
+      await updateNetwork(current => {
+        current.actions = current.actions.filter(a => !(a.at === intent.at && a.url === p.url && a.kind === kind));
+        current.status = `${p.name}: LinkedIn requires their email to connect. Moved to Needs you.`;
+        return current;
+      });
     } else if (RECIPIENT_ONLY.test(message)) {
       // Nothing was submitted and the problem is this one profile: skip them and keep going.
       p.state = 'skipped';

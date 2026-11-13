@@ -826,6 +826,24 @@ export function registerNetworkMessages(): void {
             delete s.undo;
             return s;
           });
+        // "Follow" on a follow-only profile: open it and follow, then take them out of Needs you.
+        if (req.action === 'followNow') {
+          const target = current.contacts.find(x => x.url === req.url);
+          if (!target) throw new Error('That person is no longer on your list.');
+          const tab = await networkTab(target.url, signal);
+          await networkCommand(tab, { action: 'follow', url: target.url, intentId: crypto.randomUUID() }, signal);
+          await updateNetwork(s => {
+            const p = s.contacts.find(x => x.url === req.url);
+            if (p) {
+              p.followed = Date.now();
+              p.state = 'skipped';
+              delete p.followOnly;
+              p.reason = 'Followed on LinkedIn. Connecting is not available for this person; message them there if their profile is open.';
+            }
+            s.status = `Followed ${target.name}.`;
+            return s;
+          });
+        }
         // "Try again" on someone under Needs you: back into the queue, at the step they had reached.
         if (req.action === 'retry')
           await updateNetwork(s => {

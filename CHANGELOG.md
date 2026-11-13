@@ -15,6 +15,13 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.41.0: connection requests sent to profiles that load their buttons late
+- **Fixed the real cause of people landing in "Needs you" with "could not determine connection controls".** LinkedIn renders a profile's Connect / Follow buttons a moment AFTER the page reports finished loading, so the extension often judged the profile before the Connect button existed and gave up. It now waits (up to 8 s) for the action bar — a Connect, Pending or Follow control, or a 1st-degree badge — before deciding, so these people now get a proper connection request.
+- **"Follow-only" profiles are handled honestly.** A creator / follow-first profile that genuinely offers only Follow (no Connect anywhere, even under More) is now labelled as such with a one-click **Follow** button, instead of a vague error with a pointless "Try again".
+- A true read failure now says "Could not read LinkedIn's buttons — the page may not have finished loading" and keeps "Try again".
+- **Fixed: a message that was sent could land in "Needs you".** The send was confirmed only by matching the exact message text, which LinkedIn sometimes re-renders, so a delivered message timed out as "Critical selector/state did not become ready." It now confirms tolerantly — a new bubble, the text echoed, or the composer clearing all count as sent.
+- **Email-required connections now go to "Needs you" with a clear reason.** Some profiles make LinkedIn ask for the person's email before connecting, which can't be automated; these are surfaced with "LinkedIn is asking for their email to confirm the connection" and an Open-on-LinkedIn button, instead of being silently skipped or retried forever.
+
 ## 0.40.0: usage consent gate
 - A one-time consent screen is shown before anything else. You cannot read your profile or use the extension until you accept. It states plainly what is recorded: your LinkedIn profile handle, once, and nothing else. An expandable "What exactly is recorded?" gives the detail; nothing is hidden in fine print.
 - After you accept and read your profile, your handle is sent once to the usage endpoint (`src/background/usage.ts`). Until that endpoint is configured nothing is sent. The dashboard that shows the counts, its Cloudflare Worker endpoint and the Pages action live on the separate `usage-dashboard` branch.
