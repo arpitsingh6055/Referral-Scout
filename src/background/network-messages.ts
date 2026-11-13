@@ -379,7 +379,7 @@ export function registerNetworkMessages(): void {
           await importProfile();
           await clearAiJobs();
           const me = (await getNetwork()).profile;
-          if (me) await pingUsage(me.url); // only reached once consent is set; records the handle once
+          if (me) await pingUsage(me.url, me.name); // only reached once consent is set; records the handle once
         }
         if (req.action === 'save') {
           if (/\{(?!firstName\}|target\})[^}]*\}/.test(req.template))
