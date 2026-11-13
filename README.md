@@ -1,48 +1,32 @@
-# Referral Scout — usage tracking
+# Referral Scout — usage tracking (Vercel Blob)
 
-This is the **dashboard** branch (`main`). The extension itself lives on the
-`job-search-pipeline` branch. One Vercel project (deployed from `main`) does
-everything: records each user and serves a live dashboard. Your MongoDB
-connection string lives only in a Vercel environment variable — never in this
-repo and never in the extension.
+This is the **dashboard** branch (`main`); the extension lives on `job-search-pipeline`.
+One Vercel project does everything, using **Vercel Blob** for storage — no database,
+no connection string, no IP allowlist.
 
-- `api/_db.js`  — shared connection; ensures the collection + unique index exist on first use.
-- `api/ping.js` — the extension POSTs `{ id: "<linkedin-handle>" }` here; one row per person.
-- `api/stats.js`— returns the live count + user list (read-only); the dashboard calls it.
-- `index.html`  — the dashboard; fetches `/api/stats` on load, always current.
+- `api/ping.js`  — the extension POSTs `{ uid, name, id }`; stored as `users/<id>.json` (one file per person).
+- `api/stats.js` — lists those files for the live count and reads each for the table.
+- `index.html`   — the dashboard; shows the count, each person's name + LinkedIn link, and first-seen date.
 
-The database `Referral_Scout`, the collection `user_details`, and the unique index
-on `handle` are created automatically the first time the app talks to MongoDB, so
-there is no manual table setup in Atlas.
+Each person is one blob keyed by their LinkedIn id, so re-pinging never double-counts and
+there are no write races. Fields stored: `uid`, `name`, `linkedin_id`, `at` (first-seen ms).
 
-## Setup (about 5 minutes, no server to run)
+## Setup
 
-### 1. MongoDB Atlas
-1. Network Access → Add IP → **Allow access from anywhere** (`0.0.0.0/0`). Vercel has no fixed IP.
-2. That's it — no collection or index to create by hand; the app does it on first request.
-3. Keep your connection string in `atlas-credentials.env` (gitignored — never commit it).
-   It looks like `mongodb+srv://USER:PASSWORD@cluster.xxxx.mongodb.net/...`.
+### 1. Create a Blob store and connect it
+Vercel → your project → **Storage** (or the team **Stores** page) → Create → **Blob** →
+connect it to the `referral-scout` project. Vercel injects `BLOB_READ_WRITE_TOKEN`
+automatically — nothing to copy.
 
-### 2. Vercel
-1. vercel.com → Add New → Project → import the `Referral-Scout` repo. It deploys the
-   default branch (`main`), which is this dashboard — so there is no branch to change.
-2. **Framework Preset: Other** (it's a static page + serverless functions, no build step).
-3. Environment Variables → add `MONGODB_URI` = your full connection string.
-4. Deploy. You get a URL like `https://referral-scout.vercel.app`.
-   - Dashboard: open that URL.
-   - Write endpoint for the extension: that URL + `/api/ping`.
+### 2. Redeploy
+Env/token changes only apply to new deployments: Deployments → latest → ⋯ → **Redeploy**.
+Then open the dashboard URL — it shows the count (0 at first). If the token is missing it
+now says so instead of showing a blank 0.
 
-### 3. Point the extension at it
-On the `job-search-pipeline` branch, open `src/background/usage.ts` and set:
+### 3. Point the extension at it (already set on `job-search-pipeline`)
+`src/background/usage.ts` has `USAGE_ENDPOINT = 'https://referral-scout.vercel.app/api/ping'`.
+Rebuild (`pnpm build`) and reload the extension.
 
-```ts
-export const USAGE_ENDPOINT = 'https://referral-scout.vercel.app/api/ping';
-```
-
-Then rebuild (`pnpm build`). Until the endpoint is set it's a no-op, so nothing is
-recorded and nothing breaks.
-
-## How it stays private
-The extension only ever sends a LinkedIn handle to `/api/ping`. The database credential
-sits in Vercel's env var, which the public extension can't read. The dashboard reads
-through `/api/stats`, so the credential never leaves Vercel.
+## Privacy note
+Blob files are public-read (unguessable base URL, but not secret). They hold public
+LinkedIn display names and handles only — no private data, no credentials.

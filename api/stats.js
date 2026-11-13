@@ -1,22 +1,32 @@
-// Returns the live count and user list for the dashboard. Reading only. The collection and
-// its index are ensured on first use, so this works even before any user has been recorded.
-import { users } from './_db.js';
+// Lists the per-user blobs for the live count, and reads each small JSON for the table.
+import { list } from '@vercel/blob';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'no-store');
   try {
-    const col = await users();
-    const docs = await col.find({}, { projection: { _id: 0, handle: 1, createdAt: 1 } }).toArray();
-    const seen = new Map();
-    for (const d of docs) {
-      if (!d.handle) continue;
-      const at = d.createdAt ? new Date(d.createdAt).getTime() : 0;
-      if (!seen.has(d.handle) || at < seen.get(d.handle)) seen.set(d.handle, at);
-    }
-    const list = [...seen.entries()].map(([id, at]) => ({ id, at })).sort((a, b) => a.at - b.at);
-    return res.status(200).json({ count: list.length, users: list });
-  } catch {
-    return res.status(500).json({ error: 'db error' });
+    let cursor;
+    let blobs = [];
+    do {
+      const page = await list({ prefix: 'users/', limit: 1000, cursor });
+      blobs = blobs.concat(page.blobs);
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
+    const users = await Promise.all(
+      blobs.map(async bl => {
+        const fallbackId = bl.pathname.replace(/^users\//, '').replace(/\.json$/, '');
+        try {
+          const r = await fetch(bl.downloadUrl || bl.url, { cache: 'no-store' });
+          const d = await r.json();
+          return { uid: d.uid || '', name: d.name || '', id: d.linkedin_id || fallbackId, at: d.at || new Date(bl.uploadedAt).getTime() };
+        } catch {
+          return { uid: '', name: '', id: fallbackId, at: new Date(bl.uploadedAt).getTime() };
+        }
+      }),
+    );
+    users.sort((a, b) => a.at - b.at);
+    return res.status(200).json({ count: users.length, users });
+  } catch (e) {
+    return res.status(500).json({ error: 'blob error', detail: String((e && e.message) || e).slice(0, 300), hasToken: !!process.env.BLOB_READ_WRITE_TOKEN });
   }
 }
