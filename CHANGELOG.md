@@ -15,6 +15,9 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.41.8: fixed a false “only lets you follow” on profiles where Connect is under More
+- Some profiles (3rd-degree, and others) show Message + More as the top buttons and keep **Connect inside the More menu**, while a hidden “Follow <name>” control also exists. The relationship check opened More but read its items once, immediately — and the menu’s Connect paints a beat later — so it missed Connect and wrongly reported “LinkedIn only lets you follow…”. It now waits for the menu item to render before deciding, and the Connect-click and Follow paths wait the same way. A genuine follow-only profile (Follow, and no Connect anywhere) is still detected correctly.
+
 ## 0.41.7: the live tracker stops pretending to work while it is waiting on you
 - A company that is paused on your “ask who you know, or also find stronger referrers?” decision used to show the same spinning marker as a company that is actively being searched — so several blocked companies looked like they were endlessly working. They now show a clear amber “your turn” marker (no spinner), the row is tappable to jump straight to the decision under “Needs you”, and when every open company is blocked on you the tracker’s heading reads “Waiting for your answer” instead of “Finding who can refer you”. The decision buttons already live under “Needs you” on the home page.
 

@@ -85,7 +85,14 @@ async function inspectRelationship(url: string, signal: AbortSignal): Promise<Re
     state = relationship(top);
   if (state !== 'unknown') return state;
   const { menu, close } = await moreMenu(top, signal);
-  const inMenu = menu ? (control(menu, PENDING) ? 'pending' : control(menu, CONNECT) ? 'not-connected' : null) : null;
+  // The menu's items can paint a moment after the menu opens, so wait for a decisive one before concluding. Without
+  // this, a profile whose Connect sits under More was wrongly read as “follow-only” (a stray “Follow <name>” control
+  // in the top card matched), even though Connect was right there in the menu.
+  let inMenu: 'pending' | 'not-connected' | null = null;
+  if (menu) {
+    await wait(() => (control(menu, PENDING) || control(menu, CONNECT) ? true : null), signal, 3000).catch(() => undefined);
+    inMenu = control(menu, PENDING) ? 'pending' : control(menu, CONNECT) ? 'not-connected' : null;
+  }
   close();
   if (inMenu) return inMenu;
   // No Connect or Pending anywhere. A Follow control means LinkedIn does not permit connecting here (a creator /
@@ -100,7 +107,7 @@ async function follow(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
   let btn = control(top, FOLLOW);
   if (!btn) {
     const { menu } = await moreMenu(top, signal);
-    btn = menu && control(menu, FOLLOW);
+    btn = menu ? await wait(() => control(menu, FOLLOW) ?? null, signal, 3000).catch(() => undefined) : undefined;
   }
   if (!btn) throw new Error('Follow is unavailable on this profile.');
   btn.click();
@@ -128,7 +135,7 @@ async function openInvitationDialog(url: string, signal: AbortSignal): Promise<H
   let connect = control(top, CONNECT);
   if (!connect) {
     const { menu } = await moreMenu(top, signal);
-    connect = menu && control(menu, CONNECT);
+    connect = menu ? await wait(() => control(menu, CONNECT) ?? null, signal, 3000).catch(() => undefined) : undefined;
   }
   if (!connect) throw new Error('Connect is unavailable on this recipient profile.');
   connect.click();

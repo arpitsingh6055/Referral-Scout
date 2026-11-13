@@ -192,6 +192,17 @@ it('waits for the Connect button to render before judging, instead of calling it
   expect(reply).toMatchObject({ ok: true, data: { state: 'not-connected' } }); // found once it rendered
 }, 12000);
 
+it('does not call a profile follow-only when Connect is under More but the menu item renders a beat late (the Sandeep bug)', async () => {
+  bareProfile('<button aria-label="Follow Alex Example">Follow</button><a href="/messaging/compose/">Message</a><button id="more">More</button>');
+  document.body.insertAdjacentHTML('beforeend', '<div role="menu" hidden><a role="menuitem">Send profile in a message</a><a role="menuitem">Save to PDF</a></div>');
+  const menu = document.querySelector('[role="menu"]')!;
+  document.getElementById('more')!.addEventListener('click', () => menu.toggleAttribute('hidden'));
+  // LinkedIn fills the Connect item into the menu a moment after it opens.
+  setTimeout(() => menu.insertAdjacentHTML('beforeend', '<div role="menuitem">Connect</div>'), 700);
+  const reply = await askRelationship();
+  expect(reply).toMatchObject({ ok: true, data: { state: 'not-connected' } });
+}, 12000);
+
 it('reports follow-only only when LinkedIn truly offers no Connect, just Follow', async () => {
   bareProfile('<button aria-label="Follow Alex Example">Follow</button><button id="more">More</button>');
   document.body.insertAdjacentHTML('beforeend', '<div role="menu" hidden><a role="menuitem">Send profile in a message</a><a role="menuitem">Save to PDF</a></div>');
