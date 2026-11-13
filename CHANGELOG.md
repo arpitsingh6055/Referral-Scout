@@ -15,6 +15,9 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.41.4: connection notes no longer flatten the role-matched ask
+- **Fixed: with ChatGPT personalisation on, a recruiter or HR contact got a vague “I’d love to connect and learn about your work/experience” note** — the opposite of what to say to someone who hires. The invitation prompt was instructing the model to rewrite the note into “learn about the recipient’s work” and forbidding any mention of openings, which overrode the role-aware ask the template had already built. The prompt now preserves the base note’s closing ask (openings for people who hire; a light interest in the team or what they are building for leaders and founders) and only lets the model fit a word or two to the recipient. Template mode was already correct; this aligns the ChatGPT path with it.
+
 ## 0.41.1: first message to a connection wrongly reported as "window did not open"
 - **Fixed: messaging a 1st-degree connection for the first time often failed with "The message window for this person did not open, so the message was NOT sent."** Clicking Message on a profile with no prior thread opens LinkedIn's **"New message" compose overlay**, whose header reads "New message" rather than the person's name. The extension only recognised a chat window by the name in its header (or a profile link that a fresh overlay may not have rendered yet), so it could not tell the open overlay was the right one and timed out. It now also matches the recipient by the name LinkedIn puts in the compose overlay's recipient pill, the avatar's alt text, and the profile link's aria-label — confirmed against the live site (14 November 2026).
 
