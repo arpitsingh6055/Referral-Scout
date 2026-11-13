@@ -1,4 +1,15 @@
+# dependencies (Vercel installs these for the serverless functions)
 node_modules/
+
+# vercel
 .vercel/
+
+# secrets — never commit the Atlas connection string or any env file
+.env
+.env.*
+*.env
 atlas-credentials.env
+
+# misc
 *.log
+.DS_Store
