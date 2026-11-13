@@ -410,6 +410,19 @@ it('messages an existing 1st-degree connection directly, with wording that does 
   );
 });
 
+it('a direct message to an existing connection still waits for approval even when follow-ups are automatic', async () => {
+  await seed(
+    { contacts: [person('alex', { state: 'connected', direct: true, companyName: 'Acme', category: 'recruiter' })] },
+    { followupMode: 'automatic' },
+  );
+  vi.mocked(networkCommand)
+    .mockResolvedValueOnce({ state: 'connected' })
+    .mockResolvedValueOnce(card('alex', 'Recruiter at Acme', 1));
+  await networkTick();
+  const p = (await getNetwork()).contacts[0]!;
+  expect(p).toMatchObject({ state: 'review', approvalKind: 'message' });
+});
+
 it('a referral search runs even while outreach is paused, keeps only people at that company, and queues the strongest once it is complete', async () => {
   const jobUrl = 'https://www.linkedin.com/jobs/view/123/';
   await seed({

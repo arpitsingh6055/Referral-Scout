@@ -1034,7 +1034,9 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
             () => prepareIntroduction(fresh, p, signal),
             () => introduction(fresh, p, me),
           );
-  const review = kind === 'connect' ? settings.outreachMode === 'review' : settings.followupMode === 'review';
+  // A direct message to someone already in your network always waits for your approval, whatever the follow-up
+  // setting: messaging an existing connection is higher-stakes than a note or a post-acceptance follow-up.
+  const review = kind === 'connect' ? settings.outreachMode === 'review' : p.direct ? true : settings.followupMode === 'review';
   if (review && !approved && !p.auto) {
     p.state = 'review';
     p.approvalKind = kind;

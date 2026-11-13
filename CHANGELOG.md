@@ -15,6 +15,9 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.41.5: messaging an existing connection always waits for your approval
+- A direct message to someone you are **already connected to** is now always held as an editable draft that you approve before it sends, regardless of your follow-up setting. Before, it followed `followupMode`, so turning follow-ups to automatic would also have auto-sent messages to existing connections — higher-stakes than a note or a post-acceptance follow-up. The message itself is the role-matched template (openings for recruiters, a light ask for leaders/founders), which you can edit before approving.
+
 ## 0.41.4: connection notes no longer flatten the role-matched ask
 - **Fixed: with ChatGPT personalisation on, a recruiter or HR contact got a vague “I’d love to connect and learn about your work/experience” note** — the opposite of what to say to someone who hires. The invitation prompt was instructing the model to rewrite the note into “learn about the recipient’s work” and forbidding any mention of openings, which overrode the role-aware ask the template had already built. The prompt now preserves the base note’s closing ask (openings for people who hire; a light interest in the team or what they are building for leaders and founders) and only lets the model fit a word or two to the recipient. Template mode was already correct; this aligns the ChatGPT path with it.
 
