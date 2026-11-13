@@ -1481,6 +1481,31 @@ textarea.draft:focus {
 .live-steps .now b {
   color: var(--primary);
 }
+.live-steps .you {
+  cursor: pointer;
+}
+.live-steps .you i {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-style: normal;
+  font-weight: 800;
+  font-size: 14px;
+  line-height: 1;
+}
+.live-steps .you b {
+  color: var(--warn);
+}
+.live-steps .you:hover b,
+.live-steps .you:focus-visible b {
+  text-decoration: underline;
+}
+.spinner.waiting {
+  animation: none;
+  border-color: var(--warn-soft);
+  border-top-color: var(--warn);
+  background: var(--warn-soft);
+}
 .live-expect {
   font-size: 13.5px;
   color: var(--muted);

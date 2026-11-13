@@ -107,7 +107,7 @@ export function tick(): void {
   }
 }
 setInterval(tick, 1000);
-export type LiveStep = [state: 'done' | 'now' | 'later', text: string, detail?: string | undefined];
+export type LiveStep = [state: 'done' | 'now' | 'later' | 'you', text: string, detail?: string | undefined];
 export function live(s: NetworkState, stage: number): HTMLElement | null {
   const search = s.jobSearch,
     jobs = s.referralJobs ?? [],
@@ -153,7 +153,7 @@ export function live(s: NetworkState, stage: number): HTMLElement | null {
     for (const job of jobs.slice(0, 10)) {
       const found = s.contacts.filter(p => p.referralJob === job.url).length;
       if (job.finishedAt) steps.push(['done', job.company, `${found} ${found === 1 ? 'person' : 'people'} found`]);
-      else if (job.waiting) steps.push(['now', job.company, 'Waiting for your answer under “Needs you”']);
+      else if (job.waiting) steps.push(['you', job.company, 'Your turn — tap to choose: ask who you know, or also find stronger referrers']);
       else if (job === current && (job.strategy || job.strategyTried || job.mode !== 'referral'))
         steps.push(['now', job.company, s.status || 'Searching']);
       else steps.push(['later', job.company]);
@@ -183,7 +183,11 @@ export function live(s: NetworkState, stage: number): HTMLElement | null {
     list = node('ol', '', 'live-steps'),
     foot = node('p', '', 'live-foot'),
     ago = node('span');
-  head.append(node('span', '', 'spinner'), node('h3', title, 'live-title'));
+  const blockedOnly = steps.some(st => st[0] === 'you') && !steps.some(st => st[0] === 'now');
+  head.append(
+    node('span', '', blockedOnly ? 'spinner waiting' : 'spinner'),
+    node('h3', blockedOnly ? 'Waiting for your answer' : title, 'live-title'),
+  );
   if (since) {
     const timer = node('span', clock(Date.now() - since), 'live-clock');
     timer.dataset.since = String(since);
@@ -195,9 +199,22 @@ export function live(s: NetworkState, stage: number): HTMLElement | null {
       mark = node('i'),
       body = node('div');
     if (state === 'done') mark.append(icon('check'));
+    else if (state === 'you') mark.textContent = '!';
     body.append(node('b', text));
     if (detail) body.append(node('span', detail));
     li.append(mark, body);
+    if (state === 'you') {
+      li.tabIndex = 0;
+      li.setAttribute('role', 'button');
+      const jump = (): void => document.querySelector('.todos')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      li.onclick = jump;
+      li.onkeydown = e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          jump();
+        }
+      };
+    }
     list.append(li);
   }
   ago.dataset.ago = String((s.log ?? []).at(-1)?.at ?? Date.now());

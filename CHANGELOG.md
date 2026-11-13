@@ -15,6 +15,9 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.41.7: the live tracker stops pretending to work while it is waiting on you
+- A company that is paused on your “ask who you know, or also find stronger referrers?” decision used to show the same spinning marker as a company that is actively being searched — so several blocked companies looked like they were endlessly working. They now show a clear amber “your turn” marker (no spinner), the row is tappable to jump straight to the decision under “Needs you”, and when every open company is blocked on you the tracker’s heading reads “Waiting for your answer” instead of “Finding who can refer you”. The decision buttons already live under “Needs you” on the home page.
+
 ## 0.41.6: job list respects internship vs full-time
 - **The shortlist now filters by employment type.** If you are after an internship (either set explicitly, or because your role text says “internship”), full-time and permanent roles that LinkedIn mixes into the results — “Product Manager”, “Senior Product Manager”, “Associate Product Manager” and the like — are now removed, and the reverse for a full-time search. This is enforced in code from the job title (LinkedIn names internships in the title), so it holds even when ChatGPT is off, and it is not limited by the “never remove more than half” guard. The ChatGPT review prompt was also fixed: it used to say a full-time role was “fine to keep” for an internship seeker.
 
