@@ -37,6 +37,8 @@ import {
 import {
   reviewFromReply,
   reviewPrompt,
+  employmentIntent,
+  employmentMismatch,
   companyPlanPrompt,
   fallbackTitles,
   fill,
@@ -390,7 +392,7 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
         drop = reviewFromReply(
           extractJson(
             await askChatGpt(
-              reviewPrompt(list, roles, s.location),
+              reviewPrompt(list, roles, s.location, s.settings?.employmentType),
               signal,
               'LEGACY',
               s.profile!.url,
@@ -405,6 +407,14 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
         if (signal.aborted) throw error;
       }
     }
+    // Employment type is a firm rule, enforced in code so a full-time role is dropped from an internship search
+    // (and the reverse) even when ChatGPT keeps it or is turned off. LinkedIn names internships in the title.
+    const intent = employmentIntent(s.settings?.employmentType, roles);
+    if (intent !== 'any')
+      for (const j of list) {
+        const reason = employmentMismatch(j.title, intent);
+        if (reason && !drop.has(j.id)) drop.set(j.id, reason);
+      }
     await updateNetwork(c => {
       const j = c.jobSearch;
       if (!j || j.status !== 'finding') return c;

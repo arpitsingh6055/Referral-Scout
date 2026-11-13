@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   reviewFromReply,
+  reviewPrompt,
+  employmentIntent,
+  employmentMismatch,
   scoreJob as scoreOf,
   companyPlanPrompt,
   strategiesFromReply,
@@ -306,4 +309,34 @@ it('never offers a job that was already taken on, even reposted under a new addr
     done,
   );
   expect(list.map(j => j.id).sort()).toEqual(['333333', '444444']);
+});
+
+describe('employment type filtering', () => {
+  it('reads the intent from the role text when there is no explicit setting', () => {
+    expect(employmentIntent('any', ['Product Management internship'])).toBe('internship');
+    expect(employmentIntent(undefined, ['Full-time Product Manager'])).toBe('full-time');
+    expect(employmentIntent('any', ['Product Manager'])).toBe('any');
+  });
+  it('lets the explicit employmentType setting override the role text', () => {
+    expect(employmentIntent('full-time', ['Product Management internship'])).toBe('full-time');
+    expect(employmentIntent('internship', ['Product Manager'])).toBe('internship');
+  });
+  it('drops full-time titles for an internship seeker and keeps real internships', () => {
+    expect(employmentMismatch('Senior Product Manager', 'internship')).toBeTruthy();
+    expect(employmentMismatch('Product Manager', 'internship')).toBeTruthy();
+    expect(employmentMismatch('Associate Product Manager', 'internship')).toBeTruthy();
+    expect(employmentMismatch('Product Management Intern', 'internship')).toBeNull();
+    expect(employmentMismatch('Product Analyst Intern', 'internship')).toBeNull();
+    expect(employmentMismatch('Graduate Trainee - Product', 'internship')).toBeNull();
+  });
+  it('drops internships for a full-time seeker and filters nothing when intent is any', () => {
+    expect(employmentMismatch('Product Management Intern', 'full-time')).toBeTruthy();
+    expect(employmentMismatch('Product Manager', 'full-time')).toBeNull();
+    expect(employmentMismatch('Product Management Intern', 'any')).toBeNull();
+  });
+  it('tells ChatGPT to remove full-time roles when the seeker wants an internship', () => {
+    const prompt = reviewPrompt([found('1', 'Product Manager', 'Acme')], ['Product Management internship'], 'India');
+    expect(prompt).toMatch(/wants an INTERNSHIP/);
+    expect(prompt).toMatch(/employment type: internship/);
+  });
 });

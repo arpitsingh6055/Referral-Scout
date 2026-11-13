@@ -362,19 +362,50 @@ export function strategiesFromReply(json: unknown): Map<string, CompanyStrategy>
   return out;
 }
 
+/** Title words that mark a LinkedIn listing as an internship / trainee (LinkedIn labels these in the title). */
+export const INTERN_TITLE = /\bintern(ship|s|ing)?\b|\btrainee\b|\bapprentice(ship)?\b|\bsummer\b|\barticleship\b|\bindustrial training\b|\bco-?op\b|\bwinter intern/i;
+export type EmploymentIntent = 'internship' | 'full-time' | 'any';
+/** What employment type the seeker is after: the explicit setting wins; otherwise read it from the role text. */
+export function employmentIntent(employmentType: string | undefined, roles: string[]): EmploymentIntent {
+  if (employmentType === 'internship' || employmentType === 'full-time') return employmentType;
+  const text = roles.join(' ').toLowerCase();
+  if (INTERN_TITLE.test(text)) return 'internship';
+  if (/\bfull[\s-]?time\b|\bpermanent\b|\bfte\b/.test(text)) return 'full-time';
+  return 'any';
+}
+/**
+ * A clear employment-type mismatch by title. LinkedIn names internships in the title, so a title with no intern/trainee
+ * word is treated as full-time. Returns a short removal reason, or null when the title fits the intent. Deterministic,
+ * so full-time roles are dropped from an internship search (and vice versa) even when ChatGPT keeps them.
+ */
+export function employmentMismatch(title: string, intent: EmploymentIntent): string | null {
+  if (intent === 'any') return null;
+  const isIntern = INTERN_TITLE.test(title);
+  if (intent === 'internship' && !isIntern) return 'Full-time role — you asked for an internship';
+  if (intent === 'full-time' && isIntern) return 'Internship — you asked for a full-time role';
+  return null;
+}
+
 /* ---------- the shortlist check: ChatGPT removes adverts and poor matches before the person sees the list ---------- */
-export function reviewPrompt(jobs: FoundJob[], roles: string[], location: string): string {
+export function reviewPrompt(jobs: FoundJob[], roles: string[], location: string, employmentType?: string): string {
+  const intent = employmentIntent(employmentType, roles);
+  const typeRule =
+    intent === 'internship'
+      ? '- The wrong employment type. The seeker wants an INTERNSHIP, so remove full-time and permanent roles: a title such as "Product Manager", "Senior Product Manager" or "Associate Product Manager", or anything with "Manager", "Lead", "Director" or "Senior" and no sign of being an internship, is full-time. Keep only internships, traineeships, apprenticeships or summer roles in the right function.'
+      : intent === 'full-time'
+        ? '- The wrong employment type. The seeker wants a FULL-TIME role, so remove internships, traineeships, apprenticeships and summer roles. Keep permanent roles in the right function.'
+        : '- The wrong level, such as a Director or VP when the seeker wants an entry-level or mid-level role. Internships and full-time roles are both fine here unless the role text says otherwise.';
   return [
-    'You are a careful career coach checking a list of LinkedIn job listings for a job seeker before they see it. Remove only the listings that would waste their time. When unsure, KEEP the listing.',
+    'You are a careful career coach checking a list of LinkedIn job listings for a job seeker before they see it. Remove only the listings that would waste their time. When unsure about function or quality, KEEP the listing.',
     '',
     'Remove a listing when it is:',
     '- Not a real opening at a real employer: a training institute or course that charges fees, a "pay after placement" programme, a "campus ambassador" or "earn from home" scheme, or a staffing agency posting a vague mass listing with no named client.',
     '- The wrong function. Example: the seeker wants "Product Management internship"; "Sales Intern", "Telecaller" and "HR Intern" are wrong, while "Associate Product Manager Intern", "Product Analyst Intern", "Program Management Intern" and "Product Operations Intern" are close enough to keep.',
-    '- The wrong level. Example: the seeker wants an internship; "Senior Product Manager" or "Director of Product" is wrong. A full-time entry-level role in the same function is fine to keep.',
+    typeRule,
     '- Marked "promoted": true (a paid advert) AND not a clearly good match for the roles. A promoted listing that fits well stays.',
     'Never remove more than half the list. Do not judge companies by fame or size.',
     '',
-    `THE SEEKER wants: ${JSON.stringify(roles)}${location ? `, location: ${JSON.stringify(location)}` : ''}`,
+    `THE SEEKER wants: ${JSON.stringify(roles)}${location ? `, location: ${JSON.stringify(location)}` : ''}${intent !== 'any' ? `, employment type: ${intent}` : ''}`,
     `LISTINGS: ${JSON.stringify(jobs.map(j => ({ id: j.id, title: j.title, company: j.company, location: j.location, ...(j.promoted ? { promoted: true } : {}) })))}`,
     '',
     'Reply with ONLY one JSON object: {"remove":[{"id": the id exactly as given, "why": the reason in at most 12 plain words}]}. Use an empty list if nothing should be removed.',

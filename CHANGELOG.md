@@ -15,6 +15,9 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.41.6: job list respects internship vs full-time
+- **The shortlist now filters by employment type.** If you are after an internship (either set explicitly, or because your role text says “internship”), full-time and permanent roles that LinkedIn mixes into the results — “Product Manager”, “Senior Product Manager”, “Associate Product Manager” and the like — are now removed, and the reverse for a full-time search. This is enforced in code from the job title (LinkedIn names internships in the title), so it holds even when ChatGPT is off, and it is not limited by the “never remove more than half” guard. The ChatGPT review prompt was also fixed: it used to say a full-time role was “fine to keep” for an internship seeker.
+
 ## 0.41.5: messaging an existing connection always waits for your approval
 - A direct message to someone you are **already connected to** is now always held as an editable draft that you approve before it sends, regardless of your follow-up setting. Before, it followed `followupMode`, so turning follow-ups to automatic would also have auto-sent messages to existing connections — higher-stakes than a note or a post-acceptance follow-up. The message itself is the role-matched template (openings for recruiters, a light ask for leaders/founders), which you can edit before approving.
 
