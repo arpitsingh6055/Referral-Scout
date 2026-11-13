@@ -1,12 +1,8 @@
-// Vercel function: records one user. The extension POSTs { id }. MONGODB_URI is a Vercel env var, so the credential
-// never reaches the extension. One row per person (needs a unique index on `handle`; see README).
-import { MongoClient } from 'mongodb';
-let client;
-async function col() {
-  if (!client) client = new MongoClient(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 15000 });
-  await client.connect();
-  return client.db('Referral_Scout').collection('user_details');
-}
+// Records one user. The extension POSTs { id }. MONGODB_URI is a Vercel env var, so the
+// credential never reaches the extension. The collection and its unique index are created
+// automatically on first use (see _db.js), so no manual Atlas table setup is needed.
+import { users } from './_db.js';
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'content-type');
@@ -17,7 +13,8 @@ export default async function handler(req, res) {
   const id = String(req.body?.id ?? '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 100);
   if (!id) return res.status(400).json({ error: 'no id' });
   try {
-    await (await col()).updateOne({ handle: id }, { $setOnInsert: { handle: id, createdAt: new Date() } }, { upsert: true });
+    const col = await users();
+    await col.updateOne({ handle: id }, { $setOnInsert: { handle: id, createdAt: new Date() } }, { upsert: true });
     return res.status(200).json({ ok: true });
   } catch {
     return res.status(500).json({ error: 'db error' });

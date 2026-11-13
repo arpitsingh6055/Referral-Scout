@@ -4,17 +4,22 @@ One Vercel project does everything: it records each user and serves a live dashb
 Your MongoDB connection string lives only in a Vercel environment variable, never in
 this repo and never in the extension.
 
-- `api/ping.js`  — the extension POSTs `{ id: "<linkedin-handle>" }` here; one row per person.
-- `api/stats.js` — returns the live count + user list (read-only); the dashboard calls it.
-- `index.html`   — the dashboard; fetches `/api/stats` on load, always current.
+- `api/_db.js`  — shared connection; ensures the collection + unique index exist on first use.
+- `api/ping.js` — the extension POSTs `{ id: "<linkedin-handle>" }` here; one row per person.
+- `api/stats.js`— returns the live count + user list (read-only); the dashboard calls it.
+- `index.html`  — the dashboard; fetches `/api/stats` on load, always current.
 
-## Setup (about 10 minutes, no server to run)
+The database `Referral_Scout`, the collection `user_details`, and the unique index on
+`handle` are all created automatically the first time the app talks to MongoDB
+(`createIndex` is idempotent and creates the collection if missing). So there is no
+manual table setup in Atlas.
+
+## Setup (about 5 minutes, no server to run)
 
 ### 1. MongoDB Atlas
-1. In your cluster, create database `Referral_Scout`, collection `user_details`.
-2. Collection → Indexes → Create: field `handle`, and tick **Unique**. (Stops duplicates.)
-3. Network Access → Add IP → **Allow access from anywhere** (`0.0.0.0/0`). Vercel has no fixed IP.
-4. You already have the connection string in `atlas-credentials.env` (keep that file gitignored —
+1. Network Access → Add IP → **Allow access from anywhere** (`0.0.0.0/0`). Vercel has no fixed IP.
+2. That's it — no collection or index to create by hand; the app does it on first request.
+3. You already have the connection string in `atlas-credentials.env` (keep that file gitignored —
    never commit it). It looks like `mongodb+srv://USER:PASSWORD@cluster.xxxx.mongodb.net/...`.
 
 ### 2. Vercel
@@ -30,11 +35,11 @@ this repo and never in the extension.
 In the `job-search-pipeline` (main) branch, open `src/background/usage.ts` and set:
 
 ```ts
-const USAGE_ENDPOINT = 'https://referral-scout-usage.vercel.app/api/ping';
+export const USAGE_ENDPOINT = 'https://referral-scout-usage.vercel.app/api/ping';
 ```
 
-Then add that host to `manifest` host permissions and rebuild (`npm run build`).
-Until the endpoint is set it's a no-op, so nothing is recorded and nothing breaks.
+Then rebuild (`pnpm build`). Until the endpoint is set it's a no-op, so nothing is recorded
+and nothing breaks.
 
 ## How it stays private
 The extension only ever sends a LinkedIn handle to `/api/ping`. The database credential
