@@ -1,9 +1,0 @@
-{
-  "valid": [
-    "{\"ok\":true}",
-    "```json\n{\"ok\":true}\n```",
-    "Result: {\"ok\":true,\"nested\":{\"text\":\"a } brace and \\\"quote\\\"\"}} trailing text",
-    "{\"ok\":true} citeturn1search0"
-  ],
-  "invalid": ["[]", "{\"ok\":", "no object", "{invalid} {\"ok\":true}"]
-}

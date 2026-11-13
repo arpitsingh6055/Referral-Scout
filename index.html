@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Referral Scout — usage</title>
+    <style>
+      :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
+      body { margin: 0; display: grid; place-items: center; min-height: 100vh; background: #0e131b; color: #e8edf5; }
+      main { text-align: center; padding: 40px 20px; width: 100%; max-width: 560px; }
+      .count { font-size: 76px; font-weight: 800; letter-spacing: -2px; color: #8ab4f8; line-height: 1; }
+      .label { color: #a3afc0; text-transform: uppercase; letter-spacing: 0.08em; font-size: 13px; margin-top: 6px; }
+      table { margin: 30px auto 0; border-collapse: collapse; width: 100%; font-size: 14px; }
+      td { padding: 7px 12px; border-top: 1px solid #2a3546; text-align: left; }
+      td:last-child { text-align: right; color: #75839a; white-space: nowrap; }
+      a { color: #8ab4f8; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      .muted { color: #75839a; font-size: 13px; margin-top: 26px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="count" id="count">—</div>
+      <div class="label">people using Referral Scout</div>
+      <table id="list"></table>
+      <p class="muted" id="updated"></p>
+    </main>
+    <script>
+      // Live from Atlas on each load, through the stats function on this same Vercel project.
+      fetch('/api/stats?t=' + Date.now())
+        .then(r => r.json())
+        .then(d => {
+          const users = d.users || [];
+          document.getElementById('count').textContent = d.count ?? users.length;
+          document.getElementById('list').innerHTML = users
+            .slice()
+            .reverse()
+            .map(
+              u =>
+                `<tr><td><a href="https://www.linkedin.com/in/${encodeURIComponent(u.id)}/" target="_blank" rel="noopener">${u.id}</a></td><td>${u.at ? new Date(u.at).toISOString().slice(0, 10) : ''}</td></tr>`,
+            )
+            .join('');
+          document.getElementById('updated').textContent = 'Live · loaded ' + new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+        })
+        .catch(() => {
+          document.getElementById('count').textContent = '0';
+        });
+    </script>
+  </body>
+</html>
