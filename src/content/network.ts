@@ -254,16 +254,23 @@ const plain = (name: string): string =>
     .trim()
     .toLowerCase();
 /**
- * The chat window for exactly this recipient. It lives in LinkedIn's messaging shadow root. A new conversation links
- * to the person's profile address; one with history shows only LinkedIn's encoded id (checked live, November 2026),
- * so the window is also recognised by the person's name in its header.
+ * The chat window for exactly this recipient. It lives in LinkedIn's messaging shadow root. The recipient's name is
+ * matched wherever LinkedIn writes it inside the window: the conversation header for a thread with history, and — for a
+ * brand-new "New message" compose overlay, whose header only ever says "New message" — the recipient pill, the avatar's
+ * alt text, and the profile link's aria-label (all confirmed live, November 2026). A profile-address link is used too.
+ * Matching only the header (and a link that a fresh compose overlay may not have rendered yet, or that carries an
+ * encoded id) is why a first message to a connection was sometimes wrongly reported as "window did not open".
  */
+const namesIn = (e: ParentNode): string[] => [
+  ...[...e.querySelectorAll<HTMLElement>('.msg-overlay-bubble-header__title, .msg-entity-lockup__entity-title, header h2, .artdeco-pill, [class*="typeahead"] [class*="pill"]')].map(textOf),
+  ...[...e.querySelectorAll<HTMLImageElement>('img[alt]')].map(i => i.alt.replace(/[’']s?\s*profile(\s+photo)?\s*$/i, '').trim()),
+  ...[...e.querySelectorAll<HTMLAnchorElement>('a[href*="/in/"]')].map(a => a.getAttribute('aria-label') ?? ''),
+];
 const conversations = (url: string, name = '') =>
   chatWindows().filter(
     e =>
       [...e.querySelectorAll<HTMLAnchorElement>('a[href*="/in/"]')].some(a => profileUrl(a.href) === url) ||
-      (!!name &&
-        plain(textOf(e.querySelector('.msg-overlay-bubble-header__title, .msg-entity-lockup__entity-title, header h2'))) === plain(name)),
+      (!!name && namesIn(e).some(t => plain(t) === plain(name))),
   );
 const HISTORY = '.msg-s-event-listitem__body, .msg-s-event-listitem__attachment';
 async function message(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unknown> {
