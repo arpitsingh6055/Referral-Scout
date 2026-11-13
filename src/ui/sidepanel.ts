@@ -256,10 +256,13 @@ function render(s: NetworkState): void {
     row.append(node('span', text), buttons);
     todos.append(row);
   };
-  for (const job of waiting.slice(0, 4))
+  for (const job of waiting.slice(0, 4)) {
+    const knownNames = s.contacts.filter(p => p.referralJob === job.url && p.direct).map(p => p.name).filter(Boolean);
+    const count = job.known ?? knownNames.length;
+    const who = knownNames.length ? ` — ${knownNames.slice(0, 4).join(', ')}${knownNames.length > 4 ? `, +${knownNames.length - 4} more` : ''}` : '';
     todo(
       'info',
-      `You already know ${job.known ?? 'some'} ${job.known === 1 ? 'person' : 'people'} at ${job.company}. Ask only them, or also look for stronger referrers?`,
+      `You already know ${count} ${count === 1 ? 'person' : 'people'} at ${job.company}${who}. Ask only them, or also look for stronger referrers?`,
       button(
         'Only them',
         () =>
@@ -279,6 +282,7 @@ function render(s: NetworkState): void {
         'btn sm',
       ),
     );
+  }
   if (toApprove)
     todo(
       'warn',

@@ -15,6 +15,9 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.41.9: the “ask who you know?” card now names the people
+- The “You already know N people at <company>” decision under “Needs you” now lists who they are (e.g. “— Radhakanth Kodukula, Vinay Krishna Gupta”), so you can see exactly who you’d be asking before choosing “Only them” or “Look wider”.
+
 ## 0.41.8: fixed a false “only lets you follow” on profiles where Connect is under More
 - Some profiles (3rd-degree, and others) show Message + More as the top buttons and keep **Connect inside the More menu**, while a hidden “Follow <name>” control also exists. The relationship check opened More but read its items once, immediately — and the menu’s Connect paints a beat later — so it missed Connect and wrongly reported “LinkedIn only lets you follow…”. It now waits for the menu item to render before deciding, and the Connect-click and Follow paths wait the same way. A genuine follow-only profile (Follow, and no Connect anywhere) is still detected correctly.
 
