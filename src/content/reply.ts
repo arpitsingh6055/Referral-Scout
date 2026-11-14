@@ -221,7 +221,30 @@ if (!installed.__referralScoutReply && location.hostname.endsWith('linkedin.com'
   pill.textContent = LABEL;
   (document.body ?? document.documentElement).append(host);
   console.info('[Referral Scout] Watching LinkedIn conversations on this tab.');
-  setInterval(() => {
-    void look();
-  }, 1500);
+  // A steady heartbeat catches new messages and the page rebuilding parts of itself.
+  setInterval(() => void look(), 1500);
+  // React immediately to in-app navigation (clicking the Message icon or a conversation) and to the thread panel
+  // mounting, so the card does not wait up to 1.5s — and is not missed when LinkedIn swaps threads without a reload.
+  let scheduled = 0,
+    href = location.href;
+  const soon = (): void => {
+    if (scheduled) return;
+    scheduled = window.setTimeout(() => {
+      scheduled = 0;
+      void look();
+    }, 150);
+  };
+  const onNav = (): void => {
+    if (location.href !== href) {
+      href = location.href;
+      signature = ''; // a new URL always gets a fresh read, even if the thread looks like the last one
+    }
+    soon();
+  };
+  window.addEventListener('popstate', onNav);
+  const watch = (body: HTMLElement): void => new MutationObserver(onNav).observe(body, { childList: true, subtree: true });
+  if (document.body) watch(document.body);
+  else
+    window.addEventListener('DOMContentLoaded', () => { if (document.body) watch(document.body); }, { once: true });
+  void look();
 }
