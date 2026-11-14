@@ -250,10 +250,24 @@ export function registerNetworkMessages(): void {
           job: job ? { title: job.title, company: job.company, url: job.url } : undefined,
           messages,
         });
-        const answer = extractJson(
-          await askChatGpt(prompt, new AbortController().signal, 'LEGACY', state.profile.url, '', { startMs: 40_000, totalMs: 120_000 }),
-        );
-        const text = z.object({ reply: z.string().trim().min(5).max(1500) }).parse(answer).reply;
+        const raw = await askChatGpt(prompt, new AbortController().signal, 'LEGACY', state.profile.url, '', { startMs: 40_000, totalMs: 120_000 });
+        let answer: unknown;
+        try {
+          answer = extractJson(raw);
+        } catch {
+          answer = raw; // ChatGPT sometimes answers in plain prose instead of JSON
+        }
+        // ChatGPT does not always use the exact key we asked for; accept the text under any common key, or a bare string.
+        const pickReply = (a: unknown): string => {
+          if (typeof a === 'string') return a;
+          if (a && typeof a === 'object')
+            for (const k of ['reply', 'text', 'message', 'response', 'content', 'draft']) {
+              const v = (a as Record<string, unknown>)[k];
+              if (typeof v === 'string') return v;
+            }
+          return '';
+        };
+        const text = z.string().trim().min(5).parse(pickReply(answer).slice(0, 1500));
         return { ok: true, text };
       })()
         .then(respond)

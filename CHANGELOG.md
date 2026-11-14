@@ -15,6 +15,9 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.41.11: “draft a reply with ChatGPT” no longer fails on a differently-shaped answer
+- Drafting a reply failed with a validation error (“expected string, received undefined”) whenever ChatGPT returned the text under a different key than “reply”, or as plain prose instead of JSON. It now accepts the reply under any common key (reply/text/message/…) or as a bare string, and truncates an over-long reply instead of erroring.
+
 ## 0.41.10: message a connection even when LinkedIn opens the full-page thread
 - On some profiles the “Message” control is a link that navigates to the full messaging page (/messaging/thread/…) instead of opening an overlay bubble — so direct messages failed with “The message window for this person did not open”. The extension now also recognises and sends in the full-page thread, but only after confirming the open thread is the right recipient (name match plus LinkedIn’s encoded member id), so a message can never land in the wrong thread. Overlay sending is unchanged.
 

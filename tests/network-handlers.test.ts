@@ -317,6 +317,11 @@ it('keeps a conversation in step for someone who was asked, marks the reply, and
   expect(vi.mocked(askChatGpt).mock.calls.at(-1)![0]).toContain('Sure, share your CV');
   vi.mocked(askChatGpt).mockRejectedValueOnce(new Error('Sign in to ChatGPT.'));
   expect(await talk('draft')).toMatchObject({ ok: false, error: 'ChatGPT could not draft a reply: Sign in to ChatGPT.' });
+  // ChatGPT does not always use the "reply" key, or may answer in plain prose; the draft must still work.
+  vi.mocked(askChatGpt).mockResolvedValueOnce('{"text":"Thanks Ananya, attaching my CV now."}');
+  expect(await talk('draft')).toEqual({ ok: true, text: 'Thanks Ananya, attaching my CV now.' });
+  vi.mocked(askChatGpt).mockResolvedValueOnce('Thanks a lot, Ananya — CV attached and link shared.');
+  expect(await talk('draft')).toEqual({ ok: true, text: 'Thanks a lot, Ananya — CV attached and link shared.' });
 });
 
 it('recognises a conversation exactly by profile address or by LinkedIn’s messaging id, and says which job the person was asked about', async () => {
