@@ -32,6 +32,20 @@ export function buildPeople(s: NetworkState, list: HTMLElement, redraw: () => vo
     bar.append(b);
   }
   list.append(bar);
+  const searchBox = node('input', '', 'people-search') as HTMLInputElement;
+  searchBox.type = 'search';
+  searchBox.placeholder = 'Search by name, role, or company';
+  searchBox.value = ui.search;
+  searchBox.setAttribute('aria-label', 'Search people');
+  const applySearch = (): void => {
+    const q = ui.search.trim().toLowerCase();
+    for (const c of list.querySelectorAll<HTMLElement>('.person')) c.hidden = q !== '' && !(c.dataset.search ?? '').includes(q);
+  };
+  searchBox.addEventListener('input', () => {
+    ui.search = searchBox.value;
+    applySearch();
+  });
+  list.append(searchBox);
   const test = filters.find(f => f[0] === ui.filter)?.[2] ?? filters[0]![2];
   const urgency = (p: NetworkContact): number => (p.state === 'review' ? 0 : p.state === 'attention' ? 1 : 2); // what needs you comes first
   const people = s.contacts.filter(test).sort((a, b) => urgency(a) - urgency(b) || (b.score ?? 0) - (a.score ?? 0));
@@ -49,6 +63,7 @@ export function buildPeople(s: NetworkState, list: HTMLElement, redraw: () => vo
     list.append(e);
   }
   for (const p of people) list.append(personCard(s, p));
+  applySearch();
 }
 export function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
   const card = node('article', '', 'person'),
@@ -76,6 +91,9 @@ export function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
         ? `Accepted ${when(p.acceptedAt)}${p.messagedAt ? ` · introduced ${when(p.messagedAt)}` : ''}`
         : p.reason;
   card.append(node('p', line, 'reason'));
+  const refJob = p.referralJob ? s.referralJobs?.find(j => j.url === p.referralJob) : undefined;
+  if (refJob) card.append(node('p', `Referral for: ${refJob.title} · ${refJob.company}`, 'muted small'));
+  card.dataset.search = `${p.name} ${p.headline} ${p.companyName ?? ''} ${refJob ? `${refJob.title} ${refJob.company}` : ''}`.toLowerCase();
   let saveEdit: (() => Promise<unknown>) | null = null; // an unsaved rewording is saved before Approve sends anything
   for (const [text, label] of [
     [p.invitationNote, 'Invitation note'],
@@ -151,7 +169,7 @@ export function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
         'btn sm',
       ),
     );
-  else if (p.state === 'review' && p.approvalKind && s.active)
+  else if (p.state === 'review' && p.approvalKind) {
     actions.append(
       button(
         `Approve ${p.approvalKind === 'connect' ? 'invitation' : 'message'}`,
@@ -159,13 +177,16 @@ export function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
           await saveEdit?.();
           await act(
             { kind: 'network', action: 'approve', url: p.url },
-            `Approved for ${p.name}. Sending shortly; you can keep approving others.`,
+            s.active
+              ? `Approved for ${p.name}. Sending shortly; you can keep approving others.`
+              : `Approved for ${p.name}. Outreach will resume and send it shortly.`,
           );
         },
         'btn sm primary',
       ),
     );
-  else if (p.state === 'review' && p.approvalKind) actions.append(node('span', 'Press Start outreach to approve and send.', 'field-help'));
+    if (!s.active) actions.append(node('span', 'Outreach is paused — approving resumes it and sends this.', 'field-help'));
+  }
   if (p.state === 'found')
     actions.append(
       button(

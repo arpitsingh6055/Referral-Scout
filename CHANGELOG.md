@@ -15,6 +15,12 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.42.0: approve while paused, see which job a person is for, and search people
+- **The Approve button now shows even when outreach is paused or not started.** Before, a paused run (for example after a few failed sends) replaced it with “Press Start outreach to approve”, so there was no way to approve — approving now resumes outreach and sends.
+- **Each person card shows which job the referral is for** (“Referral for: <role> · <company>”), not just their headline.
+- **The People tab has a search box** — filter by name, role, or company.
+- The direct-message window detection waits longer (18s) for a slow overlay or full-page thread before giving up.
+
 ## 0.41.11: “draft a reply with ChatGPT” no longer fails on a differently-shaped answer
 - Drafting a reply failed with a validation error (“expected string, received undefined”) whenever ChatGPT returned the text under a different key than “reply”, or as plain prose instead of JSON. It now accepts the reply under any common key (reply/text/message/…) or as a bare string, and truncates an over-long reply instead of erroring.
 

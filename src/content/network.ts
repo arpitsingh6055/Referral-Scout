@@ -320,7 +320,7 @@ async function message(cmd: NetworkPageCommand, signal: AbortSignal): Promise<un
       return found.length === 1 ? found[0] : null;
     },
     signal,
-    12000,
+    18000,
   ).catch(() => {
     throw new Error('The message window for this person did not open, so the message was NOT sent.');
   });

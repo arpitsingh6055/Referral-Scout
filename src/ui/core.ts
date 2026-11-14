@@ -8,6 +8,7 @@ export type Tab = 'home' | 'referrals' | 'people' | 'saved' | 'activity' | 'setu
 export const ui = {
   tab: 'home' as Tab,
   filter: 'all',
+  search: '',
   open: new Set<string>(),
   /** Set when the last company finishes being searched, until the person has seen the summary. */
   done: null as { people: number; companies: number } | null,

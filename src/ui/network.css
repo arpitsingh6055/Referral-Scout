@@ -1847,3 +1847,14 @@ details.person-row > .person .person-head {
 .inline .bubble {
   margin: 4px 0 10px;
 }
+.people-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 8px 0 4px;
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: inherit;
+  font-size: 14px;
+}
