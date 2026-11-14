@@ -32,6 +32,26 @@ async function injectOpenTabs(): Promise<void> {
     }),
   );
 }
+// Put the content script into one tab only if it is not already answering there. Blind re-injection would re-run
+// the content modules and register a second copy of their message listeners, so a ping guards it: an up-to-date tab
+// replies and is left alone; a tab without the script (opened before this extension loaded, then navigated in-app)
+// gets it. This is what makes the messaging card appear on in-app navigation without a manual refresh.
+async function ensureContentScript(tabId: number): Promise<void> {
+  try {
+    const pong = (await chrome.tabs.sendMessage(tabId, { kind: 'network.ping' })) as { ok?: boolean } | undefined;
+    if (pong?.ok) return;
+  } catch {
+    // No receiver in this tab: inject below.
+  }
+  await chrome.scripting.executeScript({ target: { tabId }, files: ['health.js'] }).catch(() => undefined);
+}
+// LinkedIn is a single-page app, so moving into Messaging (clicking the Message icon or a conversation) can change
+// the tab's URL without a page load. Ensure the content script is present whenever a tab reaches Messaging.
+const MESSAGING = /^https:\/\/(www\.)?linkedin\.com\/messaging(\/|$)/;
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  const url = info.url ?? tab.url ?? '';
+  if (MESSAGING.test(url)) void ensureContentScript(tabId);
+});
 // Installing or updating never pauses anything: a new install simply has nothing running, and an update carries on.
 // Earlier versions paused here on every reload, which left a "Resume" button on a panel that had never been started.
 chrome.runtime.onInstalled.addListener(() => {
