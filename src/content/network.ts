@@ -280,6 +280,21 @@ const conversations = (url: string, name = '') =>
       (!!name && namesIn(e).some(t => plain(t) === plain(name))),
   );
 const HISTORY = '.msg-s-event-listitem__body, .msg-s-event-listitem__attachment';
+/**
+ * The open FULL-PAGE messaging thread. On some profiles LinkedIn’s “Message” is an anchor link (interop=msgOverlay)
+ * that navigates to /messaging/thread/… instead of opening an overlay bubble. This returns that thread’s container, but
+ * ONLY when its header confirms this exact recipient (name match + LinkedIn’s encoded member id present), so a message
+ * can never be typed into the wrong thread. Exported for testing. `loc` is passed in so it can be tested without navigating.
+ */
+export function openThreadFor(root: ParentNode, name: string, loc: { pathname: string; search: string }): HTMLElement | null {
+  if (!/^\/messaging\/thread\//.test(loc.pathname)) return null;
+  const composer = [...root.querySelectorAll<HTMLElement>('.msg-form__contenteditable')].find(visible);
+  if (!composer) return null;
+  const scope = (composer.closest('.msg-thread, .msg-convo-wrapper, .scaffold-layout__detail, main') as HTMLElement | null) ?? (root as HTMLElement);
+  const headerName = plain(textOf(scope.querySelector('.msg-entity-lockup__entity-title, .msg-thread__link-to-profile')));
+  const encodedId = !!scope.querySelector('a.msg-thread__link-to-profile, a[href*="/in/ACoA"]') || /recipient=ACoA/i.test(loc.search);
+  return !!name && headerName === plain(name) && encodedId ? scope : null;
+}
 async function message(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unknown> {
   const top = topCard(cmd.url);
   if (relationship(top) !== 'connected') throw new Error('A first-degree connection is required before messaging.');
@@ -290,6 +305,10 @@ async function message(cmd: NetworkPageCommand, signal: AbortSignal): Promise<un
   const mine = (): HTMLElement[] => {
     const found = conversations(cmd.url, name);
     if (found.length) return found;
+    // LinkedIn navigated to the full-page thread (the Message link) instead of opening an overlay — use it, but
+    // only when it is confirmed to be this recipient.
+    const page = openThreadFor(document, name, location);
+    if (page) return [page];
     // Last resort: the one window that opened because Message was just pressed.
     const opened = chatWindows().filter(w => !before.has(w));
     return opened.length === 1 ? opened : [];
@@ -330,7 +349,8 @@ async function message(cmd: NetworkPageCommand, signal: AbortSignal): Promise<un
   ).catch(() => {
     throw new Error('The message is ready, but LinkedIn’s Send button is unavailable.');
   });
-  if (!conversation.isConnected || !chatWindows().includes(conversation)) throw new Error('The conversation changed before sending.');
+  if (!conversation.isConnected || (!chatWindows().includes(conversation) && !location.pathname.startsWith('/messaging/')))
+    throw new Error('The conversation changed before sending.');
   const bodies = (): string[] =>
     [conversation, ...conversations(cmd.url, name)].flatMap(c => [...c.querySelectorAll<HTMLElement>('.msg-s-event-listitem__body')].map(e => e.innerText));
   const bubblesBefore = bodies().length,

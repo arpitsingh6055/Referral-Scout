@@ -203,6 +203,19 @@ it('does not call a profile follow-only when Connect is under More but the menu 
   expect(reply).toMatchObject({ ok: true, data: { state: 'not-connected' } });
 }, 12000);
 
+it('openThreadFor only accepts the full-page thread when it is confirmed to be this recipient (never a wrong send)', async () => {
+  const { openThreadFor } = await import('../src/content/network');
+  document.body.innerHTML = `<div class="msg-thread">
+    <a class="msg-thread__link-to-profile" href="https://www.linkedin.com/in/ACoAACMzS3ABzD7JFhgJ83yF98CO3aldAteSTkc"><h2 class="msg-entity-lockup__entity-title">AVINASH YADAV</h2></a>
+    <ul class="msg-s-message-list-content"></ul>
+    <div class="msg-form__contenteditable" contenteditable="true" role="textbox"><p><br></p></div>
+  </div>`;
+  const loc = { pathname: '/messaging/thread/new/', search: '?recipient=ACoAACMzS3ABzD7JFhgJ83yF98CO3aldAteSTkc&screenContext=NON_SELF_PROFILE_VIEW' };
+  expect(openThreadFor(document, 'AVINASH YADAV', loc)).not.toBeNull(); // right person -> usable
+  expect(openThreadFor(document, 'Someone Else', loc)).toBeNull(); // wrong name -> never a send target
+  expect(openThreadFor(document, 'AVINASH YADAV', { pathname: '/in/avinash/', search: '' })).toBeNull(); // not on a thread page
+});
+
 it('reports follow-only only when LinkedIn truly offers no Connect, just Follow', async () => {
   bareProfile('<button aria-label="Follow Alex Example">Follow</button><button id="more">More</button>');
   document.body.insertAdjacentHTML('beforeend', '<div role="menu" hidden><a role="menuitem">Send profile in a message</a><a role="menuitem">Save to PDF</a></div>');

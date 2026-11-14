@@ -15,6 +15,9 @@ What is and is not proven on the live site is recorded in `docs/live-verificatio
 - Typing a note no longer triggers LinkedIn keyboard shortcuts. A top card left over from the previous profile is ignored when LinkedIn changes page without reloading.
 - Not yet confirmed on the live site; see `docs/live-verification.md`.
 
+## 0.41.10: message a connection even when LinkedIn opens the full-page thread
+- On some profiles the “Message” control is a link that navigates to the full messaging page (/messaging/thread/…) instead of opening an overlay bubble — so direct messages failed with “The message window for this person did not open”. The extension now also recognises and sends in the full-page thread, but only after confirming the open thread is the right recipient (name match plus LinkedIn’s encoded member id), so a message can never land in the wrong thread. Overlay sending is unchanged.
+
 ## 0.41.9: the “ask who you know?” card now names the people
 - The “You already know N people at <company>” decision under “Needs you” now lists who they are (e.g. “— Radhakanth Kodukula, Vinay Krishna Gupta”), so you can see exactly who you’d be asking before choosing “Only them” or “Look wider”.
 
