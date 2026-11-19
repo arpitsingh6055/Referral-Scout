@@ -4,11 +4,11 @@
 
 # Referral Scout
 
-**Find jobs. Get referred.**
+**Find jobs that fit you. Get referred.**
 
-A browser extension that searches LinkedIn jobs for the role you want, lets you choose the companies, then finds the people at each one whose referral counts and asks them politely, a few a day.
+A browser extension that searches LinkedIn jobs for the role you want, ranks them by how well they fit your background, finds the people at each company whose referral counts, and drafts the messages for you to approve.
 
-<sub>Chrome &amp; Edge (Manifest V3) · v0.31.0 · No servers, no telemetry, API key optional</sub>
+<sub>Chrome &amp; Edge (Manifest V3) · v0.45.5 · Your data stays in your browser</sub>
 
 </div>
 
@@ -22,20 +22,59 @@ A browser extension that searches LinkedIn jobs for the role you want, lets you 
   <img src="docs/screenshots/jobs.png" alt="Jobs: the pipeline board and one card per company" width="260" />
 </p>
 
+## Install
+
+Referral Scout is not in a browser store yet (it is on its way to Microsoft Edge Add-ons), so installing takes two clicks in your browser's extensions page. The installers do the rest.
+
+**Windows** — open PowerShell (not as administrator) and paste:
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/arpitsingh6055/Referral-Scout/job-search-pipeline/install/install-windows.ps1 | iex"
+```
+
+**macOS** — open Terminal and paste:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/arpitsingh6055/Referral-Scout/job-search-pipeline/install/install-mac.sh | bash
+```
+
+Each installer downloads the current release (0.45.5), unpacks it into a fixed folder in your user account, copies that folder's path to the clipboard and opens the extensions page. Then:
+
+1. Turn on **Developer mode**.
+2. Click **Load unpacked**, paste the path and select the folder.
+3. Pin Referral Scout and click it to open the side panel.
+
+You can read the scripts first: [`install/install-windows.ps1`](install/install-windows.ps1), [`install/install-mac.sh`](install/install-mac.sh). To update later, run the installer again and press **Reload** on the extension. Prefer doing it by hand? Download the zip from [Releases](https://github.com/arpitsingh6055/Referral-Scout/releases), unzip it, and load that folder the same way.
+
+You need to be signed in to **LinkedIn** and to **ChatGPT** (chatgpt.com) in the same browser.
+
 ## The problem
 
-A referral is the most reliable way into an interview, and asking for one is slow, repetitive work: find the openings, work out who at each company could refer you, write to each of them, and remember who answered. Most people give up after two or three companies.
+A referral is the most reliable way into an interview, and asking for one is slow, repetitive work: find the openings, work out which ones you actually fit, find who at each company could refer you, write to each of them, and remember who answered. Most people give up after two or three companies.
 
 ## What Referral Scout does
 
-It runs that routine from a side panel in your browser, on your own signed-in LinkedIn, in four steps:
+It runs that routine from a side panel, on your own signed-in LinkedIn:
 
-1. **Find jobs.** It searches LinkedIn Jobs for the role you typed and for similar titles (an "operations intern" search also tries supply chain, logistics and business operations).
-2. **You choose the companies.** It keeps one job per company, ranks companies where you already know someone higher, removes adverts and poor matches, and shows you the list. Nothing is contacted until you confirm.
-3. **Find the right people.** At each company it uses LinkedIn's *Current company* filter to find people whose referral counts and who are likely to answer.
-4. **Reach out, slowly.** People you already know get a message. The strongest three to five others get a connection request with a short note, and a follow-up once they accept.
+1. **Find jobs.** It searches LinkedIn Jobs for the role you typed and for similar titles suggested by ChatGPT (an "operations intern" search also tries supply chain, logistics and business operations), and removes adverts, paid courses and roles of the wrong type (internship or full-time).
+2. **Rank them by fit.** It reads the full description of each job and asks ChatGPT how strong a candidate you are for it, judged against your whole LinkedIn profile and CV. The best fits go to the top, each with the reason (see below).
+3. **You choose the companies.** Nothing is contacted until you confirm.
+4. **Find the right people.** At each company it uses LinkedIn's *Current company* filter to find people whose referral counts and who are likely to answer, starting with people you already know.
+5. **Reach out, slowly.** People you know get a message; the strongest three to five others get a connection request with a short note written for who they are, and a follow-up once they accept. By default every message waits for your approval.
 
-You can also start from any LinkedIn job page: the extension adds **Ask for referrals** and **My connections here** buttons there.
+You can also start from any LinkedIn job page with the **Ask for referrals** and **My connections here** buttons. When someone replies, a small card in LinkedIn messaging reminds you which job you asked about and can draft your answer.
+
+## How jobs are ranked
+
+A qualification alone is a poor guide: an MBA who has spent years in sales, or a B.Tech who moved into marketing, fits jobs their degree would not suggest. So ranking uses everything:
+
+- **Your background:** every section of your LinkedIn profile (About, Experience, Education, Skills, Certifications, Projects) and your CV, if you add one.
+- **Your qualifications:** a checklist (MBA/PGDM, B.Tech/B.E. CSE-IT-circuit or other branches, M.Tech/M.E., CA/CS/CMA/B.Com, CFA/FRM/CPA), pre-filled from your profile. You can change it.
+- **Each job's full description,** read ten jobs at a time per ChatGPT question.
+
+ChatGPT weighs hard requirements (a named degree, years of experience, must-have skills), then function and sector, then your qualification, then the direction you are aiming in, so a career switcher is scored on their combined background. Each job gets a fit score from 0 to 100 and a reason with the biggest gap, for example *"PGDM asked for; sales internship fits; no SQL"*. Badges say whether the match is your qualification, your experience or your field. Nothing is ever removed for a weak fit; it just ranks lower.
+
+Descriptions are read four pages at a time and remembered for 14 days, so repeat searches are faster. **Choose now** stops ranking early and shows what has been ranked.
 
 ## Who it asks
 
@@ -51,16 +90,14 @@ Recruiters and HR are asked at every company. Interns, students, former employee
 
 ## Where ChatGPT comes in
 
-ChatGPT is used for three questions per run, each covering everything at once: which job titles to search, which listings to drop, and who to ask at each chosen company (with the wording for the note and messages). The extension checks every answer before using it, and carries on with built-in rules whenever ChatGPT is unavailable.
+ChatGPT plans the search (similar job titles), ranks the jobs, decides who to ask at each chosen company, and writes or adapts the notes and messages. Every answer is checked before use, and the extension carries on with built-in rules whenever ChatGPT is unavailable.
 
-There are two ways to connect it:
-
-- **The ChatGPT website (default).** Nothing to set up; stay signed in at chatgpt.com. Questions are typed into a background tab and the answer is read back.
-- **Your own OpenAI API key (optional).** Faster, and no tab is opened. Set it under Settings, ChatGPT connection. OpenAI bills API use to your account.
+- **The ChatGPT website (default).** Nothing to set up; stay signed in at chatgpt.com. Questions are typed into a tab in the background window and the answer is read back.
+- **Your own OpenAI API key (optional).** Faster, and no tab is opened. Set it in Settings. OpenAI bills API use to your account.
 
 ## Tracking what came of it
 
-Home shows the whole pipeline in six numbers: **Companies, Asked, Accepted, Replied, Referred, Applied**. Jobs shows the same per company. Invitations and acceptances are tracked for you. Replies, referrals and applications are marked by you with one press, because the extension does not read your LinkedIn inbox.
+Home shows the whole pipeline in six numbers: **Companies, Asked, Accepted, Replied, Referred, Applied**. Invitations, acceptances and replies are tracked for you; referrals and applications you mark with one press.
 
 ## Built to protect your account
 
@@ -72,55 +109,49 @@ LinkedIn's User Agreement does not allow automated activity, and accounts that s
 | Pending invitations | Stops at 100 outstanding |
 | Pause between sends | 30 seconds or more, never a fixed rhythm |
 | People per company | 3 (you can choose 4 or 5) |
-| Companies per search | 10 ticked for you, up to 20, confirmed by you |
+| Approval | Every invitation and message waits for you (automatic sending is optional) |
 | Hours | Any time; an "only 08:00 to 22:00" option is in Settings |
 
-**Pause everything** stops searches and sending at once, and **Resume** continues exactly what was running. A LinkedIn sign-out or checkpoint pauses everything with the reason. All background work happens in one separate window that is never brought to the front and closes when the work is done.
+**Pause everything** stops searches and sending at once, and **Resume** continues where it stopped. A LinkedIn sign-out or checkpoint pauses everything with the reason. Background work happens in a separate window that stays behind your own.
 
 ## Privacy
 
-- Everything is stored in your browser, on your device. There is no server and no telemetry.
-- Text sent to ChatGPT: your target roles, your headline or CV text if you added one, and the job titles and company names being planned. Nobody's profile is sent for the planning questions.
-- Conversations: when you open a LinkedIn conversation with someone the extension contacted, its last 20 messages are kept on your device so a reply can be drafted. They are sent to ChatGPT only when you press "Draft a reply with ChatGPT", and are never shown in the side panel.
-- An API key, if you add one, is stored on your device only, is never shown again in the panel, and is left out of exports.
-- **Settings → Export saved data** downloads everything as a file; **Delete everything** removes it.
+- Your LinkedIn profile, CV, job lists, people and messages are stored in your browser, on your device.
+- After you agree on the first screen, the extension sends one usage record per LinkedIn account (a random install ID, your name, your LinkedIn profile ID and when you first used it) so we can count users. Nothing else is sent to us, and nothing is sold or used for ads.
+- To rank jobs and write messages, prompts in your own ChatGPT account can include your profile and CV text, job descriptions and the public details of people you contact. They follow your ChatGPT history settings.
+- An API key, if you add one, stays on your device and is left out of exports. **Settings → Export saved data** downloads everything; **Delete everything** removes it.
 
-More detail: [`docs/privacy.md`](docs/privacy.md).
+Full policy: **https://referral-scout.vercel.app/privacy**
 
-## Install
+## Build from source
 
-You will need **Node.js 22+** and a Chromium browser (Chrome 120+ or Edge).
+You need **Node.js 22+** and a Chromium browser (Chrome 120+ or Edge).
 
 ```bash
 corepack enable
 corepack pnpm install --frozen-lockfile
-corepack pnpm build
+corepack pnpm build      # builds dist/
+corepack pnpm package    # builds referral-scout.zip, ready for a store or a release
 ```
 
-Then load it:
-
-1. Open `chrome://extensions` (or `edge://extensions`) and turn on **Developer mode**.
-2. Choose **Load unpacked** and select the generated **`dist/`** folder.
-3. Pin the extension, open LinkedIn while signed in, and click the icon to open the side panel.
-
-Setup is two steps: read your LinkedIn profile, then say what role you want and where. After rebuilding, reload the extension and refresh any open LinkedIn and ChatGPT tabs.
+Load `dist/` with **Load unpacked**. After rebuilding, reload the extension and refresh open LinkedIn and ChatGPT tabs.
 
 ## Project status
 
-Working, and still young. What is and is not confirmed on the live sites is recorded in [`docs/live-verification.md`](docs/live-verification.md), and every change is in [`CHANGELOG.md`](CHANGELOG.md).
+Working, and still young. What is confirmed on the live sites is recorded in [`docs/live-verification.md`](docs/live-verification.md), and changes are in [`CHANGELOG.md`](CHANGELOG.md).
 
 - LinkedIn changes its pages often. When something stops being read, **Settings → Check this LinkedIn page** says which part.
 - Location filtering is confirmed for India; other countries and cities fall back to a text match.
-- The API key path and the detection of LinkedIn's "Promoted" listings have automated tests but have not been confirmed live.
 
 ## Troubleshooting
 
 | What you see | What to do |
 |---|---|
 | "ChatGPT was not available" | Sign in at chatgpt.com in the same browser, or add an API key. The run continues on built-in rules either way. |
+| The installer says 404 | The release or script is not on GitHub yet; try again later, or download the zip from Releases. |
 | Nothing happens after Resume | Open Activity: the newest line says what is being waited for. |
 | A company shows "closed early" | LinkedIn pages for it could not be read. Remove the job and add it again from its job page. |
-| The Remember or referral buttons are missing on LinkedIn | Refresh the LinkedIn tab after installing or updating. |
+| Buttons or the reply card are missing on LinkedIn | Refresh the LinkedIn tab after installing or updating. |
 
 ## Under the hood
 
@@ -128,14 +159,14 @@ TypeScript, Vite, Zod and Vitest. Manifest V3 with a service worker, content scr
 
 | Folder | What lives there |
 |---|---|
-| `src/shared` | Pure rules with no browser access: who to ask, how jobs are ranked, the ChatGPT prompts and how their answers are checked |
+| `src/shared` | Pure rules with no browser access: job ranking and its prompts, qualifications, who to ask, how answers are checked |
 | `src/background` | The engine (one step at a time), the handlers behind the panel's buttons, tab and window handling, the ChatGPT and API connection |
 | `src/content`, `src/parsers` | Reading LinkedIn and ChatGPT pages by role, label and text, never by generated class names |
-| `src/ui` | The side panel: `core` (helpers), `live` (status and tracker), `jobs`, `people`, `pipeline`, `setup`, `activity`, `sidepanel` (the screen itself) |
+| `src/ui` | The side panel |
+| `install` | The Windows and macOS installers |
 
 ```bash
 corepack pnpm check     # formatting, tests, typecheck and build, same as CI
-corepack pnpm format    # reformat with Prettier
 ```
 
 Contributions are welcome. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md). Security reports: [`SECURITY.md`](SECURITY.md).
