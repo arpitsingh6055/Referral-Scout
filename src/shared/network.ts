@@ -201,6 +201,8 @@ export interface NetworkState {
     characterCount?: number;
   } | null;
   dossier?: string;
+  /** Qualification ids the full profile and CV suggest. Computed for the side panel only; the text itself never leaves the background. */
+  suggestedSpecializations?: string[];
   dossierSavedAt?: number;
   profileCapturedAt?: number;
   active: boolean;

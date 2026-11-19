@@ -1,4 +1,5 @@
 import { pingUsage } from './usage';
+import { suggestSpecializationsFromProfile } from '../shared/seeker';
 import { sameJob } from '../shared/jobsearch';
 import { extractJson } from '../parsers/json';
 import { replyPrompt } from '../shared/referral';
@@ -84,8 +85,18 @@ async function clearAllNetwork(): Promise<void> {
 function statusView(s: NetworkState): NetworkState {
   // Polls are metadata only. Exact CV/profile text is read by the background
   // when needed for a user-initiated ChatGPT job; never sent on each sidepanel poll.
+  // Only the qualification ids read from that text go to the panel, to pre-tick its checklist.
+  const suggestedSpecializations = s.profile
+    ? suggestSpecializationsFromProfile({
+        headline: s.profile.headline,
+        sections: s.profile.sections,
+        rawText: s.profile.rawText,
+        cvText: s.cv?.text,
+      })
+    : [];
   return {
     ...s,
+    suggestedSpecializations,
     ...(s.profile
       ? {
           profile: (() => {

@@ -14,9 +14,12 @@ export interface QualificationPicker {
   confirmed: () => boolean;
 }
 
-/** What the seeker's own profile says they hold. */
+/**
+ * What the seeker's own profile says they hold. The background reads it from the full LinkedIn profile (Education,
+ * Certifications) and the CV, which the panel never receives; headline/About is only a fallback.
+ */
 export function suggestedQualifications(s: NetworkState): string[] {
-  return detectSpecializations(`${s.profile?.headline ?? ''}\n${s.profile?.about ?? ''}\n${s.cv?.text ?? ''}`);
+  return s.suggestedSpecializations ?? detectSpecializations(`${s.profile?.headline ?? ''}\n${s.profile?.about ?? ''}`);
 }
 
 export function qualificationPicker(s: NetworkState, compact: boolean): QualificationPicker {

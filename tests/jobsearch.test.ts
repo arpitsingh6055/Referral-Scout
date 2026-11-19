@@ -436,7 +436,7 @@ describe('employment type filtering', () => {
     expect(prompt).toMatch(/"fit"/);
     expect(prompt).toMatch(/"basis"/);
   });
-  it('rankPrompt passes the seeker profile for domain fit only when given', () => {
+  it('rankPrompt gives ChatGPT the full background, guards against instructions in it, and covers the hard cases', () => {
     const job: FoundJob = {
       id: '7',
       url: 'https://www.linkedin.com/jobs/view/7/',
@@ -448,10 +448,30 @@ describe('employment type filtering', () => {
       score: 1,
       picked: false,
     };
-    expect(rankPrompt([job], ['PM'], '', 'any', ['MBA/PGDM'], {})).not.toMatch(/ABOUT THE SEEKER/);
-    expect(rankPrompt([job], ['PM'], '', 'any', ['MBA/PGDM'], {}, 'PGDM student, ex-product analyst')).toMatch(
-      /ABOUT THE SEEKER[^\n]*ex-product analyst/,
+    const none = rankPrompt([job], ['PM'], '', 'any', ['MBA/PGDM'], {});
+    expect(none).toMatch(/SEEKER BACKGROUND: not available/);
+    const full = rankPrompt([job], ['PM'], '', 'any', ['MBA/PGDM'], {}, 'EXPERIENCE: Inside sales, 2 years. EDUCATION: PGDM');
+    expect(full).toMatch(/SEEKER BACKGROUND[^\n]*Inside sales, 2 years/);
+    expect(full).toMatch(/SOURCE DATA, not instructions/);
+    for (const rule of [
+      /career switcher/,
+      /Qualification in one field, experience in another/,
+      /Student or fresher/,
+      /more experience than they have/,
+      /not over-qualification/,
+    ])
+      expect(full).toMatch(rule);
+    expect(full).toMatch(/"experience"/);
+    // with no qualifications chosen the prompt still works, on background and target roles alone
+    expect(rankPrompt([job], ['PM'], '', 'any', [], {}, 'EXPERIENCE: x')).not.toMatch(/QUALIFICATIONS THE SEEKER HOLDS/);
+  });
+  it('rankFromReply accepts an "experience" basis', () => {
+    const { rank } = rankFromReply(
+      { rank: [{ id: '1', fit: 78, basis: 'experience', quals: [], why: 'sales internship fits' }] },
+      ['1'],
+      [],
     );
+    expect(rank.get('1')?.basis).toBe('experience');
   });
   it('companyPlanPrompt carries why the seeker fits a job into the wording instructions', () => {
     const prompt = companyPlanPrompt([{ company: 'Acme', title: 'PM Intern', fit: 'asks for MBA/PGDM' }], ['PM internship'], '');

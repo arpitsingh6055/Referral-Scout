@@ -238,9 +238,11 @@ export function jobChooser(search: JobSearch): HTMLElement {
           'span',
           job.basis === 'degree' && job.matched?.length
             ? `Matches your qualification: ${job.matched.join(', ')}`
-            : job.matched?.length
-              ? `Fits your field: ${job.matched.join(', ')}`
-              : 'Fits your background',
+            : job.basis === 'experience'
+              ? 'Fits your experience'
+              : job.matched?.length
+                ? `Fits your field: ${job.matched.join(', ')}`
+                : 'Fits your background',
           'badge attention',
         ),
       );

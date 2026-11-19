@@ -65,6 +65,7 @@ import {
   type CompanyStrategy,
 } from '../shared/jobsearch';
 import { matchSpecializations, SPECIALIZATIONS } from '../shared/specializations';
+import { seekerEvidence, suggestSpecializationsFromProfile, type SeekerSource } from '../shared/seeker';
 import { extractJson } from '../parsers/json';
 import { networkCommand, networkTab, showWorkTab, closeWorkWindow } from './network-browser';
 import { prepareIntroduction, prepareInvitation, askChatGpt } from './network-ai';
@@ -335,6 +336,15 @@ const headlineOf = (s: NetworkState): string => {
   const h = s.profile?.headline ?? '';
   return /^verify\b|verification/i.test(h) ? '' : h;
 };
+/** Everything the extension holds about the seeker's own background: the full LinkedIn profile and the CV. */
+const profileSource = (s: NetworkState): SeekerSource => ({
+  headline: headlineOf(s),
+  location: s.profile?.location,
+  about: s.profile?.about,
+  sections: s.profile?.sections,
+  rawText: s.profile?.rawText,
+  cvText: s.cv?.text,
+});
 /* Planning prompts wait at most 40 s for ChatGPT to accept the question and 2 minutes in all; each stage is shown as it happens. */
 const AI_STAGES: Record<string, string> = {
   queued: 'opening ChatGPT',
@@ -406,7 +416,10 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
   const term = s.plan.terms[search.cursor];
   if (term === undefined) {
     const list = shortlist(search.found, [], s.referralJobs ?? []);
-    const specs = s.settings?.specializations ?? [];
+    // The seeker's own choice wins; until they make one, use what their full profile and CV say they hold.
+    const chosenSpecs = s.settings?.specializations ?? [];
+    const specs =
+      s.settings?.specializationsChosen || chosenSpecs.length ? chosenSpecs : suggestSpecializationsFromProfile(profileSource(s));
     const specLabels = specs.length ? SPECIALIZATIONS.filter(x => specs.includes(x.id)).map(x => x.short) : [];
     const intent = employmentIntent(s.settings?.employmentType, roles);
     const drop = new Map<string, string>();
@@ -423,7 +436,8 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
         }
       const candidates = list.filter(x => !drop.has(x.id)); // best organic score first
       const total = Math.min(candidates.length, RANK_BATCH * RANK_MAX_BATCHES);
-      const about = `${headlineOf(s)}. ${(s.cv?.text || s.profile?.about || '').slice(0, 900)}`;
+      // The whole background - every LinkedIn section and the CV - so ChatGPT can weigh a degree against what the person has actually done.
+      const evidence = seekerEvidence(profileSource(s));
       const cache: DescCache = (await read<DescCache>(DESC_CACHE)) ?? {};
       const stopRequested = async (): Promise<boolean> => !!(await read<NetworkState>(networkKey))?.jobSearch?.rankStop;
       const progress = (done: number): Promise<unknown> =>
@@ -476,7 +490,7 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
         try {
           const raw = extractJson(
             await askChatGpt(
-              rankPrompt(readJobs, roles, s.location, s.settings?.employmentType, specLabels, descriptions, about),
+              rankPrompt(readJobs, roles, s.location, s.settings?.employmentType, specLabels, descriptions, evidence),
               signal,
               'LEGACY',
               s.profile!.url,
@@ -500,20 +514,21 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
           }
           const r = rank.get(job.id);
           const byKeyword = matchSpecializations(`${job.title}\n${descriptions[job.id] ?? ''}`, specs);
+          // ChatGPT's score weighs the whole background against the whole description, so it is trusted as given.
+          // The keyword match only stands in when ChatGPT did not score this job (unavailable, or it skipped it).
           let fit = r ? r.fit : 0;
-          let basis = r?.basis;
-          const quals = [...new Set([...(r?.quals ?? []), ...byKeyword])];
-          // A deterministic keyword hit is a fact the model may have missed: treat it as a strong degree match.
-          if (byKeyword.length) {
-            fit = Math.max(fit, 85);
+          let basis = r && r.basis !== 'none' ? r.basis : undefined;
+          if (!r && byKeyword.length) {
+            fit = 75;
             basis = 'degree';
           }
+          const quals = [...new Set([...(r?.quals ?? []), ...byKeyword])];
           job.fit = fit;
-          if (basis === 'degree' || basis === 'domain') job.basis = basis;
+          if (basis) job.basis = basis;
           if (quals.length) job.matched = quals;
           if (r?.why) job.why = r.why;
           else if (byKeyword.length) job.why = `The description asks for ${byKeyword.join(', ')}`;
-          if (fit >= PRIORITY_FIT || basis === 'degree') {
+          if (fit >= PRIORITY_FIT) {
             job.prioritized = true;
             prioritized += 1;
           }

@@ -838,25 +838,29 @@ it('runs the shortlist past ChatGPT once and takes out the listings it rejects, 
     picked: false,
     ...(promoted ? { promoted } : {}),
   });
-  await seed({
-    plan: {
-      forRoles: 'Product Management internship',
-      terms: ['pm intern'],
-      titles: { large: [], mid: [], small: [] },
-      source: 'rules',
-      at: 1,
+  await seed(
+    {
+      plan: {
+        forRoles: 'Product Management internship',
+        terms: ['pm intern'],
+        titles: { large: [], mid: [], small: [] },
+        source: 'rules',
+        at: 1,
+      },
+      jobSearch: {
+        status: 'finding',
+        cursor: 1,
+        startedAt: 1,
+        found: [
+          found('111111', 'Product Intern', 'Acme'),
+          found('222222', 'Sales Intern', 'Sellco'),
+          found('333333', 'Product Management Course with Placement', 'SkillMill', true),
+        ],
+      },
     },
-    jobSearch: {
-      status: 'finding',
-      cursor: 1,
-      startedAt: 1,
-      found: [
-        found('111111', 'Product Intern', 'Acme'),
-        found('222222', 'Sales Intern', 'Sellco'),
-        found('333333', 'Product Management Course with Placement', 'SkillMill', true),
-      ],
-    },
-  });
+    // This test is about the plain review: the seeker has explicitly chosen no qualifications.
+    { specializations: [], specializationsChosen: true },
+  );
   vi.mocked(askChatGpt).mockClear();
   vi.mocked(askChatGpt).mockResolvedValueOnce(
     JSON.stringify({
@@ -876,6 +880,62 @@ it('runs the shortlist past ChatGPT once and takes out the listings it rejects, 
     { title: 'Product Management Course with Placement', company: 'SkillMill', why: 'Paid course, not a job' },
   ]);
   expect(saved.status).toMatch(/ChatGPT removed 1 advert or poor match/);
+});
+
+it('ranks jobs against the full background by default when the profile shows a qualification, strongest fit first', async () => {
+  const { askChatGpt } = await import('../src/background/network-ai');
+  const found = (id: string, title: string, company: string, score: number) => ({
+    id,
+    url: `https://www.linkedin.com/jobs/view/${id}/`,
+    title,
+    company,
+    location: 'India',
+    insight: '',
+    term: 'pm intern',
+    score,
+    picked: false,
+  });
+  await seed({
+    plan: {
+      forRoles: 'Product Management internship',
+      terms: ['pm intern'],
+      titles: { large: [], mid: [], small: [] },
+      source: 'rules',
+      at: 1,
+    },
+    jobSearch: {
+      status: 'finding',
+      cursor: 1,
+      startedAt: 1,
+      found: [found('111111', 'Product Intern', 'Acme', 90), found('222222', 'Strategy Intern', 'Betaco', 40)],
+    },
+  });
+  vi.mocked(networkCommand).mockImplementation(async (_tab, cmd) =>
+    cmd.action === 'jobText'
+      ? { text: (cmd.url ?? '').includes('222222') ? 'PGDM/MBA students preferred. Market sizing work.' : 'Build roadmaps.' }
+      : undefined,
+  );
+  vi.mocked(askChatGpt).mockClear();
+  vi.mocked(askChatGpt).mockResolvedValueOnce(
+    JSON.stringify({
+      remove: [],
+      rank: [
+        { id: '111111', fit: 40, basis: 'domain', quals: [], why: 'needs product experience they lack' },
+        { id: '222222', fit: 88, basis: 'degree', quals: ['MBA/PGDM'], why: 'PGDM preferred; strategy fits' },
+      ],
+    }),
+  );
+  await networkTick();
+  const saved = await getNetwork();
+  const prompt = String(vi.mocked(askChatGpt).mock.calls[0]![0]);
+  expect(prompt).toContain('SEEKER BACKGROUND');
+  expect(prompt).toContain('"MBA/PGDM"'); // pre-selected from the "PGDM" headline, nothing ticked
+  expect(prompt).toContain('PGDM/MBA students preferred'); // the full description went in
+  expect(saved.jobSearch!.status).toBe('choosing');
+  expect(saved.jobSearch!.found.map(j => j.company)).toEqual(['Betaco', 'Acme']); // the strong fit leads despite a lower title score
+  expect(saved.jobSearch!.found[0]).toMatchObject({ prioritized: true, basis: 'degree', why: 'PGDM preferred; strategy fits' });
+  expect(saved.jobSearch!.found[1]!.prioritized).toBeUndefined();
+  vi.mocked(networkCommand).mockReset();
 });
 
 it('finds the company page through LinkedIn company search when the job did not give it, so the Current company filter is still used', async () => {
