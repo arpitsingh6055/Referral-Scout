@@ -1,7 +1,7 @@
 /**
  * The qualification checklist, shared by onboarding and Settings. Until the seeker confirms a choice it is pre-filled
  * from their CV and LinkedIn headline/About, so most people get the description ranking without ticking anything.
- * Onboarding shows it as one line ("We'll prioritise jobs that ask for: MBA/PGDM · Change"); Settings shows the list.
+ * Onboarding shows a one-line summary above the options; Settings shows the list with a longer explanation.
  */
 import { SPECIALIZATIONS, detectSpecializations } from '../shared/specializations';
 import { type NetworkState } from '../shared/network';
@@ -56,7 +56,7 @@ export function qualificationPicker(s: NetworkState, compact: boolean): Qualific
 
   const wrap = node('div', '', 'field');
   if (compact) {
-    // One line, with the list folded away behind "Change".
+    // A one-line summary that follows the ticks, above the options.
     const summary = node('p', '', 'field-help');
     const describe = (): void => {
       const picked = SPECIALIZATIONS.filter(x => boxes.get(x.id)?.checked).map(x => x.short);
@@ -64,15 +64,14 @@ export function qualificationPicker(s: NetworkState, compact: boolean): Qualific
         ? `${fromProfile ? 'From your profile, we’ll' : 'We’ll'} prioritise jobs that ask for: ${picked.join(', ')}.`
         : 'Optional: tick your qualification to see jobs that ask for it first.';
     };
-    const more = node('details', '', 'inline');
-    more.append(node('summary', 'Change'), list, node('p', help, 'field-help'));
     for (const cb of boxes.values())
       cb.addEventListener('change', () => {
         flags.dirty = true;
         describe();
       });
     describe();
-    wrap.append(node('label', 'Your qualification', 'field-label'), summary, more);
+    // The options are shown directly: a fold here only added a click before the one choice that matters.
+    wrap.append(node('label', 'Your qualification', 'field-label'), summary, list, node('p', help, 'field-help'));
   } else {
     for (const cb of boxes.values())
       cb.addEventListener('change', () => {
