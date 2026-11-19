@@ -72,7 +72,12 @@ export async function openWorkTab(url: string, kind: 'linkedin' | 'chatgpt' = 'l
   if (windowId === undefined) {
     // Browsers often ignore focused:false for a NEW window and bring it to the front, so remember where the person
     // was and hand focus straight back.
-    const before = await chrome.windows.getLastFocused?.().catch(() => undefined);
+    let before: { id?: number | undefined } | undefined;
+    try {
+      before = await chrome.windows.getLastFocused();
+    } catch {
+      before = undefined; // nothing to hand focus back to
+    }
     const created = await chrome.windows.create({ url, focused: false, type: 'normal', width: 1180, height: 860 });
     if (before?.id !== undefined && before.id !== created?.id)
       await chrome.windows.update(before.id, { focused: true }).catch(() => undefined);
