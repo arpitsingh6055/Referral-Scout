@@ -80,21 +80,27 @@ export function describeMismatch(actual: string, expected: string): string {
   return `expected ${b.length} chars, editor holds ${a.length}, first difference at character ${i}`;
 }
 function pasteText(editor: HTMLElement, value: string): boolean {
-  if (typeof DataTransfer === 'undefined' || typeof ClipboardEvent === 'undefined') return false;
+  // Build the event in the editor's own realm: a framework inside an iframe checks clipboardData with its own
+  // DataTransfer, so a top-frame one would be rejected.
+  const win = editor.ownerDocument.defaultView ?? window;
+  const DT = win.DataTransfer;
+  const CE = win.ClipboardEvent;
+  if (typeof DT !== 'function' || typeof CE !== 'function') return false;
   try {
-    const data = new DataTransfer();
+    const data = new DT();
     data.setData('text/plain', value);
-    return !editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    return !editor.dispatchEvent(new CE('paste', { clipboardData: data, bubbles: true, cancelable: true }));
   } catch {
     return false;
   }
 }
 function selectAll(editor: HTMLElement): void {
-  const range = document.createRange();
+  const doc = editor.ownerDocument;
+  const range = doc.createRange();
   range.selectNodeContents(editor);
-  // Inside a shadow root the selection belongs to that root (Chromium), not to the document.
+  // Inside a shadow root the selection belongs to that root (Chromium); inside an iframe, to the frame's own window.
   const root = editor.getRootNode() as Node & { getSelection?: () => Selection | null };
-  const selection = root.getSelection?.() ?? getSelection();
+  const selection = root.getSelection?.() ?? doc.defaultView?.getSelection() ?? getSelection();
   selection?.removeAllRanges();
   selection?.addRange(range);
 }
@@ -105,10 +111,13 @@ export function insert(editor: HTMLElement, value: string): void {
     Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(editor, value);
     editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
   } else {
+    // The editor may live in a same-origin iframe (the full messaging view), so act through its own document/window.
+    const doc = editor.ownerDocument;
+    const win = doc.defaultView ?? window;
     const ok = () => sameText(readEditor(editor), value);
     // 1) The browser's own text insertion keeps framework editors (ProseMirror) in sync.
     selectAll(editor);
-    if (typeof document.execCommand === 'function') document.execCommand('insertText', false, value);
+    if (typeof doc.execCommand === 'function') doc.execCommand('insertText', false, value);
     // 2) A synthetic plain-text paste is what ProseMirror-style editors handle natively.
     if (!ok()) {
       selectAll(editor);
@@ -119,9 +128,10 @@ export function insert(editor: HTMLElement, value: string): void {
       editor.replaceChildren(
         ...value
           .split('\n')
-          .flatMap((line, i) => (i ? [document.createElement('br'), document.createTextNode(line)] : [document.createTextNode(line)])),
+          .flatMap((line, i) => (i ? [doc.createElement('br'), doc.createTextNode(line)] : [doc.createTextNode(line)])),
       );
-      editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+      const IE = win.InputEvent ?? InputEvent;
+      editor.dispatchEvent(new IE('input', { bubbles: true, inputType: 'insertText', data: value }));
     }
   }
 }

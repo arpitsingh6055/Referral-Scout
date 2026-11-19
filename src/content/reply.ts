@@ -53,6 +53,20 @@ export function readThread(scope: ParentNode, path: string, chatWindow = false):
 function current(): { thread: OpenThread; scope: ParentNode } | null {
   const page = readThread(document, location.pathname);
   if (page) return { thread: page, scope: document };
+  // On in-app (single-page) navigation LinkedIn mounts the full messaging view inside a same-origin preload iframe
+  // (src "/preload/?_bprMode=vanilla"), so the open thread is not in the top document - only a hard reload renders it
+  // there. Look inside same-origin child frames too. The card still lives in the top frame, and the composer inside
+  // the frame stays reachable for drafting because the frame shares our origin.
+  for (const frame of Array.from(document.querySelectorAll('iframe'))) {
+    let doc: Document | null = null;
+    try {
+      doc = frame.contentDocument;
+    } catch {
+      doc = null; // a cross-origin frame (for example an ad) cannot be read; skip it
+    }
+    const inFrame = doc ? readThread(doc, location.pathname) : null;
+    if (inFrame && doc) return { thread: inFrame, scope: doc };
+  }
   const windows = queryAll('.msg-overlay-conversation-bubble').filter(
     b => visible(b) && !b.classList.contains('msg-overlay-conversation-bubble--is-minimized'),
   );
