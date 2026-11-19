@@ -30,8 +30,15 @@
     <script>
       // The user list is private: open this page as /#key=YOUR_STATS_KEY once; the key is then kept in this browser only.
       function statsKey() {
-        const m = /key=([^&]+)/.exec(location.hash);
-        if (m) { localStorage.setItem('rs-stats-key', decodeURIComponent(m[1])); history.replaceState(null, '', location.pathname); }
+        // Everything after "key=" is the key, so a key containing & or # still works.
+        const at = location.hash.indexOf('key=');
+        if (at !== -1) {
+          const raw = location.hash.slice(at + 4);
+          let value = raw;
+          try { value = decodeURIComponent(raw); } catch { /* not encoded: use as typed */ }
+          localStorage.setItem('rs-stats-key', value);
+          history.replaceState(null, '', location.pathname);
+        }
         return localStorage.getItem('rs-stats-key') || '';
       }
       const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
