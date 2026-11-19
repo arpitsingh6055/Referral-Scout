@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   reviewFromReply,
   reviewPrompt,
-  prioritizeFromReply,
-  requirementsSnippet,
+  rankFromReply,
+  rankPrompt,
+  clampDescription,
   employmentIntent,
   employmentMismatch,
   scoreJob as scoreOf,
@@ -366,42 +367,56 @@ describe('employment type filtering', () => {
     expect(prompt).toMatch(/wants an INTERNSHIP/);
     expect(prompt).toMatch(/employment type: internship/);
   });
-  it('asks ChatGPT to flag qualification matches only when qualifications are given, and includes the requirements text', () => {
-    const job: FoundJob = { id: '7', url: 'https://www.linkedin.com/jobs/view/7/', title: 'APM', company: 'Acme', location: 'India', insight: '', term: '', score: 1, picked: false };
-    const plain = reviewPrompt([job], ['Product Manager'], 'India');
-    expect(plain).not.toMatch(/prioritize/);
-    expect(plain).not.toMatch(/QUALIFICATIONS/);
-    const withQ = reviewPrompt([job], ['Product Manager'], 'India', 'any', ['MBA/PGDM'], { '7': 'Qualification: MBA or PGDM preferred' });
-    expect(withQ).toMatch(/"MBA\/PGDM"/);
-    expect(withQ).toMatch(/prioritize/);
-    expect(withQ).toMatch(/MBA or PGDM preferred/); // the requirements snippet is sent
-  });
-  it('keeps only real ids and offered qualification labels from the prioritize reply (drops hallucinations)', () => {
-    const got = prioritizeFromReply(
-      { remove: [], prioritize: [
-        { id: '1', quals: ['MBA/PGDM', 'Astrology'], why: 'asks for MBA' },
-        { id: '9', quals: ['MBA/PGDM'], why: 'not in list' },
-        { id: '2', quals: ['Astrology'], why: 'no valid qual' },
-      ] },
+  it('rankFromReply keeps real ids, clamps fit 0-100, and drops hallucinated qualification labels', () => {
+    const { remove, rank } = rankFromReply(
+      {
+        remove: [{ id: '3', why: 'advert' }],
+        rank: [
+          { id: '1', fit: 140, basis: 'degree', quals: ['MBA/PGDM', 'Astrology'], why: 'asks for MBA' },
+          { id: '2', fit: 62, basis: 'domain', quals: [], why: 'strategy role' },
+          { id: '9', fit: 90, basis: 'degree', quals: ['MBA/PGDM'], why: 'not in batch' },
+        ],
+      },
       ['1', '2', '3'],
       ['MBA/PGDM', 'CA/CS/CMA'],
     );
-    expect([...got.entries()]).toEqual([['1', { quals: ['MBA/PGDM'], why: 'asks for MBA' }]]);
+    expect([...remove]).toEqual([['3', 'advert']]);
+    expect(rank.get('1')).toEqual({ fit: 100, basis: 'degree', quals: ['MBA/PGDM'], why: 'asks for MBA' });
+    expect(rank.get('2')).toEqual({ fit: 62, basis: 'domain', quals: [], why: 'strategy role' });
+    expect(rank.has('9')).toBe(false); // id not in the batch
+    expect(rank.has('3')).toBe(false); // removed jobs are not ranked
   });
-  it('a reply without a prioritize field still parses for removals', () => {
-    expect([...reviewFromReply({ remove: [{ id: '2', why: 'advert' }] }, ['1', '2'])]).toEqual([['2', 'advert']]);
-    expect([...prioritizeFromReply({ remove: [] }, ['1'], ['MBA/PGDM'])]).toEqual([]);
+  it('rankFromReply does not trust a batch that removes most of itself', () => {
+    const { remove } = rankFromReply(
+      {
+        remove: [
+          { id: '1', why: 'a' },
+          { id: '2', why: 'b' },
+          { id: '3', why: 'c' },
+        ],
+        rank: [],
+      },
+      ['1', '2', '3', '4'],
+      [],
+    );
+    expect(remove.size).toBe(0);
   });
-  it('requirementsSnippet focuses on the requirements part of a description', () => {
-    const desc = 'About the job We are a fintech. Key responsibilities: own the roadmap. Requirements: MBA/PGDM preferred, 2 years experience.';
-    expect(requirementsSnippet(desc)).toMatch(/Requirements: MBA\/PGDM preferred/);
-    expect(requirementsSnippet('')).toBe('');
+  it('rankFromReply tolerates a reply missing remove/rank fields', () => {
+    const { remove, rank } = rankFromReply({}, ['1'], ['MBA/PGDM']);
+    expect(remove.size).toBe(0);
+    expect(rank.size).toBe(0);
   });
-  it('requirementsSnippet keeps a qualification line that sits far down a long description, within the size cap', () => {
-    const filler = 'We own the end-to-end roadmap and drive growth across funnels. '.repeat(40); // ~2500 chars, no qualification
-    const desc = `About the job ${filler}\nEligibility: B.E./B.Tech in CS or IT preferred.`;
-    const snip = requirementsSnippet(desc);
-    expect(snip.length).toBeLessThanOrEqual(1200);
-    expect(snip).toMatch(/B\.E\.\/B\.Tech in CS or IT/);
+  it('rankPrompt includes the full description and asks for a fit score and basis', () => {
+    const job: FoundJob = { id: '7', url: 'https://www.linkedin.com/jobs/view/7/', title: 'APM', company: 'Acme', location: 'India', insight: '', term: '', score: 1, picked: false };
+    const prompt = rankPrompt([job], ['Product Manager'], 'India', 'any', ['MBA/PGDM'], { '7': 'We prefer an MBA/PGDM and strong analytics.' });
+    expect(prompt).toMatch(/We prefer an MBA\/PGDM and strong analytics\./);
+    expect(prompt).toMatch(/"MBA\/PGDM"/);
+    expect(prompt).toMatch(/"fit"/);
+    expect(prompt).toMatch(/"basis"/);
+  });
+  it('clampDescription flattens whitespace and caps length', () => {
+    expect(clampDescription('  a\n\n b\tc  ')).toBe('a b c');
+    expect(clampDescription('x'.repeat(5000)).length).toBe(3500);
+    expect(clampDescription('')).toBe('');
   });
 });

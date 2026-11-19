@@ -23,10 +23,14 @@ export interface FoundJob {
   score: number;
   picked: boolean;
   promoted?: boolean | undefined;
-  /** Set when the job description calls for a qualification the seeker chose to prioritise. Prioritise-only, never excludes. */
+  /** Set when the job fits a qualification the seeker chose to prioritise. Prioritise-only, never excludes. */
   prioritized?: boolean | undefined;
   /** The matched qualification labels (badge text), e.g. ["MBA/PGDM"]. */
   matched?: string[] | undefined;
+  /** ChatGPT's 0-100 fit score against the seeker's qualifications/specialisation (used for ordering). */
+  fit?: number | undefined;
+  /** Why it was prioritised: "degree" (the description asks for the qualification) or "domain" (the work fits the field). */
+  basis?: 'degree' | 'domain' | undefined;
 }
 export interface JobSearch {
   status: 'finding' | 'choosing' | 'working';
@@ -392,48 +396,8 @@ export function employmentMismatch(title: string, intent: EmploymentIntent): str
   return null;
 }
 
-/* ---------- the shortlist check: ChatGPT removes adverts and poor matches and, when the seeker chose qualifications,
-   flags the jobs whose requirements call for one, from the real job description. The code keeps a deterministic
-   keyword match as a backstop, so prioritising still works when ChatGPT is unavailable. ---------- */
-/**
- * What to send ChatGPT from a job description for the qualification check. A short description is sent whole. A long
- * one is reduced to a lead (role/company context) plus every line that mentions a degree, course or qualification -
- * gathered from ANYWHERE in the text, because a course preference ("B.E./B.Tech in CS", "MBA from a top institute")
- * often sits in its own line far from the first "requirements" heading. This keeps one prompt over many jobs bounded
- * while making sure the course preference is never cut out.
- */
-const QUALIFICATION_MENTION =
-  /\b(qualif|eligib|degree|education|graduat|post[-\s]?graduat|bachelor|master|b\.?\s?tech|b\.?\s?e\b|m\.?\s?tech|m\.?\s?e\b|mba|pgdm|\bca\b|\bcs\b|\bcma\b|b\.?\s?com|m\.?\s?com|cfa|\bbe\b|discipline|stream|branch|specialis|specializ|background in|from a (?:top|tier|premier)|tier[-\s]?\d|institute|university|college)\b/i;
-export function requirementsSnippet(description: string, max = 1200): string {
-  const raw = (description ?? '').replace(/\u00a0/g, ' ').replace(/[ \t]+/g, ' ').trim();
-  if (!raw) return '';
-  const collapsed = raw.replace(/\s+/g, ' ');
-  if (collapsed.length <= max) return collapsed; // a short description is sent in full
-  const lead = collapsed.slice(0, 300);
-  const segments = raw
-    .split(/\r?\n|(?<=[.!?])\s+|•|\u2022|·/)
-    .map(seg => seg.replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
-  const hits: string[] = [];
-  const seen = new Set<string>();
-  let used = lead.length;
-  for (const seg of segments) {
-    if (!QUALIFICATION_MENTION.test(seg) || lead.includes(seg) || seen.has(seg)) continue;
-    if (used + seg.length + 3 > max) break;
-    seen.add(seg);
-    hits.push(seg);
-    used += seg.length + 3;
-  }
-  return (hits.length ? `${lead} … ${hits.join(' … ')}` : collapsed.slice(0, max)).slice(0, max);
-}
-export function reviewPrompt(
-  jobs: FoundJob[],
-  roles: string[],
-  location: string,
-  employmentType?: string,
-  qualifications?: string[],
-  requirements?: Record<string, string>,
-): string {
+/* ---------- the shortlist check: ChatGPT removes adverts and poor matches before the person sees the list ---------- */
+export function reviewPrompt(jobs: FoundJob[], roles: string[], location: string, employmentType?: string): string {
   const intent = employmentIntent(employmentType, roles);
   const typeRule =
     intent === 'internship'
@@ -441,15 +405,6 @@ export function reviewPrompt(
       : intent === 'full-time'
         ? '- The wrong employment type. The seeker wants a FULL-TIME role, so remove internships, traineeships, apprenticeships and summer roles. Keep permanent roles in the right function.'
         : '- The wrong level, such as a Director or VP when the seeker wants an entry-level or mid-level role. Internships and full-time roles are both fine here unless the role text says otherwise.';
-  const qualifying = !!qualifications && qualifications.length > 0;
-  const listing = (j: FoundJob) => ({
-    id: j.id,
-    title: j.title,
-    company: j.company,
-    location: j.location,
-    ...(j.promoted ? { promoted: true } : {}),
-    ...(qualifying && requirements?.[j.id] ? { requirements: requirements[j.id] } : {}),
-  });
   return [
     'You are a careful career coach checking a list of LinkedIn job listings for a job seeker before they see it. Remove only the listings that would waste their time. When unsure about function or quality, KEEP the listing.',
     '',
@@ -459,33 +414,15 @@ export function reviewPrompt(
     typeRule,
     '- Marked "promoted": true (a paid advert) AND not a clearly good match for the roles. A promoted listing that fits well stays.',
     'Never remove more than half the list. Do not judge companies by fame or size.',
-    ...(qualifying
-      ? [
-          '',
-          `THE SEEKER'S QUALIFICATIONS: ${JSON.stringify(qualifications)}. Many listings include a "requirements" field taken from the real job description. For EACH listing you KEEP, decide whether its requirements call for one or more of these qualifications - the description requires OR prefers it (for example "MBA/PGDM required", "B.E./B.Tech in CS or IT", "CA preferred"). Read the "requirements" text, not the title. Count it when the qualification is required or preferred; do NOT count one the text says is not needed, and do NOT guess when a listing has no requirements field. This only PRIORITISES jobs for the seeker - never remove a listing because of whether it matches.`,
-        ]
-      : []),
     '',
     `THE SEEKER wants: ${JSON.stringify(roles)}${location ? `, location: ${JSON.stringify(location)}` : ''}${intent !== 'any' ? `, employment type: ${intent}` : ''}`,
-    `LISTINGS: ${JSON.stringify(jobs.map(listing))}`,
+    `LISTINGS: ${JSON.stringify(jobs.map(j => ({ id: j.id, title: j.title, company: j.company, location: j.location, ...(j.promoted ? { promoted: true } : {}) })))}`,
     '',
-    qualifying
-      ? 'Reply with ONLY one JSON object: {"remove":[{"id": the id exactly as given, "why": at most 12 plain words}], "prioritize":[{"id": the id exactly as given, "quals": the matching qualifications copied EXACTLY from the list above, "why": at most 12 plain words}]}. Either list may be empty. A listing may appear in at most one of the two lists.'
-      : 'Reply with ONLY one JSON object: {"remove":[{"id": the id exactly as given, "why": the reason in at most 12 plain words}]}. Use an empty list if nothing should be removed.',
+    'Reply with ONLY one JSON object: {"remove":[{"id": the id exactly as given, "why": the reason in at most 12 plain words}]}. Use an empty list if nothing should be removed.',
   ].join('\n');
 }
 const reviewReply = z.object({
   remove: z.array(z.object({ id: z.union([z.string(), z.number()]).transform(String), why: z.string().max(200).default('') })).max(60),
-  prioritize: z
-    .array(
-      z.object({
-        id: z.union([z.string(), z.number()]).transform(String),
-        quals: z.array(z.string().max(60)).max(12).default([]),
-        why: z.string().max(200).default(''),
-      }),
-    )
-    .max(60)
-    .default([]),
 });
 /** Which listings to remove, by id. A reply that removes most of the list is not trusted and removes nothing. */
 export function reviewFromReply(json: unknown, ids: string[]): Map<string, string> {
@@ -493,21 +430,106 @@ export function reviewFromReply(json: unknown, ids: string[]): Map<string, strin
   for (const r of reviewReply.parse(json).remove) if (ids.includes(r.id)) out.set(r.id, r.why.trim() || 'Not a good match');
   return out.size > ids.length * 0.6 ? new Map() : out;
 }
+
+/* ---------- deep qualification ranking: ChatGPT reads the FULL job descriptions in small batches and, for every job
+   it keeps, scores how well it fits the seeker's qualifications - from an explicit degree line where there is one, and
+   otherwise from how well the actual work suits their specialisation. Batched so one prompt stays small; the pipeline
+   pulls more batches until enough matches are found. ---------- */
+export const RANK_BATCH = 10; // jobs whose full descriptions go into one ChatGPT call, to keep the prompt small
+export const RANK_TARGET = 10; // stop pulling batches once this many jobs are prioritised
+export const RANK_MAX_BATCHES = 3; // safety cap on how deep to read
+export const PRIORITY_FIT = 55; // a fit score at or above this marks a job as prioritised
+/** A job description as plain text, capped, so a batch of full descriptions stays a sane prompt size. */
+export function clampDescription(text: string, max = 3500): string {
+  return (text ?? '')
+    .replace(/ /g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+export interface JobRank {
+  fit: number;
+  basis: 'degree' | 'domain' | 'none';
+  quals: string[];
+  why: string;
+}
+export function rankPrompt(
+  jobs: FoundJob[],
+  roles: string[],
+  location: string,
+  employmentType: string | undefined,
+  qualifications: string[],
+  descriptions: Record<string, string>,
+): string {
+  const intent = employmentIntent(employmentType, roles);
+  return [
+    'You are an expert career coach ranking LinkedIn jobs for a job seeker, reading the FULL job description of each. Do two things: remove listings that would waste their time, and for EVERY listing you keep, score how well it fits the seeker’s qualifications and field.',
+    '',
+    'Remove a listing when it is: not a real opening (a paid course or training institute, a "pay after placement" programme, a "campus ambassador" or "earn from home" scheme, or a staffing agency mass-posting with no named client); the wrong FUNCTION for the roles' +
+      (intent !== 'any' ? `; or the wrong employment type (the seeker wants ${intent}). ` : '. ') +
+      'A promoted/advert listing that genuinely fits may stay. Never remove more than half of this batch.',
+    '',
+    `THE SEEKER'S QUALIFICATIONS / SPECIALISATIONS: ${JSON.stringify(qualifications)}.`,
+    'For EACH listing you KEEP, read its "description" and return a "fit" score from 0 to 100 and a "basis":',
+    '- "basis":"degree" when the description explicitly requires or prefers one of these qualifications (for example "MBA/PGDM required", "B.E./B.Tech in CS or IT", "CA preferred"). Score 80-100. Put the matching qualification labels, copied EXACTLY from the list above, in "quals".',
+    '- "basis":"domain" when the description does NOT state a degree, but the actual work clearly suits the seeker’s specialisation - for example an MBA/PGDM suits strategy, product, consulting, operations, marketing or finance roles; a CS/IT engineering background suits software, data, platform or analytics roles; a CA or commerce background suits finance, audit, FP&A, tax or accounting roles. Score 40-79 by how strong the fit is. "quals" may be empty.',
+    '- "basis":"none" when there is no meaningful relation to the seeker’s qualifications or field. Score 0-39.',
+    'Judge "degree" only from the description text, never from the title alone, and do not count a qualification the text says is NOT required. Scoring never removes a listing - a low score is still kept.',
+    '',
+    `THE SEEKER wants: ${JSON.stringify(roles)}${location ? `, location: ${JSON.stringify(location)}` : ''}${intent !== 'any' ? `, employment type: ${intent}` : ''}`,
+    `LISTINGS: ${JSON.stringify(
+      jobs.map(j => ({
+        id: j.id,
+        title: j.title,
+        company: j.company,
+        location: j.location,
+        ...(j.promoted ? { promoted: true } : {}),
+        description: descriptions[j.id] ?? '',
+      })),
+    )}`,
+    '',
+    'Reply with ONLY one JSON object: {"remove":[{"id": the id exactly as given, "why": at most 12 plain words}], "rank":[{"id": the id exactly as given, "fit": 0-100, "basis": "degree"|"domain"|"none", "quals": [matching labels copied exactly], "why": at most 12 plain words}]}. Score EVERY listing you keep. A listing is in at most one of the two lists.',
+  ].join('\n');
+}
+const rankReply = z.object({
+  remove: z
+    .array(z.object({ id: z.union([z.string(), z.number()]).transform(String), why: z.string().max(200).default('') }))
+    .max(40)
+    .default([]),
+  rank: z
+    .array(
+      z.object({
+        id: z.union([z.string(), z.number()]).transform(String),
+        fit: z.coerce.number().catch(0),
+        basis: z.enum(['degree', 'domain', 'none']).catch('none'),
+        quals: z.array(z.string().max(60)).max(12).default([]),
+        why: z.string().max(200).default(''),
+      }),
+    )
+    .max(40)
+    .default([]),
+});
 /**
- * Which kept listings ChatGPT says call for the seeker's qualifications, by id. Only ids that are in the list and
- * qualification labels that were actually offered (case-insensitive) are kept, so a hallucinated label is dropped.
+ * One batch's reply: which to remove, and a fit ranking for the rest. Only real ids and offered qualification labels
+ * survive (hallucinations dropped), fit is clamped to 0-100, and a batch that removes most of itself is not trusted
+ * to remove anything.
  */
-export function prioritizeFromReply(
+export function rankFromReply(
   json: unknown,
   ids: string[],
   allowed: string[],
-): Map<string, { quals: string[]; why: string }> {
+): { remove: Map<string, string>; rank: Map<string, JobRank> } {
+  const parsed = rankReply.parse(json);
   const byLower = new Map(allowed.map(a => [a.toLowerCase(), a]));
-  const out = new Map<string, { quals: string[]; why: string }>();
-  for (const r of reviewReply.parse(json).prioritize) {
-    if (!ids.includes(r.id)) continue;
+  let remove = new Map<string, string>();
+  for (const r of parsed.remove) if (ids.includes(r.id)) remove.set(r.id, r.why.trim() || 'Not a good match');
+  if (remove.size > ids.length * 0.6) remove = new Map(); // do not trust a batch that nukes most of itself
+  const rank = new Map<string, JobRank>();
+  for (const r of parsed.rank) {
+    if (!ids.includes(r.id) || remove.has(r.id)) continue;
     const quals = [...new Set(r.quals.map(q => byLower.get(q.trim().toLowerCase())).filter((q): q is string => !!q))];
-    if (quals.length) out.set(r.id, { quals, why: r.why.trim() });
+    const fit = Math.max(0, Math.min(100, Math.round(r.fit)));
+    rank.set(r.id, { fit, basis: r.basis, quals, why: r.why.trim() });
   }
-  return out;
+  return { remove, rank };
 }
