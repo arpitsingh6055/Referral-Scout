@@ -2,8 +2,13 @@
 import { list } from '@vercel/blob';
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'no-store');
+  // The user list holds people's names and LinkedIn ids, so it is only for the owner: it needs the STATS_KEY secret
+  // (set in Vercel > Project > Settings > Environment Variables). With no key configured it refuses everyone.
+  const key = process.env.STATS_KEY;
+  const given = req.headers['x-stats-key'] || '';
+  if (!key) return res.status(503).json({ error: 'STATS_KEY is not set on the server, so the user list is locked.' });
+  if (given !== key) return res.status(401).json({ error: 'A valid key is required to see the user list.' });
   try {
     let cursor;
     let blobs = [];

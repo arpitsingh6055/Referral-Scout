@@ -28,8 +28,14 @@
       <p class="muted" id="updated"></p>
     </main>
     <script>
+      // The user list is private: open this page as /#key=YOUR_STATS_KEY once; the key is then kept in this browser only.
+      function statsKey() {
+        const m = /key=([^&]+)/.exec(location.hash);
+        if (m) { localStorage.setItem('rs-stats-key', decodeURIComponent(m[1])); history.replaceState(null, '', location.pathname); }
+        return localStorage.getItem('rs-stats-key') || '';
+      }
       const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-      fetch('/api/stats?t=' + Date.now())
+      fetch('/api/stats?t=' + Date.now(), { headers: { 'x-stats-key': statsKey() } })
         .then(r => r.json())
         .then(d => {
           if (d && d.error) {

@@ -30,3 +30,8 @@ Rebuild (`pnpm build`) and reload the extension.
 ## Privacy note
 Blob files are public-read (unguessable base URL, but not secret). They hold public
 LinkedIn display names and handles only — no private data, no credentials.
+
+## Privacy page and private dashboard
+
+- The privacy policy is served at `/privacy` (from `privacy.html`; `vercel.json` turns on clean URLs). Use `https://referral-scout.vercel.app/privacy` as the store's privacy policy URL.
+- The user list (`/api/stats` and the dashboard at `/`) holds names and LinkedIn ids, so it is locked behind a secret. In Vercel, add an environment variable `STATS_KEY` with a long random value, then redeploy. Open the dashboard once as `https://referral-scout.vercel.app/#key=YOUR_STATS_KEY`; the key is then remembered in that browser only. Without `STATS_KEY` set, the list is refused to everyone.
