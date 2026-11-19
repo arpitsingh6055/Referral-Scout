@@ -70,7 +70,12 @@ export async function openWorkTab(url: string, kind: 'linkedin' | 'chatgpt' = 'l
     }
   }
   if (windowId === undefined) {
+    // Browsers often ignore focused:false for a NEW window and bring it to the front, so remember where the person
+    // was and hand focus straight back.
+    const before = await chrome.windows.getLastFocused?.().catch(() => undefined);
     const created = await chrome.windows.create({ url, focused: false, type: 'normal', width: 1180, height: 860 });
+    if (before?.id !== undefined && before.id !== created?.id)
+      await chrome.windows.update(before.id, { focused: true }).catch(() => undefined);
     const tabId = created?.tabs?.[0]?.id;
     if (created?.id === undefined || tabId === undefined) throw new Error('Could not open the Referral Scout work window.');
     await write('work-window', created.id);

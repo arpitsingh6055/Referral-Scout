@@ -5,7 +5,7 @@ vi.mock('../src/storage/state', () => ({
   write: vi.fn(),
 }));
 const tabs = { get: vi.fn(), update: vi.fn(), create: vi.fn(), sendMessage: vi.fn(), query: vi.fn(), remove: vi.fn() };
-const windows = { update: vi.fn(), get: vi.fn(), create: vi.fn(), remove: vi.fn() };
+const windows = { update: vi.fn(), get: vi.fn(), create: vi.fn(), remove: vi.fn(), getLastFocused: vi.fn() };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -31,6 +31,17 @@ it('opens its pages in a separate window that is not focused, so the person keep
   expect(windows.create).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://chatgpt.com/', focused: false }));
   expect(state.write).toHaveBeenCalledWith('work-window', 5);
   expect(tabs.create).not.toHaveBeenCalled();
+});
+
+it('hands focus back to the person’s window when a new work window grabs it', async () => {
+  const state = await import('../src/storage/state');
+  vi.mocked(state.read).mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+  windows.getLastFocused.mockResolvedValue({ id: 1 });
+  windows.create.mockResolvedValue({ id: 5, tabs: [{ id: 21 }] });
+  windows.update.mockResolvedValue({});
+  const { openWorkTab } = await import('../src/background/network-browser');
+  await openWorkTab('https://www.linkedin.com/jobs/search-results/');
+  expect(windows.update).toHaveBeenCalledWith(1, { focused: true });
 });
 
 it('opens ChatGPT as a tab in the same work window instead of a second window, and closes a ChatGPT window left by an older version', async () => {
