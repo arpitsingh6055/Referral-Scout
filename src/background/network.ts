@@ -49,13 +49,15 @@ import {
   scoreJob,
   shortlist,
   PRETICKED,
+  requirementsSnippet,
+  prioritizeFromReply,
   sizeForType,
   sizeOf,
   strategiesFromReply,
   withRecruiters,
   type CompanyStrategy,
 } from '../shared/jobsearch';
-import { matchSpecializations } from '../shared/specializations';
+import { matchSpecializations, SPECIALIZATIONS } from '../shared/specializations';
 import { extractJson } from '../parsers/json';
 import { networkCommand, networkTab, showWorkTab, closeWorkWindow } from './network-browser';
 import { prepareIntroduction, prepareInvitation, askChatGpt } from './network-ai';
@@ -388,24 +390,59 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
   if (term === undefined) {
     // Before the person sees the list, ChatGPT takes out adverts and poor matches. If it cannot, the list is shown as it is.
     const list = shortlist(search.found, [], s.referralJobs ?? []);
+    const specs = s.settings?.specializations ?? [];
+    const specLabels = specs.length ? SPECIALIZATIONS.filter(x => specs.includes(x.id)).map(x => x.short) : [];
+    // When prioritising by qualification, read each shortlisted job's real description FIRST, so ChatGPT can judge the
+    // fit from the requirements (not the title) in the same pass that removes adverts, and so a deterministic keyword
+    // match can back it up if ChatGPT is unavailable. Reading is bounded and a job that cannot be read is simply skipped.
+    const descById = new Map<string, string>();
+    if (specs.length && list.length) {
+      const scan = list.slice(0, JOBS_TO_SCAN);
+      for (let i = 0; i < scan.length; i++) {
+        signal.throwIfAborted();
+        const job = scan[i]!;
+        await note(s, `Reading job descriptions to match your qualifications (${i + 1} of ${scan.length})…`);
+        try {
+          const tab = await networkTab(job.url, signal);
+          const res = (await networkCommand(tab, { action: 'jobText', url: job.url }, signal)) as { text?: string };
+          if (res?.text) descById.set(job.id, res.text);
+        } catch (error) {
+          if (signal.aborted) throw error; // one unreadable job is skipped; the rest continue
+        }
+      }
+    }
     let drop = new Map<string, string>(),
+      prioritize = new Map<string, { quals: string[]; why: string }>(),
       why = '';
     if (list.length > 1) {
-      await note(s, `Checking ${list.length} jobs with ChatGPT to remove adverts and poor matches (up to 2 minutes)…`);
+      await note(
+        s,
+        `Checking ${list.length} jobs with ChatGPT${specs.length ? ' and matching them to your qualifications' : ''} (up to 2 minutes)…`,
+      );
       try {
-        drop = reviewFromReply(
-          extractJson(
-            await askChatGpt(
-              reviewPrompt(list, roles, s.location, s.settings?.employmentType),
-              signal,
-              'LEGACY',
-              s.profile!.url,
-              '',
-              planLimits('Checking the job list'),
-            ),
+        const requirements = specs.length
+          ? Object.fromEntries([...descById].map(([id, text]) => [id, requirementsSnippet(text)]))
+          : undefined;
+        const raw = extractJson(
+          await askChatGpt(
+            reviewPrompt(list, roles, s.location, s.settings?.employmentType, specLabels.length ? specLabels : undefined, requirements),
+            signal,
+            'LEGACY',
+            s.profile!.url,
+            '',
+            planLimits('Checking the job list'),
           ),
+        );
+        drop = reviewFromReply(
+          raw,
           list.map(j => j.id),
         );
+        if (specLabels.length)
+          prioritize = prioritizeFromReply(
+            raw,
+            list.map(j => j.id),
+            specLabels,
+          );
       } catch (error) {
         why = error instanceof Error ? error.message : String(error);
         if (signal.aborted) throw error;
@@ -420,25 +457,16 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
         if (reason && !drop.has(j.id)) drop.set(j.id, reason);
       }
     const kept = list.filter(x => !drop.has(x.id));
-    // Prioritise, never exclude: when the seeker chose qualifications, read each kept job's description and lift the
-    // ones that call for a chosen qualification to the top of the list, badged. A job that cannot be read is left as is.
-    const specs = s.settings?.specializations ?? [];
+    // Prioritise, never exclude: a kept job is lifted to the top when ChatGPT flagged it OR a deterministic keyword
+    // match finds one of the seeker's qualifications in the description. The two are merged, so each covers the other.
     if (specs.length && kept.length) {
-      const scan = kept.slice(0, JOBS_TO_SCAN);
-      for (let i = 0; i < scan.length; i++) {
-        signal.throwIfAborted();
-        const job = scan[i]!;
-        await note(s, `Reading job descriptions to prioritise your qualifications (${i + 1} of ${scan.length})…`);
-        try {
-          const tab = await networkTab(job.url, signal);
-          const res = (await networkCommand(tab, { action: 'jobText', url: job.url }, signal)) as { text?: string };
-          const matched = matchSpecializations(`${job.title}\n${res?.text ?? ''}`, specs);
-          if (matched.length) {
-            job.prioritized = true;
-            job.matched = matched;
-          }
-        } catch (error) {
-          if (signal.aborted) throw error; // one unreadable job is skipped; the rest continue
+      for (const job of kept) {
+        const ai = prioritize.get(job.id);
+        const byKeyword = matchSpecializations(`${job.title}\n${descById.get(job.id) ?? ''}`, specs);
+        const labels = [...new Set([...(ai?.quals ?? []), ...byKeyword])];
+        if (labels.length) {
+          job.prioritized = true;
+          job.matched = labels;
         }
       }
       // Matched jobs first, each group by score; re-tick the top of the new order.

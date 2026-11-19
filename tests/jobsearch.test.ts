@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   reviewFromReply,
   reviewPrompt,
+  prioritizeFromReply,
+  requirementsSnippet,
   employmentIntent,
   employmentMismatch,
   scoreJob as scoreOf,
@@ -363,5 +365,36 @@ describe('employment type filtering', () => {
     const prompt = reviewPrompt([job], ['Product Management internship'], 'India');
     expect(prompt).toMatch(/wants an INTERNSHIP/);
     expect(prompt).toMatch(/employment type: internship/);
+  });
+  it('asks ChatGPT to flag qualification matches only when qualifications are given, and includes the requirements text', () => {
+    const job: FoundJob = { id: '7', url: 'https://www.linkedin.com/jobs/view/7/', title: 'APM', company: 'Acme', location: 'India', insight: '', term: '', score: 1, picked: false };
+    const plain = reviewPrompt([job], ['Product Manager'], 'India');
+    expect(plain).not.toMatch(/prioritize/);
+    expect(plain).not.toMatch(/QUALIFICATIONS/);
+    const withQ = reviewPrompt([job], ['Product Manager'], 'India', 'any', ['MBA/PGDM'], { '7': 'Qualification: MBA or PGDM preferred' });
+    expect(withQ).toMatch(/"MBA\/PGDM"/);
+    expect(withQ).toMatch(/prioritize/);
+    expect(withQ).toMatch(/MBA or PGDM preferred/); // the requirements snippet is sent
+  });
+  it('keeps only real ids and offered qualification labels from the prioritize reply (drops hallucinations)', () => {
+    const got = prioritizeFromReply(
+      { remove: [], prioritize: [
+        { id: '1', quals: ['MBA/PGDM', 'Astrology'], why: 'asks for MBA' },
+        { id: '9', quals: ['MBA/PGDM'], why: 'not in list' },
+        { id: '2', quals: ['Astrology'], why: 'no valid qual' },
+      ] },
+      ['1', '2', '3'],
+      ['MBA/PGDM', 'CA/CS/CMA'],
+    );
+    expect([...got.entries()]).toEqual([['1', { quals: ['MBA/PGDM'], why: 'asks for MBA' }]]);
+  });
+  it('a reply without a prioritize field still parses for removals', () => {
+    expect([...reviewFromReply({ remove: [{ id: '2', why: 'advert' }] }, ['1', '2'])]).toEqual([['2', 'advert']]);
+    expect([...prioritizeFromReply({ remove: [] }, ['1'], ['MBA/PGDM'])]).toEqual([]);
+  });
+  it('requirementsSnippet focuses on the requirements part of a description', () => {
+    const desc = 'About the job We are a fintech. Key responsibilities: own the roadmap. Requirements: MBA/PGDM preferred, 2 years experience.';
+    expect(requirementsSnippet(desc)).toMatch(/Requirements: MBA\/PGDM preferred/);
+    expect(requirementsSnippet('')).toBe('');
   });
 });
