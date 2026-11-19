@@ -6,21 +6,25 @@ import { ui, node, initials, when, link, request, withProgress, button, act, kit
 /* ---------- people tab ---------- */
 export function buildPeople(s: NetworkState, list: HTMLElement, redraw: () => void): void {
   list.replaceChildren();
-  const filters: [string, string, (p: NetworkContact) => boolean][] = [
-    ['all', 'All', p => p.state !== 'skipped' && p.state !== 'found'],
-    ['review', 'To approve', p => p.state === 'review'],
-    ['shortlisted', 'Queued', p => p.state === 'shortlisted'],
-    ['pending', 'Invited', p => p.state === 'pending'],
-    ['connected', 'Accepted', p => p.state === 'connected'],
-    ['messaged', 'Introduced', p => p.state === 'messaged'],
-    ['replied', 'Replied', p => !!p.outcome],
-    ['referred', 'Will refer', p => p.outcome === 'referred'],
-    ['attention', 'Needs you', p => p.state === 'attention'],
-    ['skipped', 'Skipped', p => p.state === 'skipped'],
+  // Four views cover real use; the card itself shows the exact state. The finer views (reached from the numbers on
+  // Home) appear as a chip only while selected.
+  const IN_PROGRESS = ['shortlisted', 'requesting', 'pending', 'connected', 'messaging'];
+  const filters: [string, string, (p: NetworkContact) => boolean, boolean][] = [
+    ['all', 'All', p => p.state !== 'skipped' && p.state !== 'found', true],
+    ['needs', 'Needs you', p => p.state === 'review' || p.state === 'attention', true],
+    ['progress', 'In progress', p => IN_PROGRESS.includes(p.state) && !p.outcome, true],
+    ['done', 'Messaged', p => p.state === 'messaged' || !!p.outcome, true],
+    ['skipped', 'Skipped', p => p.state === 'skipped', true],
+    ['review', 'To approve', p => p.state === 'review', false],
+    ['attention', 'Needs attention', p => p.state === 'attention', false],
+    ['connected', 'Accepted', p => p.state === 'connected', false],
+    ['replied', 'Replied', p => !!p.outcome, false],
+    ['referred', 'Will refer', p => p.outcome === 'referred', false],
   ];
   const bar = node('div', '', 'filters');
-  for (const [key, label, test] of filters) {
+  for (const [key, label, test, primary] of filters) {
     const n = s.contacts.filter(test).length;
+    if (!primary && key !== ui.filter) continue;
     if (key !== 'all' && key !== ui.filter && !n) continue;
     const b = node('button', n ? `${label} ${n}` : label, 'filter');
     b.type = 'button';
@@ -57,7 +61,7 @@ export function buildPeople(s: NetworkState, list: HTMLElement, redraw: () => vo
         'span',
         s.contacts.length
           ? 'Try another filter.'
-          : 'Press Start. We search for recruiters, team leaders and founders and list them here, best matches first.',
+          : 'Press \u201cFind jobs and referrals\u201d on Home. The people who can refer you are listed here, best matches first.',
       ),
     );
     list.append(e);
@@ -209,7 +213,8 @@ export function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
   if (p.state === 'attention') {
     actions.append(link('Open on LinkedIn ↗', p.url, 'btn sm'));
     if (p.followOnly) actions.append(button('Follow', () => act({ kind: 'network', action: 'followNow', url: p.url }), 'btn sm primary'));
-    else if (!p.emailRequired) actions.append(button('Try again', () => act({ kind: 'network', action: 'retry', url: p.url }), 'btn sm primary'));
+    else if (!p.emailRequired)
+      actions.append(button('Try again', () => act({ kind: 'network', action: 'retry', url: p.url }), 'btn sm primary'));
     // emailRequired: only Open on LinkedIn + Skip, because retrying can never clear LinkedIn's email prompt.
   }
   if (!['messaged', 'skipped', 'requesting', 'messaging'].includes(p.state))

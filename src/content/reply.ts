@@ -11,6 +11,7 @@
  * LinkedIn's messaging shadow root; their header has not been checked live.
  */
 import { insert, queryAll, readEditor, visible } from './dom';
+import { friendlyError } from '../shared/errors';
 
 export interface ThreadMessage {
   mine: boolean;
@@ -215,7 +216,7 @@ pill.addEventListener('click', () => {
     .then((reply: { ok?: boolean; text?: string; error?: string } | undefined) => {
       const again = current(),
         target = again ? ((again.scope as ParentNode).querySelector<HTMLElement>('.msg-form__contenteditable') ?? null) : null;
-      if (!reply?.ok || !reply.text) return say(reply?.error || 'No draft came back. Try again.');
+      if (!reply?.ok || !reply.text) return say(reply?.error ? friendlyError(reply.error) : 'No draft came back. Try again.');
       if (!again || !target || (again.thread.id || again.thread.url || again.thread.name) !== key)
         return say('You moved to another conversation, so the draft was not placed.');
       insert(target, reply.text);
@@ -259,6 +260,12 @@ if (!installed.__referralScoutReply && location.hostname.endsWith('linkedin.com'
   const watch = (body: HTMLElement): void => new MutationObserver(onNav).observe(body, { childList: true, subtree: true });
   if (document.body) watch(document.body);
   else
-    window.addEventListener('DOMContentLoaded', () => { if (document.body) watch(document.body); }, { once: true });
+    window.addEventListener(
+      'DOMContentLoaded',
+      () => {
+        if (document.body) watch(document.body);
+      },
+      { once: true },
+    );
   void look();
 }

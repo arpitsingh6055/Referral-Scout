@@ -23,7 +23,7 @@ import {
 } from '../shared/network';
 import { classify, geoFor, normalizeCompany, planSearch, companyOf } from '../shared/targeting';
 import { companyFromCurrent } from '../parsers/network';
-import { read, mutate } from '../storage/state';
+import { read, write, mutate } from '../storage/state';
 import { acquire, release, renew } from './lease';
 import {
   referralAsk,
@@ -57,6 +57,7 @@ import {
   RANK_MAX_BATCHES,
   PRIORITY_FIT,
   type JobRank,
+  type FoundJob,
   sizeForType,
   sizeOf,
   strategiesFromReply,
@@ -352,6 +353,18 @@ const planLimits = (what: string) => ({
     if (label) void updateNetwork(c => ({ ...c, status: `${what}: ${label}…` })).catch(() => undefined);
   },
 });
+/** Job descriptions already read, by job id, so a repeat search does not open the same job pages again. */
+const DESC_CACHE = 'job-descriptions',
+  DESC_TTL = 14 * DAY,
+  DESC_KEEP = 300;
+type DescCache = Record<string, { text: string; at: number }>;
+async function saveDescriptions(cache: DescCache): Promise<void> {
+  const fresh = Object.entries(cache)
+    .filter(([, v]) => Date.now() - v.at < DESC_TTL)
+    .sort((a, b) => b[1].at - a[1].at)
+    .slice(0, DESC_KEEP);
+  await write(DESC_CACHE, Object.fromEntries(fresh));
+}
 async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void> {
   const roles = s.settings?.roles?.length ? s.settings.roles : [s.target],
     search = s.jobSearch!;
@@ -409,32 +422,61 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
           if (reason) drop.set(j.id, reason);
         }
       const candidates = list.filter(x => !drop.has(x.id)); // best organic score first
+      const total = Math.min(candidates.length, RANK_BATCH * RANK_MAX_BATCHES);
+      const about = `${headlineOf(s)}. ${(s.cv?.text || s.profile?.about || '').slice(0, 900)}`;
+      const cache: DescCache = (await read<DescCache>(DESC_CACHE)) ?? {};
+      const stopRequested = async (): Promise<boolean> => !!(await read<NetworkState>(networkKey))?.jobSearch?.rankStop;
+      const progress = (done: number): Promise<unknown> =>
+        updateNetwork(c => {
+          if (c.jobSearch?.status === 'finding') c.jobSearch.ranking = { done, total };
+          return c;
+        });
       let prioritized = 0,
         batch = 0,
-        idx = 0;
-      while (idx < candidates.length && batch < RANK_MAX_BATCHES && prioritized < RANK_TARGET) {
+        idx = 0,
+        read_ = 0,
+        stopped = false;
+      await progress(0);
+      while (!stopped && idx < candidates.length && batch < RANK_MAX_BATCHES && prioritized < RANK_TARGET) {
         signal.throwIfAborted();
         const slice = candidates.slice(idx, idx + RANK_BATCH);
         idx += RANK_BATCH;
         batch += 1;
-        await note(s, `Reading full job descriptions and ranking them against your qualifications with ChatGPT (batch ${batch})…`);
         const descriptions: Record<string, string> = {};
+        const readJobs: FoundJob[] = [];
         for (const job of slice) {
           signal.throwIfAborted();
-          try {
-            const tab = await networkTab(job.url, signal);
-            const res = (await networkCommand(tab, { action: 'jobText', url: job.url }, signal)) as { text?: string };
-            if (res?.text) descriptions[job.id] = clampDescription(res.text);
-          } catch (error) {
-            if (signal.aborted) throw error; // an unreadable job just has no description for this batch
+          if (await stopRequested()) {
+            stopped = true;
+            break;
           }
+          await note(s, `Reading job descriptions to rank them against your qualifications: ${read_ + 1} of ${total}…`);
+          const hit = cache[job.id];
+          if (hit && Date.now() - hit.at < DESC_TTL) descriptions[job.id] = hit.text;
+          else
+            try {
+              const tab = await networkTab(job.url, signal);
+              const res = (await networkCommand(tab, { action: 'jobText', url: job.url }, signal)) as { text?: string };
+              if (res?.text) {
+                descriptions[job.id] = clampDescription(res.text);
+                cache[job.id] = { text: descriptions[job.id]!, at: Date.now() };
+              }
+            } catch (error) {
+              if (signal.aborted) throw error; // an unreadable job just has no description for this batch
+            }
+          readJobs.push(job);
+          read_ += 1;
+          await progress(read_);
         }
+        await saveDescriptions(cache).catch(() => undefined);
+        if (!readJobs.length) break;
+        await note(s, `Asking ChatGPT to rank ${readJobs.length} jobs against your qualifications (batch ${batch}, up to 2 minutes)…`);
         let batchRemove = new Map<string, string>(),
           rank = new Map<string, JobRank>();
         try {
           const raw = extractJson(
             await askChatGpt(
-              rankPrompt(slice, roles, s.location, s.settings?.employmentType, specLabels, descriptions),
+              rankPrompt(readJobs, roles, s.location, s.settings?.employmentType, specLabels, descriptions, about),
               signal,
               'LEGACY',
               s.profile!.url,
@@ -444,14 +486,14 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
           );
           ({ remove: batchRemove, rank } = rankFromReply(
             raw,
-            slice.map(j => j.id),
+            readJobs.map(j => j.id),
             specLabels,
           ));
         } catch (error) {
           why = error instanceof Error ? error.message : String(error);
           if (signal.aborted) throw error;
         }
-        for (const job of slice) {
+        for (const job of readJobs) {
           if (batchRemove.has(job.id)) {
             drop.set(job.id, batchRemove.get(job.id)!);
             continue;
@@ -469,6 +511,8 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
           job.fit = fit;
           if (basis === 'degree' || basis === 'domain') job.basis = basis;
           if (quals.length) job.matched = quals;
+          if (r?.why) job.why = r.why;
+          else if (byKeyword.length) job.why = `The description asks for ${byKeyword.join(', ')}`;
           if (fit >= PRIORITY_FIT || basis === 'degree') {
             job.prioritized = true;
             prioritized += 1;
@@ -518,6 +562,8 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
       j.found = kept;
       j.dropped = list.filter(x => drop.has(x.id)).map(x => ({ title: x.title, company: x.company, why: drop.get(x.id)! }));
       j.status = 'choosing';
+      delete j.ranking;
+      delete j.rankStop;
       const checked = drop.size
         ? ` ChatGPT removed ${drop.size} ${drop.size === 1 ? 'advert or poor match' : 'adverts or poor matches'}.`
         : why
@@ -569,7 +615,7 @@ async function planCompanies(s: NetworkState, jobs: ReferralJob[], signal: Abort
       extractJson(
         await askChatGpt(
           companyPlanPrompt(
-            jobs.map(j => ({ company: j.company, title: j.title, size: j.sizeText })),
+            jobs.map(j => ({ company: j.company, title: j.title, size: j.sizeText, fit: j.fitNote })),
             roles,
             `${headlineOf(s)}. ${(s.cv?.text || s.profile?.about || '').slice(0, 1000)}`,
           ),

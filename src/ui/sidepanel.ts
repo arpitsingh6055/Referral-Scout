@@ -156,26 +156,35 @@ function render(s: NetworkState): void {
   run.append(stepper, node('h2', status.title, 'run-title'), node('p', status.sub, 'run-sub'));
   // One main action at a time. General networking outreach lives in Settings.
   // Pause stops searches as well as sending; Resume picks everything up where it stopped.
-  const main = s.paused ? 'btn block' : 'btn primary block';
+  // One primary action at a time; secondary actions are folded under "More" so the card stays readable.
+  const working = s.active || search?.status === 'finding' || jobs.some(j => !j.finishedAt && !j.waiting);
+  const ranking = search?.status === 'finding' ? search.ranking : undefined;
+  const extra: HTMLElement[] = [];
   if (s.paused) {
     const left = unfinished(s);
     run.append(
       node('p', left.length ? `Resume continues: ${left.join('; ')}.` : 'Nothing was left unfinished.', 'field-help'),
       button('Resume', () => act({ kind: 'network', action: 'resume' }), 'btn primary block'),
     );
-  }
-  if (search?.status === 'finding') {
+  } else if (search?.status === 'finding') {
     run.append(
-      node('p', 'You can keep using your browser. Results appear under Jobs.', 'field-help'),
-      ...(search.found.length
-        ? [
-            button(
-              `Stop here and choose from ${search.found.length} jobs found`,
-              () => act({ kind: 'network', action: 'finishJobSearch' }),
-              'btn block',
-            ),
-          ]
-        : []),
+      node(
+        'p',
+        ranking
+          ? `Reading and ranking job descriptions against your qualifications: ${ranking.done} of ${ranking.total}. You can keep using your browser.`
+          : 'You can keep using your browser. Results appear under Jobs.',
+        'field-help',
+      ),
+    );
+    if (search.found.length)
+      run.append(
+        button(
+          ranking ? 'Choose now with what is ranked so far' : `Stop here and choose from ${search.found.length} jobs found`,
+          () => act({ kind: 'network', action: 'finishJobSearch' }),
+          'btn block',
+        ),
+      );
+    extra.push(
       button(
         'Cancel this search',
         () => act({ kind: 'network', action: 'cancelJobSearch' }, 'Job search cancelled. Companies you already chose are kept.'),
@@ -189,7 +198,7 @@ function render(s: NetworkState): void {
         async () => {
           setTab('referrals', true);
         },
-        main,
+        'btn primary block',
       ),
     );
   } else {
@@ -203,24 +212,26 @@ function render(s: NetworkState): void {
             'Job search started. First the search is planned, then LinkedIn jobs are read.',
           );
         },
-        main,
+        'btn primary block',
       ),
     );
   }
   // You are never locked into a stage: stop looking for more people and go with those already found.
   if (!s.paused && jobs.some(j => j.finishedAt === undefined) && s.contacts.some(p => p.referralJob))
-    run.append(button('Stop searching, reach out to who was found', () => act({ kind: 'network', action: 'finishScans' }), 'btn block'));
-  const working = s.active || search?.status === 'finding' || jobs.some(j => !j.finishedAt && !j.waiting);
-  if (s.paused) {
-    /* Resume is already the main button */
-  } else if (working)
-    run.append(
+    extra.push(button('Stop searching, reach out to who was found', () => act({ kind: 'network', action: 'finishScans' }), 'btn block'));
+  if (!s.paused && working)
+    extra.push(
       button(
         'Pause everything',
         () => act({ kind: 'network', action: 'pause' }, 'Paused. Searches and sending have stopped; your progress is kept.'),
         'btn block',
       ),
     );
+  if (extra.length) {
+    const more = node('details', '', 'inline');
+    more.append(node('summary', 'More'), ...extra);
+    run.append(more);
+  }
   const used = usage(s),
     meters = node('div', '', 'meters');
   meters.append(meter('Invitations today', used.today, settings.dailyInvites), meter('This week', used.week, settings.weeklyInvites));
@@ -257,9 +268,14 @@ function render(s: NetworkState): void {
     todos.append(row);
   };
   for (const job of waiting.slice(0, 4)) {
-    const knownNames = s.contacts.filter(p => p.referralJob === job.url && p.direct).map(p => p.name).filter(Boolean);
+    const knownNames = s.contacts
+      .filter(p => p.referralJob === job.url && p.direct)
+      .map(p => p.name)
+      .filter(Boolean);
     const count = job.known ?? knownNames.length;
-    const who = knownNames.length ? ` — ${knownNames.slice(0, 4).join(', ')}${knownNames.length > 4 ? `, +${knownNames.length - 4} more` : ''}` : '';
+    const who = knownNames.length
+      ? ` — ${knownNames.slice(0, 4).join(', ')}${knownNames.length > 4 ? `, +${knownNames.length - 4} more` : ''}`
+      : '';
     todo(
       'info',
       `You already know ${count} ${count === 1 ? 'person' : 'people'} at ${job.company}${who}. Ask only them, or also look for stronger referrers?`,
@@ -287,8 +303,8 @@ function render(s: NetworkState): void {
     todo(
       'warn',
       `${toApprove} ${toApprove === 1 ? 'message needs' : 'messages need'} your approval before anything is sent.`,
-      button('Review', async () => openPeople('review'), 'btn sm primary'),
-      ...(s.active && toApprove > 1
+      button('Review', async () => openPeople('needs'), 'btn sm primary'),
+      ...(toApprove > 1
         ? [
             button(
               `Approve all ${toApprove}`,
@@ -306,7 +322,7 @@ function render(s: NetworkState): void {
     todo(
       'bad',
       `${attention} ${attention === 1 ? 'person needs' : 'people need'} your attention.`,
-      button('Show', async () => openPeople('attention'), 'btn sm'),
+      button('Show', async () => openPeople('needs'), 'btn sm'),
       button(
         attention === 1 ? 'Skip them' : `Skip all ${attention}`,
         () => act({ kind: 'network', action: 'skipAttention' }),

@@ -126,9 +126,7 @@ export function insert(editor: HTMLElement, value: string): void {
     // 3) Last resort for simple contenteditables only. Frameworks may discard this, so callers still verify.
     if (!ok()) {
       editor.replaceChildren(
-        ...value
-          .split('\n')
-          .flatMap((line, i) => (i ? [doc.createElement('br'), doc.createTextNode(line)] : [doc.createTextNode(line)])),
+        ...value.split('\n').flatMap((line, i) => (i ? [doc.createElement('br'), doc.createTextNode(line)] : [doc.createTextNode(line)])),
       );
       const IE = win.InputEvent ?? InputEvent;
       editor.dispatchEvent(new IE('input', { bubbles: true, inputType: 'insertText', data: value }));

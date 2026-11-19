@@ -77,10 +77,14 @@ async function moreMenu(top: HTMLElement, signal: AbortSignal): Promise<{ menu: 
 async function inspectRelationship(url: string, signal: AbortSignal): Promise<ReturnType<typeof relationship>> {
   // The profile action bar (Connect / Follow / Message) renders a moment AFTER the page reports complete, so judging
   // too early wrongly reads "unknown". Wait for a decisive control (or a 1st-degree badge) before deciding.
-  await wait(() => {
-    const t = topCard(url);
-    return control(t, CONNECT) || control(t, PENDING) || control(t, FOLLOW) || topCardFacts(t, visible).degree === 1 ? true : null;
-  }, signal, 8000).catch(() => undefined);
+  await wait(
+    () => {
+      const t = topCard(url);
+      return control(t, CONNECT) || control(t, PENDING) || control(t, FOLLOW) || topCardFacts(t, visible).degree === 1 ? true : null;
+    },
+    signal,
+    8000,
+  ).catch(() => undefined);
   const top = topCard(url),
     state = relationship(top);
   if (state !== 'unknown') return state;
@@ -269,7 +273,11 @@ const plain = (name: string): string =>
  * encoded id) is why a first message to a connection was sometimes wrongly reported as "window did not open".
  */
 const namesIn = (e: ParentNode): string[] => [
-  ...[...e.querySelectorAll<HTMLElement>('.msg-overlay-bubble-header__title, .msg-entity-lockup__entity-title, header h2, .artdeco-pill, [class*="typeahead"] [class*="pill"]')].map(textOf),
+  ...[
+    ...e.querySelectorAll<HTMLElement>(
+      '.msg-overlay-bubble-header__title, .msg-entity-lockup__entity-title, header h2, .artdeco-pill, [class*="typeahead"] [class*="pill"]',
+    ),
+  ].map(textOf),
   ...[...e.querySelectorAll<HTMLImageElement>('img[alt]')].map(i => i.alt.replace(/[’']s?\s*profile(\s+photo)?\s*$/i, '').trim()),
   ...[...e.querySelectorAll<HTMLAnchorElement>('a[href*="/in/"]')].map(a => a.getAttribute('aria-label') ?? ''),
 ];
@@ -290,7 +298,8 @@ export function openThreadFor(root: ParentNode, name: string, loc: { pathname: s
   if (!/^\/messaging\/thread\//.test(loc.pathname)) return null;
   const composer = [...root.querySelectorAll<HTMLElement>('.msg-form__contenteditable')].find(visible);
   if (!composer) return null;
-  const scope = (composer.closest('.msg-thread, .msg-convo-wrapper, .scaffold-layout__detail, main') as HTMLElement | null) ?? (root as HTMLElement);
+  const scope =
+    (composer.closest('.msg-thread, .msg-convo-wrapper, .scaffold-layout__detail, main') as HTMLElement | null) ?? (root as HTMLElement);
   const headerName = plain(textOf(scope.querySelector('.msg-entity-lockup__entity-title, .msg-thread__link-to-profile')));
   const encodedId = !!scope.querySelector('a.msg-thread__link-to-profile, a[href*="/in/ACoA"]') || /recipient=ACoA/i.test(loc.search);
   return !!name && headerName === plain(name) && encodedId ? scope : null;
@@ -352,7 +361,9 @@ async function message(cmd: NetworkPageCommand, signal: AbortSignal): Promise<un
   if (!conversation.isConnected || (!chatWindows().includes(conversation) && !location.pathname.startsWith('/messaging/')))
     throw new Error('The conversation changed before sending.');
   const bodies = (): string[] =>
-    [conversation, ...conversations(cmd.url, name)].flatMap(c => [...c.querySelectorAll<HTMLElement>('.msg-s-event-listitem__body')].map(e => e.innerText));
+    [conversation, ...conversations(cmd.url, name)].flatMap(c =>
+      [...c.querySelectorAll<HTMLElement>('.msg-s-event-listitem__body')].map(e => e.innerText),
+    );
   const bubblesBefore = bodies().length,
     needle = canon(cmd.body).slice(0, 40).toLowerCase();
   await authorize(cmd, true, signal);

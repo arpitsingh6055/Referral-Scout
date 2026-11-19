@@ -1,3 +1,4 @@
+import { friendlyError } from '../shared/errors';
 export function element<K extends keyof HTMLElementTagNameMap>(tag: K, text = ''): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   node.textContent = text;
@@ -8,6 +9,7 @@ export function appRoot(): HTMLElement {
   if (!node) throw new Error('Missing app root');
   return node;
 }
+/** A failure as one plain sentence for the person (see friendlyError). */
 export function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return friendlyError(error instanceof Error ? error.message : String(error));
 }

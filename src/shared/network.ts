@@ -154,6 +154,8 @@ export const outreachSettingsSchema = z.object({
   employmentType: z.enum(['any', 'internship', 'full-time']).default('any'),
   // Qualifications to PRIORITISE (never exclude): job descriptions are scanned for these and matches rise to the top.
   specializations: z.array(z.string().max(40)).max(12).default([]),
+  // True once the seeker has confirmed the list; until then it is pre-filled from their CV and LinkedIn profile.
+  specializationsChosen: z.boolean().default(false),
   aiMode: z.enum(['template', 'chatgpt']).default('template'),
   noteTemplate: z.string().trim().min(10).max(1200).default(defaultNoteTemplate),
   weeklyInvites: z.number().int().positive().nullable().default(80),
@@ -177,6 +179,7 @@ export const defaultSettings: OutreachSettings = {
   workMode: 'any',
   employmentType: 'any',
   specializations: [],
+  specializationsChosen: false,
   aiMode: 'template',
   noteTemplate: defaultNoteTemplate,
   weeklyInvites: 80,

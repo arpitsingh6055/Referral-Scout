@@ -31,6 +31,8 @@ export interface FoundJob {
   fit?: number | undefined;
   /** Why it was prioritised: "degree" (the description asks for the qualification) or "domain" (the work fits the field). */
   basis?: 'degree' | 'domain' | undefined;
+  /** ChatGPT's one-line reason for the fit score, shown under the job so the ranking can be checked. */
+  why?: string | undefined;
 }
 export interface JobSearch {
   status: 'finding' | 'choosing' | 'working';
@@ -39,6 +41,10 @@ export interface JobSearch {
   startedAt: number;
   /** Listings ChatGPT took out of the shortlist as adverts or poor matches, with its reason. Shown, never hidden silently. */
   dropped?: { title: string; company: string; why: string }[];
+  /** While job descriptions are being read and ranked: how many of how many. */
+  ranking?: { done: number; total: number } | undefined;
+  /** The person asked to choose now: ranking stops after the job in hand and the list is shown with what was ranked. */
+  rankStop?: boolean | undefined;
 }
 export type CompanySize = 'small' | 'mid' | 'large';
 export interface SearchPlan {
@@ -296,7 +302,7 @@ export const withRecruiters = (titles: string[]): string[] => {
  * size bucket does, so it decides who is worth asking there; the code then only executes its list.
  */
 export function companyPlanPrompt(
-  companies: { company: string; title: string; size?: string | undefined }[],
+  companies: { company: string; title: string; size?: string | undefined; fit?: string | undefined }[],
   roles: string[],
   about: string,
 ): string {
@@ -313,7 +319,12 @@ export function companyPlanPrompt(
     '- Recruiters and HR are always worth approaching; you do not need to list them, they are added automatically. Spend your list on the function-specific people.',
     '',
     `THE SEEKER wants: ${JSON.stringify(roles)}. About them: ${JSON.stringify(about.slice(0, 1200))}`,
-    `COMPANIES AND JOBS: ${JSON.stringify(companies.map(c => ({ company: c.company, job: c.title, ...(c.size ? { sizeHint: c.size } : {}) })))}`,
+    `COMPANIES AND JOBS: ${JSON.stringify(companies.map(c => ({ company: c.company, job: c.title, ...(c.size ? { sizeHint: c.size } : {}), ...(c.fit ? { seekerFit: c.fit } : {}) })))}`,
+    ...(companies.some(c => c.fit)
+      ? [
+          'Where an entry has "seekerFit", it says why the seeker suits that job, read from the job description (for example the degree it asks for). The note, ask and followUp may mention that in a few plain words; add nothing beyond it.',
+        ]
+      : []),
     '',
     'Reply with ONLY one JSON object: {"companies":[ ... ]} with one entry per company above, in the same order, each exactly:',
     '{"company": the name exactly as given, "type": "enterprise" | "mid" | "scaleup" | "startup", "why": one short sentence on why these people, "searchTitles": 4 to 7 job titles to search for at this company, most valuable first, written as they appear in LinkedIn headlines, 1 to 3 words each, no company names, "avoid": up to 5 titles NOT to approach at this company as a stranger, "note": a connection note of at most 170 characters using {firstName}, {myFirstName}, {title}, {company}, "ask": a 40 to 70 word message to someone the seeker ALREADY knows there, using {firstName}, {myFirstName}, {title}, {company}, {jobUrl}, asking whether they would refer them or point them to the right person, "followUp": the same request for a stranger who has just accepted the connection request, opening with thanks for connecting}',
@@ -371,7 +382,8 @@ export function strategiesFromReply(json: unknown): Map<string, CompanyStrategy>
 }
 
 /** Title words that mark a LinkedIn listing as an internship / trainee (LinkedIn labels these in the title). */
-export const INTERN_TITLE = /\bintern(ship|s|ing)?\b|\btrainee\b|\bapprentice(ship)?\b|\bsummer\b|\barticleship\b|\bindustrial training\b|\bco-?op\b|\bwinter intern/i;
+export const INTERN_TITLE =
+  /\bintern(ship|s|ing)?\b|\btrainee\b|\bapprentice(ship)?\b|\bsummer\b|\barticleship\b|\bindustrial training\b|\bco-?op\b|\bwinter intern/i;
 export type EmploymentIntent = 'internship' | 'full-time' | 'any';
 /** What employment type the seeker is after: the explicit setting wins; otherwise read it from the role text. */
 export function employmentIntent(employmentType: string | undefined, roles: string[]): EmploymentIntent {
@@ -441,11 +453,7 @@ export const RANK_MAX_BATCHES = 3; // safety cap on how deep to read
 export const PRIORITY_FIT = 55; // a fit score at or above this marks a job as prioritised
 /** A job description as plain text, capped, so a batch of full descriptions stays a sane prompt size. */
 export function clampDescription(text: string, max = 3500): string {
-  return (text ?? '')
-    .replace(/ /g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, max);
+  return (text ?? '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 export interface JobRank {
   fit: number;
@@ -460,6 +468,7 @@ export function rankPrompt(
   employmentType: string | undefined,
   qualifications: string[],
   descriptions: Record<string, string>,
+  about = '',
 ): string {
   const intent = employmentIntent(employmentType, roles);
   return [
@@ -470,6 +479,11 @@ export function rankPrompt(
       'A promoted/advert listing that genuinely fits may stay. Never remove more than half of this batch.',
     '',
     `THE SEEKER'S QUALIFICATIONS / SPECIALISATIONS: ${JSON.stringify(qualifications)}.`,
+    ...(about.trim()
+      ? [
+          `ABOUT THE SEEKER (use it to judge "domain" fit - two people with the same degree but different experience fit different jobs): ${JSON.stringify(about.slice(0, 900))}`,
+        ]
+      : []),
     'For EACH listing you KEEP, read its "description" and return a "fit" score from 0 to 100 and a "basis":',
     '- "basis":"degree" when the description explicitly requires or prefers one of these qualifications (for example "MBA/PGDM required", "B.E./B.Tech in CS or IT", "CA preferred"). Score 80-100. Put the matching qualification labels, copied EXACTLY from the list above, in "quals".',
     '- "basis":"domain" when the description does NOT state a degree, but the actual work clearly suits the seeker’s specialisation - for example an MBA/PGDM suits strategy, product, consulting, operations, marketing or finance roles; a CS/IT engineering background suits software, data, platform or analytics roles; a CA or commerce background suits finance, audit, FP&A, tax or accounting roles. Score 40-79 by how strong the fit is. "quals" may be empty.',

@@ -2,7 +2,7 @@
 import { errorText } from './render';
 import { defaultSettings, introduction, renderNote, type NetworkState, type OutreachSettings, SAFE, riskNotes } from '../shared/network';
 import { completeCvText } from './cv-text';
-import { SPECIALIZATIONS } from '../shared/specializations';
+import { qualificationPicker } from './qualifications';
 import {
   node,
   csv,
@@ -112,39 +112,15 @@ export function askTarget(s: NetworkState): HTMLElement {
     help: 'One per line if you have more than one. Similar job titles are added for you.',
   });
   const place = field({ label: 'Where', value: '', help: 'A country or a city. Leave empty to search everywhere.' });
-  // Optional qualifications to prioritise. Ticked ones are read for in each job's description; matching jobs rise to the
-  // top of the list and are badged. Nothing is excluded. Can be changed later in Settings.
-  const specSelected = new Set(s.settings?.specializations ?? []);
-  const specBoxes = new Map<string, HTMLInputElement>();
-  const specWrap = node('div', '', 'field');
-  specWrap.append(
-    node('label', 'Prioritise jobs that ask for your qualification (optional)', 'field-label'),
-    node(
-      'p',
-      'Each job\u2019s description is matched against the qualifications you tick; matching jobs move to the top of your list and are badged. Nothing is excluded.',
-      'field-help',
-    ),
-  );
-  for (const spec of SPECIALIZATIONS) {
-    const rowLabel = node('label');
-    rowLabel.style.cssText = 'display:flex;gap:8px;align-items:center;margin:6px 0;cursor:pointer';
-    const cb = node('input');
-    cb.type = 'checkbox';
-    cb.checked = specSelected.has(spec.id);
-    cb.addEventListener('change', () => {
-      flags.dirty = true;
-    });
-    specBoxes.set(spec.id, cb);
-    rowLabel.append(cb, node('span', spec.label));
-    specWrap.append(rowLabel);
-  }
+  // Pre-filled from the profile and shown as one line, so onboarding stays short.
+  const quals = qualificationPicker(s, true);
   roles.input.placeholder = 'For example: Product Management internship';
   place.input.placeholder = 'For example: India, or Bengaluru';
   for (const f of [roles, place])
     f.input.addEventListener('input', () => {
       flags.dirty = true;
     });
-  form.append(roles.wrap, place.wrap, specWrap);
+  form.append(roles.wrap, place.wrap, quals.wrap);
   hero.append(
     node('div', 'RS', 'mark'),
     node('p', 'Step 2 of 2', 'eyebrow'),
@@ -174,7 +150,8 @@ export function askTarget(s: NetworkState): HTMLElement {
             settings: {
               ...(s.settings ?? defaultSettings),
               roles: list,
-              specializations: [...specBoxes].filter(([, cb]) => cb.checked).map(([id]) => id),
+              specializations: quals.values(),
+              specializationsChosen: quals.confirmed(),
             },
           },
           'Saved. Press Find jobs and referrals when you are ready.',
@@ -200,33 +177,7 @@ export function buildSetup(
     help: 'One per line, for example "Product Management internship".',
   });
   const location = field({ label: 'Where', value: s.location, help: 'A country or city. Leave generic for the widest search.' });
-  // Optional: qualifications to prioritise. Ticked ones are searched for in each job's description; matching jobs rise
-  // to the top of the choose-list and are badged. Nothing is ever excluded.
-  const specSelected = new Set(settings.specializations ?? []);
-  const specWrap = node('div', '', 'field');
-  const specLabel = node('label', 'Prioritise jobs that ask for your qualification', 'field-label');
-  specWrap.append(
-    specLabel,
-    node(
-      'p',
-      'Optional. Each job\u2019s description is read and matched against the qualifications you tick; matching jobs are moved to the top of your list and badged. Other jobs are kept \u2014 nothing is excluded. Reading descriptions adds a little time to each search.',
-      'field-help',
-    ),
-  );
-  const specBoxes = new Map<string, HTMLInputElement>();
-  for (const spec of SPECIALIZATIONS) {
-    const rowLabel = node('label');
-    rowLabel.style.cssText = 'display:flex;gap:8px;align-items:center;margin:6px 0;cursor:pointer';
-    const cb = node('input');
-    cb.type = 'checkbox';
-    cb.checked = specSelected.has(spec.id);
-    cb.addEventListener('change', () => {
-      flags.dirty = true;
-    });
-    specBoxes.set(spec.id, cb);
-    rowLabel.append(cb, node('span', spec.label));
-    specWrap.append(rowLabel);
-  }
+  const quals = qualificationPicker(s, false);
   const noteTemplate = field({
     label: 'Invitation note',
     value: settings.noteTemplate,
@@ -261,7 +212,7 @@ export function buildSetup(
     node('h2', 'What you are looking for', 'card-title'),
     node('p', 'This drives the job search. Similar job titles are added for you.', 'card-sub'),
   );
-  who.append(roles.wrap, location.wrap, specWrap);
+  who.append(roles.wrap, location.wrap, quals.wrap);
   const wordsAcc = accordion('words', 'Your messages', 'invitation and follow-up'),
     words = wordsAcc.body;
   words.append(
@@ -369,7 +320,8 @@ export function buildSetup(
       maxPending: optional(pendingCap.input.value),
       companyAllowlist: csv(allow.input.value),
       companyExclusions: csv(exclude.input.value),
-      specializations: [...specBoxes].filter(([, cb]) => cb.checked).map(([id]) => id),
+      specializations: quals.values(),
+      specializationsChosen: quals.confirmed(),
     };
     await request({
       kind: 'network',

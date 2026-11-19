@@ -250,7 +250,10 @@ export function registerNetworkMessages(): void {
           job: job ? { title: job.title, company: job.company, url: job.url } : undefined,
           messages,
         });
-        const raw = await askChatGpt(prompt, new AbortController().signal, 'LEGACY', state.profile.url, '', { startMs: 40_000, totalMs: 120_000 });
+        const raw = await askChatGpt(prompt, new AbortController().signal, 'LEGACY', state.profile.url, '', {
+          startMs: 40_000,
+          totalMs: 120_000,
+        });
         let answer: unknown;
         try {
           answer = extractJson(raw);
@@ -660,7 +663,9 @@ export function registerNetworkMessages(): void {
             const chosen = search.found.filter(j => req.ids.includes(j.id));
             if (!chosen.length) throw new Error('Tick at least one company.');
             const list = s.referralJobs ?? (s.referralJobs = []);
-            for (const j of chosen.reverse())
+            for (const j of chosen.reverse()) {
+              // What the description ranking said about the fit travels with the job, so outreach can mention it.
+              const fitNote = j.prioritized ? (j.why || (j.matched?.length ? `matches ${j.matched.join(', ')}` : '')).slice(0, 160) : '';
               if (!list.some(r => sameJob(r, j)))
                 // the same opening is never taken on twice
                 list.unshift({
@@ -673,7 +678,9 @@ export function registerNetworkMessages(): void {
                   cursor: 0,
                   found: 0,
                   perCompany: req.perCompany,
+                  ...(fitNote ? { fitNote } : {}),
                 });
+            }
             s.referralJobs = list.slice(0, 100);
             search.found = search.found.filter(j => !req.ids.includes(j.id)).map(j => ({ ...j, picked: false }));
             search.status = 'working';
@@ -765,7 +772,11 @@ export function registerNetworkMessages(): void {
             if (s.jobSearch?.status !== 'finding') throw new Error('No job search is running.');
             if (!s.jobSearch.found.length) throw new Error('Nothing has been found yet. Wait for the first results, or stop the search.');
             s.jobSearch.cursor = Number.MAX_SAFE_INTEGER;
-            s.status = 'Stopping the search and preparing the list from what was found…';
+            // Stopping the title searches still ranks what was found; pressing it again during ranking stops the ranking.
+            if (s.jobSearch.ranking) s.jobSearch.rankStop = true;
+            s.status = s.jobSearch.ranking
+              ? 'Stopping the ranking. The list is shown with what was ranked so far…'
+              : 'Stopping the search and preparing the list from what was found…';
             return s;
           });
         // Stop looking for more people everywhere and reach out to those already found.

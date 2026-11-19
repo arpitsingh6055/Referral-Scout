@@ -153,7 +153,8 @@ export function live(s: NetworkState, stage: number): HTMLElement | null {
     for (const job of jobs.slice(0, 10)) {
       const found = s.contacts.filter(p => p.referralJob === job.url).length;
       if (job.finishedAt) steps.push(['done', job.company, `${found} ${found === 1 ? 'person' : 'people'} found`]);
-      else if (job.waiting) steps.push(['you', job.company, 'Your turn — tap to choose: ask who you know, or also find stronger referrers']);
+      else if (job.waiting)
+        steps.push(['you', job.company, 'Your turn — tap to choose: ask who you know, or also find stronger referrers']);
       else if (job === current && (job.strategy || job.strategyTried || job.mode !== 'referral'))
         steps.push(['now', job.company, s.status || 'Searching']);
       else steps.push(['later', job.company]);

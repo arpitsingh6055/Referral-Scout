@@ -362,7 +362,17 @@ describe('employment type filtering', () => {
     expect(employmentIntent('any', ['Data Analyst'])).toBe('full-time');
   });
   it('tells ChatGPT to remove full-time roles when the seeker wants an internship', () => {
-    const job: FoundJob = { id: '1', url: 'https://www.linkedin.com/jobs/view/1/', title: 'Product Manager', company: 'Acme', location: 'India', insight: '', term: '', score: 1, picked: false };
+    const job: FoundJob = {
+      id: '1',
+      url: 'https://www.linkedin.com/jobs/view/1/',
+      title: 'Product Manager',
+      company: 'Acme',
+      location: 'India',
+      insight: '',
+      term: '',
+      score: 1,
+      picked: false,
+    };
     const prompt = reviewPrompt([job], ['Product Management internship'], 'India');
     expect(prompt).toMatch(/wants an INTERNSHIP/);
     expect(prompt).toMatch(/employment type: internship/);
@@ -407,12 +417,46 @@ describe('employment type filtering', () => {
     expect(rank.size).toBe(0);
   });
   it('rankPrompt includes the full description and asks for a fit score and basis', () => {
-    const job: FoundJob = { id: '7', url: 'https://www.linkedin.com/jobs/view/7/', title: 'APM', company: 'Acme', location: 'India', insight: '', term: '', score: 1, picked: false };
-    const prompt = rankPrompt([job], ['Product Manager'], 'India', 'any', ['MBA/PGDM'], { '7': 'We prefer an MBA/PGDM and strong analytics.' });
+    const job: FoundJob = {
+      id: '7',
+      url: 'https://www.linkedin.com/jobs/view/7/',
+      title: 'APM',
+      company: 'Acme',
+      location: 'India',
+      insight: '',
+      term: '',
+      score: 1,
+      picked: false,
+    };
+    const prompt = rankPrompt([job], ['Product Manager'], 'India', 'any', ['MBA/PGDM'], {
+      '7': 'We prefer an MBA/PGDM and strong analytics.',
+    });
     expect(prompt).toMatch(/We prefer an MBA\/PGDM and strong analytics\./);
     expect(prompt).toMatch(/"MBA\/PGDM"/);
     expect(prompt).toMatch(/"fit"/);
     expect(prompt).toMatch(/"basis"/);
+  });
+  it('rankPrompt passes the seeker profile for domain fit only when given', () => {
+    const job: FoundJob = {
+      id: '7',
+      url: 'https://www.linkedin.com/jobs/view/7/',
+      title: 'APM',
+      company: 'Acme',
+      location: 'India',
+      insight: '',
+      term: '',
+      score: 1,
+      picked: false,
+    };
+    expect(rankPrompt([job], ['PM'], '', 'any', ['MBA/PGDM'], {})).not.toMatch(/ABOUT THE SEEKER/);
+    expect(rankPrompt([job], ['PM'], '', 'any', ['MBA/PGDM'], {}, 'PGDM student, ex-product analyst')).toMatch(
+      /ABOUT THE SEEKER[^\n]*ex-product analyst/,
+    );
+  });
+  it('companyPlanPrompt carries why the seeker fits a job into the wording instructions', () => {
+    const prompt = companyPlanPrompt([{ company: 'Acme', title: 'PM Intern', fit: 'asks for MBA/PGDM' }], ['PM internship'], '');
+    expect(prompt).toMatch(/"seekerFit":"asks for MBA\/PGDM"/);
+    expect(companyPlanPrompt([{ company: 'Acme', title: 'PM Intern' }], ['PM internship'], '')).not.toMatch(/"seekerFit"/);
   });
   it('clampDescription flattens whitespace and caps length', () => {
     expect(clampDescription('  a\n\n b\tc  ')).toBe('a b c');

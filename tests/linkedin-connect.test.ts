@@ -177,7 +177,16 @@ function bareProfile(actionsHtml: string): void {
   document.body.innerHTML = `<main><section><div componentkey="com.linkedin.sdui.profile.card.refXYZTopcard" class="i87k8o"><h2>Alex Example</h2><p hidden>· 1st</p><p>· 3rd</p><p>Recruiter at Acme</p><p><a href="/in/alex/overlay/contact-info/">Contact info</a></p><div id="actions">${actionsHtml}</div></div></section></main>`;
 }
 async function askRelationship() {
-  const cmd = { kind: 'network.page', requestId: crypto.randomUUID(), deadline: Date.now() + 60000, action: 'relationship', url: URL_, intentId: crypto.randomUUID(), body: '', noteMode: 'preferred' };
+  const cmd = {
+    kind: 'network.page',
+    requestId: crypto.randomUUID(),
+    deadline: Date.now() + 60000,
+    action: 'relationship',
+    url: URL_,
+    intentId: crypto.randomUUID(),
+    body: '',
+    noteMode: 'preferred',
+  };
   return new Promise<{ ok: boolean; data?: { state: string } }>(resolve =>
     listener(cmd, { id: 'abc', url: 'chrome-extension://abc/service-worker.js', origin: 'chrome-extension://abc' }, resolve as never),
   );
@@ -186,15 +195,21 @@ async function askRelationship() {
 it('waits for the Connect button to render before judging, instead of calling it unknown', async () => {
   bareProfile(''); // no action bar yet, only the "· 3rd" degree
   setTimeout(() => {
-    document.getElementById('actions')!.innerHTML = `<a href="${URL_}" aria-label="Invite Alex Example to connect">Connect</a><button>More</button>`;
+    document.getElementById('actions')!.innerHTML =
+      `<a href="${URL_}" aria-label="Invite Alex Example to connect">Connect</a><button>More</button>`;
   }, 800);
   const reply = await askRelationship();
   expect(reply).toMatchObject({ ok: true, data: { state: 'not-connected' } }); // found once it rendered
 }, 12000);
 
 it('does not call a profile follow-only when Connect is under More but the menu item renders a beat late (the Sandeep bug)', async () => {
-  bareProfile('<button aria-label="Follow Alex Example">Follow</button><a href="/messaging/compose/">Message</a><button id="more">More</button>');
-  document.body.insertAdjacentHTML('beforeend', '<div role="menu" hidden><a role="menuitem">Send profile in a message</a><a role="menuitem">Save to PDF</a></div>');
+  bareProfile(
+    '<button aria-label="Follow Alex Example">Follow</button><a href="/messaging/compose/">Message</a><button id="more">More</button>',
+  );
+  document.body.insertAdjacentHTML(
+    'beforeend',
+    '<div role="menu" hidden><a role="menuitem">Send profile in a message</a><a role="menuitem">Save to PDF</a></div>',
+  );
   const menu = document.querySelector('[role="menu"]')!;
   document.getElementById('more')!.addEventListener('click', () => menu.toggleAttribute('hidden'));
   // LinkedIn fills the Connect item into the menu a moment after it opens.
@@ -210,7 +225,10 @@ it('openThreadFor only accepts the full-page thread when it is confirmed to be t
     <ul class="msg-s-message-list-content"></ul>
     <div class="msg-form__contenteditable" contenteditable="true" role="textbox"><p><br></p></div>
   </div>`;
-  const loc = { pathname: '/messaging/thread/new/', search: '?recipient=ACoAACMzS3ABzD7JFhgJ83yF98CO3aldAteSTkc&screenContext=NON_SELF_PROFILE_VIEW' };
+  const loc = {
+    pathname: '/messaging/thread/new/',
+    search: '?recipient=ACoAACMzS3ABzD7JFhgJ83yF98CO3aldAteSTkc&screenContext=NON_SELF_PROFILE_VIEW',
+  };
   expect(openThreadFor(document, 'AVINASH YADAV', loc)).not.toBeNull(); // right person -> usable
   expect(openThreadFor(document, 'Someone Else', loc)).toBeNull(); // wrong name -> never a send target
   expect(openThreadFor(document, 'AVINASH YADAV', { pathname: '/in/avinash/', search: '' })).toBeNull(); // not on a thread page
@@ -218,7 +236,10 @@ it('openThreadFor only accepts the full-page thread when it is confirmed to be t
 
 it('reports follow-only only when LinkedIn truly offers no Connect, just Follow', async () => {
   bareProfile('<button aria-label="Follow Alex Example">Follow</button><button id="more">More</button>');
-  document.body.insertAdjacentHTML('beforeend', '<div role="menu" hidden><a role="menuitem">Send profile in a message</a><a role="menuitem">Save to PDF</a></div>');
+  document.body.insertAdjacentHTML(
+    'beforeend',
+    '<div role="menu" hidden><a role="menuitem">Send profile in a message</a><a role="menuitem">Save to PDF</a></div>',
+  );
   const menu = document.querySelector('[role="menu"]')!;
   document.getElementById('more')!.addEventListener('click', () => menu.toggleAttribute('hidden'));
   const reply = await askRelationship();

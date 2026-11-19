@@ -244,6 +244,8 @@ export function jobChooser(search: JobSearch): HTMLElement {
           'badge attention',
         ),
       );
+    // The reason behind the ranking, so it can be checked rather than taken on trust.
+    if (job.prioritized && job.why) text.append(node('span', job.why, 'muted small'));
     if (job.insight) text.append(node('span', job.insight, 'badge connected'));
     if (job.promoted) text.append(node('span', 'Promoted by the employer', 'badge'));
     row.append(box, text, link('View job ↗', job.url, 'job-open'));
@@ -296,9 +298,11 @@ export function buildReferrals(s: NetworkState): HTMLElement {
     panel.append(
       node(
         'p',
-        s.plan
-          ? `Searching LinkedIn jobs: title ${Math.min(search.cursor + 1, s.plan.terms.length)} of ${s.plan.terms.length}. ${search.found.length} jobs read so far.`
-          : 'Planning the search…',
+        search.ranking
+          ? `Reading and ranking job descriptions against your qualifications: ${search.ranking.done} of ${search.ranking.total}. Use \u201cChoose now\u201d on Home to stop early.`
+          : s.plan
+            ? `Searching LinkedIn jobs: title ${Math.min(search.cursor + 1, s.plan.terms.length)} of ${s.plan.terms.length}. ${search.found.length} jobs read so far.`
+            : 'Planning the search…',
         'callout',
       ),
     );

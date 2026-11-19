@@ -94,16 +94,23 @@ export const specializationIds = new Set(SPECIALIZATIONS.map(s => s.id));
  * Which of the selected specializations the given text (job title + description) calls for, as badge labels.
  * Empty when nothing is selected or nothing matches. Order follows SPECIALIZATIONS so badges read consistently.
  */
+const hits = (spec: Specialization, text: string, hasCue: boolean): boolean =>
+  spec.strong.some(r => r.test(text)) || (hasCue && !!spec.weak?.some(r => r.test(text)));
 export function matchSpecializations(text: string, ids: readonly string[]): string[] {
   if (!ids.length || !text) return [];
   const picked = new Set(ids);
   const hasCue = QUALIFICATION_CUE.test(text);
-  const out: string[] = [];
-  for (const spec of SPECIALIZATIONS) {
-    if (!picked.has(spec.id)) continue;
-    const strong = spec.strong.some(r => r.test(text));
-    const weak = hasCue && !!spec.weak?.some(r => r.test(text));
-    if (strong || weak) out.push(spec.short);
-  }
-  return out;
+  return SPECIALIZATIONS.filter(spec => picked.has(spec.id) && hits(spec, text, hasCue)).map(spec => spec.short);
+}
+/**
+ * Which qualifications the seeker most likely holds, read from their CV / LinkedIn headline and About. Used only to
+ * PRE-TICK the qualification checklist, which the seeker can change. A CS/IT engineering degree is not also listed
+ * as "other branches", since that would only duplicate it.
+ */
+export function detectSpecializations(text: string): string[] {
+  if (!text?.trim()) return [];
+  // A CV always talks about education, so the ambiguous abbreviations still need a qualification word nearby; the
+  // whole-text cue is too loose here, so only the strong (unambiguous) patterns count.
+  const found = SPECIALIZATIONS.filter(spec => spec.strong.some(r => r.test(text))).map(spec => spec.id);
+  return found.includes('btech-cs') ? found.filter(id => id !== 'btech-other') : found;
 }

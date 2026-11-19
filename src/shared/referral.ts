@@ -73,6 +73,8 @@ export interface ReferralJob extends z.infer<typeof referralJobInput> {
   lookupTried?: boolean;
   /** When the person marked this job as applied for. */
   applied?: number;
+  /** Why the seeker suits this job, from the description ranking (e.g. "asks for MBA/PGDM; strategy role"). Used in outreach wording. */
+  fitNote?: string;
 }
 /** How many people one "Ask for referrals" click contacts by itself: the strongest few. A whole recruiting team is not messaged at once. */
 export const REFERRAL_AUTO = 8;
