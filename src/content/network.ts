@@ -494,6 +494,41 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
     ).catch(() => null);
     return { companyUrl: item?.companyUrl ?? null, location: item?.location ?? '', suggested: item?.suggested ?? [] };
   }
+  if (cmd.action === 'jobText') {
+    // The full job description, read from LinkedIn's "About the job" block. Used only to prioritise (never exclude)
+    // jobs whose description calls for the seeker's qualification. The block key carries the job id.
+    const idFrom = (raw: string): string => {
+      const direct = /\/jobs\/view\/(\d+)/.exec(raw)?.[1];
+      if (direct) return direct;
+      try {
+        return new URL(raw, location.origin).searchParams.get('currentJobId') ?? '';
+      } catch {
+        return '';
+      }
+    };
+    const id = idFrom(location.href) || idFrom(cmd.url);
+    const readDesc = (): string => {
+      const docs: Document[] = [document];
+      for (const frame of document.querySelectorAll('iframe')) {
+        try {
+          const d = frame.contentDocument;
+          if (d) docs.push(d);
+        } catch {
+          /* cross-origin frame (an ad): skip */
+        }
+      }
+      for (const d of docs) {
+        const el = id
+          ? d.querySelector(`[componentkey="JobDetails_AboutTheJob_${id}"]`)
+          : d.querySelector('[componentkey^="JobDetails_AboutTheJob_"]');
+        const t = textOf(el);
+        if (t) return t;
+      }
+      return '';
+    };
+    const text = await wait(() => readDesc() || null, signal, 12000).catch(() => '');
+    return { text: (text || '').slice(0, 8000) };
+  }
   if (cmd.action === 'sentInvitations') {
     // Invitations still waiting (checked live, 12 November 2026): ten people at a time, each with their profile
     // address, and a "Load more" button while there are more. The list counts as complete once that button is gone.

@@ -232,6 +232,7 @@ export function jobChooser(search: JobSearch): HTMLElement {
       count();
     });
     text.append(link(job.title, job.url, 'job-title'), node('span', `${job.company} · ${job.location}`, 'muted small'));
+    if (job.prioritized && job.matched?.length) text.append(node('span', `Matches your qualification: ${job.matched.join(', ')}`, 'badge attention'));
     if (job.insight) text.append(node('span', job.insight, 'badge connected'));
     if (job.promoted) text.append(node('span', 'Promoted by the employer', 'badge'));
     row.append(box, text, link('View job ↗', job.url, 'job-open'));

@@ -23,6 +23,10 @@ export interface FoundJob {
   score: number;
   picked: boolean;
   promoted?: boolean | undefined;
+  /** Set when the job description calls for a qualification the seeker chose to prioritise. Prioritise-only, never excludes. */
+  prioritized?: boolean | undefined;
+  /** The matched qualification labels (badge text), e.g. ["MBA/PGDM"]. */
+  matched?: string[] | undefined;
 }
 export interface JobSearch {
   status: 'finding' | 'choosing' | 'working';

@@ -48,12 +48,14 @@ import {
   rulesPlan,
   scoreJob,
   shortlist,
+  PRETICKED,
   sizeForType,
   sizeOf,
   strategiesFromReply,
   withRecruiters,
   type CompanyStrategy,
 } from '../shared/jobsearch';
+import { matchSpecializations } from '../shared/specializations';
 import { extractJson } from '../parsers/json';
 import { networkCommand, networkTab, showWorkTab, closeWorkWindow } from './network-browser';
 import { prepareIntroduction, prepareInvitation, askChatGpt } from './network-ai';
@@ -342,6 +344,8 @@ const planLimits = (what: string) => ({
     if (label) void updateNetwork(c => ({ ...c, status: `${what}: ${label}…` })).catch(() => undefined);
   },
 });
+/** At most this many of the shortlisted jobs have their description read for qualification prioritising, to bound the time added to a search. */
+const JOBS_TO_SCAN = 25;
 async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void> {
   const roles = s.settings?.roles?.length ? s.settings.roles : [s.target],
     search = s.jobSearch!;
@@ -415,10 +419,38 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
         const reason = employmentMismatch(j.title, intent);
         if (reason && !drop.has(j.id)) drop.set(j.id, reason);
       }
+    const kept = list.filter(x => !drop.has(x.id));
+    // Prioritise, never exclude: when the seeker chose qualifications, read each kept job's description and lift the
+    // ones that call for a chosen qualification to the top of the list, badged. A job that cannot be read is left as is.
+    const specs = s.settings?.specializations ?? [];
+    if (specs.length && kept.length) {
+      const scan = kept.slice(0, JOBS_TO_SCAN);
+      for (let i = 0; i < scan.length; i++) {
+        signal.throwIfAborted();
+        const job = scan[i]!;
+        await note(s, `Reading job descriptions to prioritise your qualifications (${i + 1} of ${scan.length})…`);
+        try {
+          const tab = await networkTab(job.url, signal);
+          const res = (await networkCommand(tab, { action: 'jobText', url: job.url }, signal)) as { text?: string };
+          const matched = matchSpecializations(`${job.title}\n${res?.text ?? ''}`, specs);
+          if (matched.length) {
+            job.prioritized = true;
+            job.matched = matched;
+          }
+        } catch (error) {
+          if (signal.aborted) throw error; // one unreadable job is skipped; the rest continue
+        }
+      }
+      // Matched jobs first, each group by score; re-tick the top of the new order.
+      kept.sort((a, b) => Number(!!b.prioritized) - Number(!!a.prioritized) || b.score - a.score);
+      kept.forEach((j, i) => {
+        j.picked = i < PRETICKED && (!!j.prioritized || j.score > 0);
+      });
+    }
     await updateNetwork(c => {
       const j = c.jobSearch;
       if (!j || j.status !== 'finding') return c;
-      j.found = list.filter(x => !drop.has(x.id));
+      j.found = kept;
       j.dropped = list.filter(x => drop.has(x.id)).map(x => ({ title: x.title, company: x.company, why: drop.get(x.id)! }));
       j.status = 'choosing';
       const checked = drop.size
@@ -426,8 +458,10 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
         : why
           ? ' ChatGPT could not check the list, so it is unfiltered.'
           : '';
+      const prioritized = kept.filter(x => x.prioritized).length;
+      const priorityNote = prioritized ? ` ${prioritized} match your qualification and are at the top.` : '';
       c.status = j.found.length
-        ? `Jobs found at ${j.found.length} companies.${checked} Open Jobs and confirm which ones to pursue.`
+        ? `Jobs found at ${j.found.length} companies.${checked}${priorityNote} Open Jobs and confirm which ones to pursue.`
         : 'No matching jobs were found. Try other target roles or a wider location in Settings.';
       return c;
     });
