@@ -1,10 +1,10 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/storage/state', () => ({
   read: vi.fn(async (key: string) => (key === 'work-window' ? 3 : key === 'network-tab' ? 7 : undefined)),
   write: vi.fn(),
 }));
-const tabs = { get: vi.fn(), update: vi.fn(), create: vi.fn(), sendMessage: vi.fn(), query: vi.fn() };
+const tabs = { get: vi.fn(), update: vi.fn(), create: vi.fn(), sendMessage: vi.fn(), query: vi.fn(), remove: vi.fn() };
 const windows = { update: vi.fn(), get: vi.fn(), create: vi.fn(), remove: vi.fn() };
 
 beforeEach(() => {
@@ -54,4 +54,68 @@ it('closes the work window when nothing is using it, but never while a ChatGPT t
   tabs.query.mockResolvedValueOnce([{ url: 'https://www.linkedin.com/feed/' }]);
   await closeWorkWindow();
   expect(windows.remove).toHaveBeenCalledWith(3);
+});
+
+describe('reading several job pages at once', () => {
+  const urls = Array.from({ length: 10 }, (_, i) => `https://www.linkedin.com/jobs/view/${1000 + i}/`);
+  beforeEach(() => {
+    let next = 100;
+    windows.get.mockResolvedValue({ id: 3 });
+    tabs.create.mockImplementation(async () => ({ id: next++ }));
+    tabs.remove.mockResolvedValue(undefined);
+  });
+
+  it('uses at most four background tabs, reads every page, and closes every tab it opened', async () => {
+    const { readPagesInParallel } = await import('../src/background/network-browser');
+    let inFlight = 0,
+      most = 0;
+    const got = await readPagesInParallel(
+      urls,
+      async (_tab, url) => {
+        inFlight++;
+        most = Math.max(most, inFlight);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        inFlight--;
+        return url.slice(-5);
+      },
+      new AbortController().signal,
+      { staggerMs: 0 },
+    );
+    expect(got.size).toBe(10);
+    expect(got.get(urls[3]!)).toBe('1003/');
+    expect(most).toBeLessThanOrEqual(4);
+    expect(tabs.create).toHaveBeenCalledTimes(4);
+    for (const call of tabs.create.mock.calls) expect(call[0]).toMatchObject({ windowId: 3, active: false });
+    expect(tabs.remove.mock.calls.map(c => c[0]).sort()).toEqual([100, 101, 102, 103]);
+  });
+
+  it('carries on when one page fails, and still closes the tabs', async () => {
+    const { readPagesInParallel } = await import('../src/background/network-browser');
+    const got = await readPagesInParallel(
+      urls.slice(0, 3),
+      async (_tab, url) => {
+        if (url.includes('1001')) throw new Error('page did not load');
+        return 'ok';
+      },
+      new AbortController().signal,
+      { staggerMs: 0 },
+    );
+    expect([...got.values()]).toEqual(expect.arrayContaining(['ok', undefined]));
+    expect(got.size).toBe(3);
+    expect(tabs.remove).toHaveBeenCalled();
+  });
+
+  it('stops starting new pages when asked to, finishing only those already loading', async () => {
+    const { readPagesInParallel } = await import('../src/background/network-browser');
+    let done = 0;
+    const got = await readPagesInParallel(urls, async () => 'ok', new AbortController().signal, {
+      staggerMs: 0,
+      shouldStop: async () => done >= 2,
+      onDone: () => {
+        done++;
+      },
+    });
+    expect(got.size).toBeLessThan(urls.length);
+    expect(tabs.remove).toHaveBeenCalled();
+  });
 });

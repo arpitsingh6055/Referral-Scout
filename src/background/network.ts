@@ -67,7 +67,7 @@ import {
 import { matchSpecializations, SPECIALIZATIONS } from '../shared/specializations';
 import { seekerEvidence, suggestSpecializationsFromProfile, type SeekerSource } from '../shared/seeker';
 import { extractJson } from '../parsers/json';
-import { networkCommand, networkTab, showWorkTab, closeWorkWindow } from './network-browser';
+import { networkCommand, networkTab, showWorkTab, closeWorkWindow, readPagesInParallel, PARALLEL_PAGES } from './network-browser';
 import { prepareIntroduction, prepareInvitation, askChatGpt } from './network-ai';
 
 /** Saved settings with defaults filled in. Templates are the default for the first note; v0.10.0 briefly defaulted to ChatGPT, so existing installs are moved back once. A later choice is kept. */
@@ -457,31 +457,61 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
         idx += RANK_BATCH;
         batch += 1;
         const descriptions: Record<string, string> = {};
-        const readJobs: FoundJob[] = [];
+        const attempted = new Set<string>(); // job ids whose description was read, or tried
+        const keep = (job: FoundJob, text: string | undefined): void => {
+          if (!text) return;
+          descriptions[job.id] = clampDescription(text);
+          cache[job.id] = { text: descriptions[job.id]!, at: Date.now() };
+        };
+        // Already read in an earlier search: no page needed.
+        const toFetch: FoundJob[] = [];
         for (const job of slice) {
-          signal.throwIfAborted();
-          if (await stopRequested()) {
-            stopped = true;
-            break;
-          }
-          await note(s, `Reading job descriptions to rank them against your qualifications: ${read_ + 1} of ${total}…`);
           const hit = cache[job.id];
-          if (hit && Date.now() - hit.at < DESC_TTL) descriptions[job.id] = hit.text;
-          else
+          if (hit && Date.now() - hit.at < DESC_TTL) {
+            descriptions[job.id] = hit.text;
+            attempted.add(job.id);
+            read_ += 1;
+          } else toFetch.push(job);
+        }
+        await progress(read_);
+        // The rest are read PARALLEL_PAGES at a time, each in its own tab of the work window; the tabs close afterwards.
+        if (toFetch.length) {
+          await note(
+            s,
+            `Reading job descriptions to rank them against your qualifications: ${read_} of ${total} done, ${Math.min(PARALLEL_PAGES, toFetch.length)} at a time…`,
+          );
+          const byUrl = new Map(toFetch.map(job => [job.url, job]));
+          await readPagesInParallel(
+            toFetch.map(job => job.url),
+            async (tab, url) => ((await networkCommand(tab, { action: 'jobText', url }, signal)) as { text?: string } | undefined)?.text,
+            signal,
+            {
+              shouldStop: stopRequested,
+              onDone: async (url, text) => {
+                const job = byUrl.get(url)!;
+                keep(job, text);
+                attempted.add(job.id);
+                read_ += 1;
+                await progress(read_);
+                await note(s, `Reading job descriptions to rank them against your qualifications: ${read_} of ${total} done…`);
+              },
+            },
+          );
+          // LinkedIn can hold back rendering in a hidden tab, so a page that came back empty gets one more try in the
+          // main work tab, which is the one in front inside the work window.
+          for (const job of toFetch) {
+            if (!attempted.has(job.id) || descriptions[job.id]) continue;
+            if (await stopRequested()) break;
             try {
               const tab = await networkTab(job.url, signal);
-              const res = (await networkCommand(tab, { action: 'jobText', url: job.url }, signal)) as { text?: string };
-              if (res?.text) {
-                descriptions[job.id] = clampDescription(res.text);
-                cache[job.id] = { text: descriptions[job.id]!, at: Date.now() };
-              }
+              keep(job, ((await networkCommand(tab, { action: 'jobText', url: job.url }, signal)) as { text?: string } | undefined)?.text);
             } catch (error) {
-              if (signal.aborted) throw error; // an unreadable job just has no description for this batch
+              if (signal.aborted) throw error; // still unreadable: ranked from its title alone
             }
-          readJobs.push(job);
-          read_ += 1;
-          await progress(read_);
+          }
         }
+        if (await stopRequested()) stopped = true;
+        const readJobs = slice.filter(job => attempted.has(job.id));
         await saveDescriptions(cache).catch(() => undefined);
         if (!readJobs.length) break;
         await note(s, `Asking ChatGPT to rank ${readJobs.length} jobs against your qualifications (batch ${batch}, up to 2 minutes)…`);

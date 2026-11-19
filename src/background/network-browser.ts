@@ -51,7 +51,7 @@ export async function readyNetworkTab(tabId: number, signal: AbortSignal): Promi
  * Pages are opened in one separate "work" window that is never brought to the front, so the
  * person can keep using their own window and tabs while outreach runs.
  */
-export async function openWorkTab(url: string, kind: 'linkedin' | 'chatgpt' = 'linkedin'): Promise<number> {
+export async function openWorkTab(url: string, kind: 'linkedin' | 'chatgpt' = 'linkedin', active = true): Promise<number> {
   void kind;
   // One window for everything done in the background, LinkedIn and ChatGPT alike. Steps run one at a time, each tab is
   // brought to the front of that window while it is used, and ChatGPT tabs are closed as soon as their answer is read.
@@ -76,7 +76,7 @@ export async function openWorkTab(url: string, kind: 'linkedin' | 'chatgpt' = 'l
     await write('work-window', created.id);
     return tabId;
   }
-  const tab = await chrome.tabs.create({ windowId, url, active: true });
+  const tab = await chrome.tabs.create({ windowId, url, active });
   if (tab.id === undefined) throw new Error('Could not open a tab in the work window.');
   return tab.id;
 }
@@ -114,4 +114,74 @@ export async function networkTab(url: string, signal: AbortSignal): Promise<numb
   } else await chrome.tabs.update(id, { url, active: true }); // active inside the work window only; the window itself is never focused
   await readyNetworkTab(id, signal);
   return id;
+}
+
+/** How many read-only pages (job descriptions) are loaded at the same time. Kept small: a person browsing in a few tabs. */
+export const PARALLEL_PAGES = 4;
+/**
+ * Loads several LinkedIn pages at once, each in its own extra tab of the work window, reads each with `readPage`, and
+ * closes those tabs at the end - whatever happens. For read-only visits such as job descriptions: nothing is clicked or
+ * sent. Tabs start a moment apart and are opened one at a time, so only one work window is ever created. A page that
+ * fails gives `undefined` instead of stopping the others. `shouldStop` is checked before each new page is started;
+ * pages already loading are finished.
+ */
+export async function readPagesInParallel<T>(
+  urls: string[],
+  readPage: (tabId: number, url: string) => Promise<T>,
+  signal: AbortSignal,
+  options: {
+    concurrency?: number;
+    staggerMs?: number;
+    shouldStop?: () => Promise<boolean>;
+    onDone?: (url: string, result: T | undefined) => Promise<unknown> | void;
+  } = {},
+): Promise<Map<string, T | undefined>> {
+  const results = new Map<string, T | undefined>();
+  if (!urls.length) return results;
+  const queue = [...urls],
+    opened: number[] = [],
+    workers = Math.max(1, Math.min(options.concurrency ?? PARALLEL_PAGES, urls.length)),
+    stagger = options.staggerMs ?? 900;
+  let stopped = false,
+    opening: Promise<unknown> = Promise.resolve();
+  const next = async (): Promise<string | undefined> => {
+    if (stopped || signal.aborted) return undefined;
+    if (options.shouldStop && (await options.shouldStop())) {
+      stopped = true;
+      return undefined;
+    }
+    return queue.shift();
+  };
+  // One tab opens at a time, so the work window is created at most once even when it does not exist yet.
+  const openTab = (url: string): Promise<number> => {
+    const tab = opening.then(() => openWorkTab(url, 'linkedin', false));
+    opening = tab.catch(() => undefined);
+    return tab;
+  };
+  const worker = async (index: number): Promise<void> => {
+    if (index) await new Promise(resolve => setTimeout(resolve, index * stagger));
+    let tabId: number | undefined;
+    for (let url = await next(); url !== undefined; url = await next()) {
+      let result: T | undefined;
+      try {
+        if (tabId === undefined) {
+          tabId = await openTab(url);
+          opened.push(tabId);
+        } else await chrome.tabs.update(tabId, { url });
+        await readyNetworkTab(tabId, signal);
+        result = await readPage(tabId, url);
+      } catch (error) {
+        if (signal.aborted) throw error;
+        result = undefined; // one unreadable page never stops the rest
+      }
+      results.set(url, result);
+      await options.onDone?.(url, result);
+    }
+  };
+  try {
+    await Promise.all(Array.from({ length: workers }, (_, i) => worker(i)));
+  } finally {
+    await Promise.all(opened.map(id => chrome.tabs.remove(id).catch(() => undefined)));
+  }
+  return results;
 }

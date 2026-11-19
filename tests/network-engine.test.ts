@@ -20,6 +20,24 @@ vi.mock('../src/background/network-browser', () => ({
   readyNetworkTab: vi.fn(),
   showWorkTab: vi.fn(),
   openWorkTab: vi.fn().mockResolvedValue(9),
+  PARALLEL_PAGES: 4,
+  // The pool is tested on its own (network-browser.test.ts); here pages are simply read one after another.
+  readPagesInParallel: vi.fn(
+    async (
+      urls: string[],
+      readPage: (tab: number, url: string) => Promise<unknown>,
+      _signal: AbortSignal,
+      o?: { onDone?: (url: string, result: unknown) => unknown },
+    ) => {
+      const results = new Map<string, unknown>();
+      for (const url of urls) {
+        const result = await readPage(9, url).catch(() => undefined);
+        results.set(url, result);
+        await o?.onDone?.(url, result);
+      }
+      return results;
+    },
+  ),
 }));
 
 const me = { name: 'Arpit Singh', url: 'https://www.linkedin.com/in/arpit45/', headline: 'PGDM', location: 'India', about: '' };
