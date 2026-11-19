@@ -638,7 +638,9 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
   return cmd.action === 'connect' ? connect(cmd, signal) : cmd.action === 'follow' ? follow(cmd, signal) : message(cmd, signal);
 }
 const installed = globalThis as typeof globalThis & { __referralScoutNetworkV1?: boolean };
-if (!installed.__referralScoutNetworkV1)
+// chrome.runtime is gone in a content script whose extension was reloaded while the tab stayed open; guarding the
+// registration stops an uncaught "reading 'onMessage' of undefined" from aborting the whole content bundle.
+if (!installed.__referralScoutNetworkV1 && chrome.runtime?.onMessage)
   chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
     if (sender.id !== chrome.runtime.id || (sender.url && sender.url !== chrome.runtime.getURL('service-worker.js'))) return false;
     if (

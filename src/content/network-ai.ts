@@ -333,7 +333,7 @@ const secureSender = (sender: chrome.runtime.MessageSender) =>
   !sender.tab &&
   (sender.frameId ?? 0) === 0 &&
   (!sender.url || sender.url === chrome.runtime.getURL('service-worker.js'));
-if (window.top === window)
+if (window.top === window && chrome.runtime?.onMessage)
   chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
     if (!secureSender(sender)) return false;
     if (input && typeof input === 'object' && 'kind' in input && input.kind === 'network.ai.ping') {

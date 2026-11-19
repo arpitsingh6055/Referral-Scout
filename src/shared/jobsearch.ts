@@ -395,13 +395,36 @@ export function employmentMismatch(title: string, intent: EmploymentIntent): str
 /* ---------- the shortlist check: ChatGPT removes adverts and poor matches and, when the seeker chose qualifications,
    flags the jobs whose requirements call for one, from the real job description. The code keeps a deterministic
    keyword match as a backstop, so prioritising still works when ChatGPT is unavailable. ---------- */
-/** A short, requirement-focused slice of a job description to send to ChatGPT for the qualification check. */
-export function requirementsSnippet(description: string, max = 500): string {
-  const text = (description ?? '').replace(/\s+/g, ' ').trim();
-  if (!text) return '';
-  const m = /(qualif|eligib|who (?:can|should) apply|requirement|we(?:'re| are) looking for|desired|preferred|education|skills? (?:&|and) )/i.exec(text);
-  const start = m ? Math.max(0, m.index - 20) : 0;
-  return text.slice(start, start + max);
+/**
+ * What to send ChatGPT from a job description for the qualification check. A short description is sent whole. A long
+ * one is reduced to a lead (role/company context) plus every line that mentions a degree, course or qualification -
+ * gathered from ANYWHERE in the text, because a course preference ("B.E./B.Tech in CS", "MBA from a top institute")
+ * often sits in its own line far from the first "requirements" heading. This keeps one prompt over many jobs bounded
+ * while making sure the course preference is never cut out.
+ */
+const QUALIFICATION_MENTION =
+  /\b(qualif|eligib|degree|education|graduat|post[-\s]?graduat|bachelor|master|b\.?\s?tech|b\.?\s?e\b|m\.?\s?tech|m\.?\s?e\b|mba|pgdm|\bca\b|\bcs\b|\bcma\b|b\.?\s?com|m\.?\s?com|cfa|\bbe\b|discipline|stream|branch|specialis|specializ|background in|from a (?:top|tier|premier)|tier[-\s]?\d|institute|university|college)\b/i;
+export function requirementsSnippet(description: string, max = 1200): string {
+  const raw = (description ?? '').replace(/\u00a0/g, ' ').replace(/[ \t]+/g, ' ').trim();
+  if (!raw) return '';
+  const collapsed = raw.replace(/\s+/g, ' ');
+  if (collapsed.length <= max) return collapsed; // a short description is sent in full
+  const lead = collapsed.slice(0, 300);
+  const segments = raw
+    .split(/\r?\n|(?<=[.!?])\s+|•|\u2022|·/)
+    .map(seg => seg.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const hits: string[] = [];
+  const seen = new Set<string>();
+  let used = lead.length;
+  for (const seg of segments) {
+    if (!QUALIFICATION_MENTION.test(seg) || lead.includes(seg) || seen.has(seg)) continue;
+    if (used + seg.length + 3 > max) break;
+    seen.add(seg);
+    hits.push(seg);
+    used += seg.length + 3;
+  }
+  return (hits.length ? `${lead} … ${hits.join(' … ')}` : collapsed.slice(0, max)).slice(0, max);
 }
 export function reviewPrompt(
   jobs: FoundJob[],

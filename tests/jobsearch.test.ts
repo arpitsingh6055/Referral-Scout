@@ -397,4 +397,11 @@ describe('employment type filtering', () => {
     expect(requirementsSnippet(desc)).toMatch(/Requirements: MBA\/PGDM preferred/);
     expect(requirementsSnippet('')).toBe('');
   });
+  it('requirementsSnippet keeps a qualification line that sits far down a long description, within the size cap', () => {
+    const filler = 'We own the end-to-end roadmap and drive growth across funnels. '.repeat(40); // ~2500 chars, no qualification
+    const desc = `About the job ${filler}\nEligibility: B.E./B.Tech in CS or IT preferred.`;
+    const snip = requirementsSnippet(desc);
+    expect(snip.length).toBeLessThanOrEqual(1200);
+    expect(snip).toMatch(/B\.E\.\/B\.Tech in CS or IT/);
+  });
 });
