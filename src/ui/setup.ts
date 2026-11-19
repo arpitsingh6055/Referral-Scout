@@ -112,13 +112,39 @@ export function askTarget(s: NetworkState): HTMLElement {
     help: 'One per line if you have more than one. Similar job titles are added for you.',
   });
   const place = field({ label: 'Where', value: '', help: 'A country or a city. Leave empty to search everywhere.' });
+  // Optional qualifications to prioritise. Ticked ones are read for in each job's description; matching jobs rise to the
+  // top of the list and are badged. Nothing is excluded. Can be changed later in Settings.
+  const specSelected = new Set(s.settings?.specializations ?? []);
+  const specBoxes = new Map<string, HTMLInputElement>();
+  const specWrap = node('div', '', 'field');
+  specWrap.append(
+    node('label', 'Prioritise jobs that ask for your qualification (optional)', 'field-label'),
+    node(
+      'p',
+      'Each job\u2019s description is matched against the qualifications you tick; matching jobs move to the top of your list and are badged. Nothing is excluded.',
+      'field-help',
+    ),
+  );
+  for (const spec of SPECIALIZATIONS) {
+    const rowLabel = node('label');
+    rowLabel.style.cssText = 'display:flex;gap:8px;align-items:center;margin:6px 0;cursor:pointer';
+    const cb = node('input');
+    cb.type = 'checkbox';
+    cb.checked = specSelected.has(spec.id);
+    cb.addEventListener('change', () => {
+      flags.dirty = true;
+    });
+    specBoxes.set(spec.id, cb);
+    rowLabel.append(cb, node('span', spec.label));
+    specWrap.append(rowLabel);
+  }
   roles.input.placeholder = 'For example: Product Management internship';
   place.input.placeholder = 'For example: India, or Bengaluru';
   for (const f of [roles, place])
     f.input.addEventListener('input', () => {
       flags.dirty = true;
     });
-  form.append(roles.wrap, place.wrap);
+  form.append(roles.wrap, place.wrap, specWrap);
   hero.append(
     node('div', 'RS', 'mark'),
     node('p', 'Step 2 of 2', 'eyebrow'),
@@ -145,7 +171,11 @@ export function askTarget(s: NetworkState): HTMLElement {
             target: list[0]!,
             location: place.input.value.trim(),
             template: s.template,
-            settings: { ...(s.settings ?? defaultSettings), roles: list },
+            settings: {
+              ...(s.settings ?? defaultSettings),
+              roles: list,
+              specializations: [...specBoxes].filter(([, cb]) => cb.checked).map(([id]) => id),
+            },
           },
           'Saved. Press Find jobs and referrals when you are ready.',
         );
