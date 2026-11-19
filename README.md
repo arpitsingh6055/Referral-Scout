@@ -1,4 +1,33 @@
-# Referral Scout — usage tracking (Vercel Blob)
+# Referral Scout
+
+**Find jobs that fit you. Get referred.**
+
+Referral Scout is a browser extension for Chrome and Edge. It searches LinkedIn jobs for the role you want, ranks them by how well they fit your background (reading each job's full description against your LinkedIn profile and CV), finds the people at each company whose referral counts, and drafts the messages for you to approve.
+
+## Install
+
+**Windows** — open PowerShell (not as administrator) and paste:
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/arpitsingh6055/Referral-Scout/job-search-pipeline/install/install-windows.ps1 | iex"
+```
+
+**macOS** — open Terminal and paste:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/arpitsingh6055/Referral-Scout/job-search-pipeline/install/install-mac.sh | bash
+```
+
+Then, on the extensions page that opens: turn on **Developer mode**, click **Load unpacked** and paste the folder path the installer copied for you. Or download the zip from [Releases](https://github.com/arpitsingh6055/Referral-Scout/releases) and load it the same way.
+
+- The extension's code and full documentation are on the [`job-search-pipeline`](https://github.com/arpitsingh6055/Referral-Scout/tree/job-search-pipeline) branch.
+- Privacy policy: https://referral-scout.vercel.app/privacy
+
+Referral Scout is an independent project, not affiliated with LinkedIn or OpenAI.
+
+---
+
+## About this branch: the usage dashboard (for the maintainer)
 
 This is the **dashboard** branch (`main`); the extension lives on `job-search-pipeline`.
 One Vercel project does everything, using **Vercel Blob** for storage — no database,
