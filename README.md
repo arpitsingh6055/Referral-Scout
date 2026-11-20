@@ -4,11 +4,11 @@ Coursework branch. Design Thinking and Innovation, PGDM Term II, Batch 2026-28, 
 
 This branch holds only the coursework. The extension source is on `job-search-pipeline` and `main`.
 
-## Why the branch is separate
+## Problem under study
 
-Referral Scout was built before this exercise began, as a personal project. The exercise asks for problem discovery, which is the reverse order. Keeping the coursework on an orphan branch with no source in its tree is a practical way of holding the two apart, so the research is written against the problem space rather than against the feature list.
+Candidates who use LinkedIn to ask for job referrals stop before the process can pay out, and those who continue lose the context that made each ask worth answering. The two problem statements and the four research questions testing them are in `01-research-objectives.md`. Each question carries a condition that would falsify the statement it serves.
 
-The prior build is declared in `01-research-objectives.md` as a documented assumption set, and every research question carries a condition that would falsify it.
+The branch carries no application source. The research is written against the problem space.
 
 ## Sequence
 
