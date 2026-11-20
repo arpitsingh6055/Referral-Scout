@@ -6,7 +6,7 @@ This branch holds only the coursework. The extension source is on `job-search-pi
 
 ## Problem under study
 
-Candidates who use LinkedIn to ask for job referrals stop before the process can pay out, and those who continue lose the context that made each ask worth answering. The two problem statements and the four research questions testing them are in `01-research-objectives.md`. Each question carries a condition that would falsify the statement it serves.
+LinkedIn stores people and it stores jobs, and nothing that joins the two. The candidate is the only record of which role they were pursuing through which person, and that record has to survive a week of silence. The two problem statements and the four research questions testing them are in `01-research-objectives.md`. Each question carries a condition that would falsify the statement it serves.
 
 The branch carries no application source. The research is written against the problem space.
 
