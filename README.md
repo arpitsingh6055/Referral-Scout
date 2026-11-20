@@ -6,7 +6,7 @@ This branch holds only the coursework. The extension source is on `job-search-pi
 
 ## Problem under study
 
-LinkedIn stores people and it stores jobs, and nothing that joins the two. The candidate is the only record of which role they were pursuing through which person, and that record has to survive a week of silence. The two problem statements and the four research questions testing them are in `01-research-objectives.md`. Each question carries a condition that would falsify the statement it serves.
+Candidates pursuing referrals on LinkedIn manage pairs of target role and person approached. LinkedIn supports each action in that process and holds none of the pairings, so coordination load grows as a product while capacity stays fixed. The two problem statements and the four research questions testing them are in `01-research-objectives.md`. Each question carries a condition that would falsify the statement it serves.
 
 The branch carries no application source. The research is written against the problem space.
 
