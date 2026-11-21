@@ -245,7 +245,13 @@ function draw(d: Detect): void {
         'Moving to the next step…',
       ),
     );
-  actions.append(button(s.stage === 'error' || s.stage === 'done' ? 'Fill again' : 'Refill this step', () => startFill(d, true), 'btn sm'));
+  actions.append(
+    button(
+      s.stage === 'error' || s.stage === 'done' ? 'Fill again' : 'Refill this step',
+      () => startFill(d, s.stage === 'review'),
+      'btn sm',
+    ),
+  );
   if (s.filled.length || s.files.length)
     actions.append(
       button('Undo', async () => draw(await applyRequest({ kind: 'apply', action: 'undo' })), 'btn sm ghost', 'Put back what was there.'),

@@ -230,3 +230,37 @@ describe('the page script', () => {
     expect(submitted).toBe(false);
   });
 });
+
+describe('reading the application on job boards that open it in a window', () => {
+  it('finds the question above a radio group, names generic upload fields and reads the window as the job', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    document.body.innerHTML = `
+      <main><p>99 Total Internships</p><p>Other job A</p></main>
+      <div role="dialog">
+        <div>Applying to General Management internship</div>
+        <p>NearBond. Onboard brands, distributors and sellers. Requirements: MBA with an engineering background.</p>
+        <form>
+          <div>Confirm your availability</div>
+          <div id="options">
+            <div><input name="ca" id="r1" type="radio" value="yes"><label for="r1">Yes, I am available to join immediately</label></div>
+            <div><input name="ca" id="r2" type="radio" value="no"><label for="r2">No, I am serving notice</label></div>
+          </div>
+          <div><h4>Custom resume</h4><span>(Optional)</span></div>
+          <input type="file" id="cr"><label for="cr">Upload file</label>
+          <input type="submit" value="Submit">
+        </form>
+      </div>`;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+    const snap = api.scan();
+    expect(snap.form.find(f => f.kind === 'radio')?.label).toBe('Confirm your availability');
+    expect(snap.form.find(f => f.kind === 'file')?.label).toMatch(/^Custom resume ?\(Optional\) \(Upload file\)$/);
+    expect(snap.job.indexOf('APPLICATION WINDOW')).toBe(0);
+    expect(snap.job).toMatch(/NearBond/);
+    expect(snap.hasSubmit).toBe(true);
+  });
+});

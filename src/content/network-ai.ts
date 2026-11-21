@@ -42,17 +42,22 @@ export function chatGptReady(): boolean {
 const marker = (id: string) => `[REFERRAL_SCOUT_JOB:${id}]`;
 const text = (e: HTMLElement): string => e.innerText || e.textContent || '';
 const nodes = (selector: string): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(selector)].filter(visible);
-const userTurns = () => nodes('[data-message-author-role="user"], [data-turn="user"]');
-const assistantTurns = () => nodes('[data-message-author-role="assistant"], [data-turn="assistant"]');
+// Older ChatGPT builds mark turns with data-message-author-role / data-turn; the November 2026 build has neither and
+// marks the user's bubble with data-user-message-bubble and the answer with data-response-body.
+const userTurns = () => nodes('[data-message-author-role="user"], [data-turn="user"], [data-user-message-bubble]');
+const assistantTurns = () => nodes('[data-message-author-role="assistant"], [data-turn="assistant"], [data-response-body]');
 const outsideConversation = (e: Element) => !!e.closest('form, nav, aside, header, [contenteditable="true"]');
 /** This ChatGPT build exposes almost no stable attributes, so also find our message by its job marker text. */
 function markerElement(id: string): HTMLElement | null {
   const needle = marker(id),
     walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    if (!n.nodeValue?.includes(needle)) continue;
-    const el = n.parentElement;
-    if (el && !outsideConversation(el) && visible(el)) return el;
+    if (!n.nodeValue?.includes('REFERRAL_SCOUT_JOB')) continue;
+    // ChatGPT may split the marker across elements (<span>[REFERRAL_SCOUT_JOB</span>:id<span>]</span>): climb to the
+    // nearest element that holds all of it.
+    let el = n.parentElement;
+    for (let depth = 0; el && depth < 5 && !(el.textContent ?? '').includes(needle); depth++) el = el.parentElement;
+    if (el && (el.textContent ?? '').includes(needle) && !outsideConversation(el) && visible(el)) return el;
   }
   return null;
 }
@@ -60,7 +65,7 @@ const turnFor = (id: string): HTMLElement | null => {
   const byAttribute = userTurns().find(e => text(e).includes(marker(id)));
   if (byAttribute) return byAttribute;
   const el = markerElement(id);
-  return el ? (el.closest<HTMLElement>('[data-message-author-role], [data-turn], article') ?? el) : null;
+  return el ? (el.closest<HTMLElement>('[data-message-author-role], [data-turn], [data-user-message-bubble], article') ?? el) : null;
 };
 const diagnose = (id: string): string =>
   `marker on page: ${text(document.body).includes(marker(id)) ? 'yes' : 'no'}; user turns found by attribute: ${userTurns().length}; assistant turns found by attribute: ${assistantTurns().length}`;
@@ -98,9 +103,13 @@ function relevantAssistant(user: HTMLElement): HTMLElement | null {
 const idOf = (user: HTMLElement): string => /\[REFERRAL_SCOUT_JOB:([a-f0-9]{64})\]/.exec(text(user))?.[1] ?? '';
 function replyValue(node: HTMLElement): string {
   // A reply can hold several content blocks (an empty "thinking" block first, then the answer): read all of them, not the first.
-  const blocks = [...node.querySelectorAll<HTMLElement>('.markdown, [data-message-content]')].filter(
-    b => !b.parentElement?.closest('.markdown, [data-message-content]'),
-  );
+  // The November 2026 build renders the answer in [data-dil-response]; read only that, never the thinking summary.
+  const dil = [...node.querySelectorAll<HTMLElement>('[data-dil-response]')].filter(b => !b.parentElement?.closest('[data-dil-response]'));
+  const blocks = dil.length
+    ? dil
+    : [...node.querySelectorAll<HTMLElement>('.markdown, [data-message-content]')].filter(
+        b => !b.parentElement?.closest('.markdown, [data-message-content]'),
+      );
   const joined = blocks
     .map(b => text(b).trim())
     .filter(Boolean)
@@ -450,3 +459,6 @@ if (window.top === window && chrome.runtime?.onMessage)
 
 if (window.top === window)
   void chrome.runtime.sendMessage({ kind: 'network.ai.hello', documentId, url: location.href }).catch(() => undefined);
+
+/** For tests only. */
+export const __test = { turnFor, relevantAssistant, replyValue, userTurns, assistantTurns };

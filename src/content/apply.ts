@@ -82,22 +82,34 @@ function labelOf(el: Element): string {
   }
   return clean(el.getAttribute('placeholder')) || clean(el.getAttribute('title')) || clean(el.getAttribute('name'));
 }
-function groupLabel(el: Element): string {
+/** The text that introduces an element: the nearest earlier sibling (of it or an ancestor) that has text and no fields. */
+function precedingText(el: Element, levels = 4): string {
+  let box: Element | null = el;
+  for (let depth = 0; box && depth < levels; depth++, box = box.parentElement) {
+    for (let sib = box.previousElementSibling; sib; sib = sib.previousElementSibling) {
+      if (sib.matches('script, style, template') || sib.querySelector('input, select, textarea')) break;
+      const t = clean(sib.textContent);
+      if (t) return t.length <= 300 ? t : '';
+    }
+  }
+  return '';
+}
+function commonAncestor(els: Element[]): Element {
+  let box: Element | null = els[0]!.parentElement;
+  while (box && !els.every(e => box!.contains(e))) box = box.parentElement;
+  return box ?? els[0]!.ownerDocument.body;
+}
+function groupLabel(el: Element, group: Element[] = [el]): string {
   const doc = el.ownerDocument;
-  const group = el.closest('fieldset, [role="radiogroup"], [role="group"]');
-  if (group) {
-    const legend = group.querySelector('legend');
-    const t =
-      clean(legend?.textContent) || textOfIds(group.getAttribute('aria-labelledby'), doc) || clean(group.getAttribute('aria-label'));
+  const set = el.closest('fieldset, [role="radiogroup"], [role="group"]');
+  if (set) {
+    const legend = set.querySelector('legend');
+    const t = clean(legend?.textContent) || textOfIds(set.getAttribute('aria-labelledby'), doc) || clean(set.getAttribute('aria-label'));
     if (t) return t;
   }
-  // A group without a fieldset: the text just before the first option's container.
-  let node: Element | null = el.closest('label')?.parentElement ?? el.parentElement;
-  for (let depth = 0; node && depth < 4; depth++, node = node.parentElement) {
-    const q = node.querySelector('legend, label:not(:has(input)), [class*="label" i], [class*="question" i], h3, h4, p');
-    if (q && !q.querySelector('input') && clean(q.textContent)) return clean(q.textContent).slice(0, 300);
-  }
-  return clean(el.getAttribute('name'));
+  // No fieldset: the question is the text just before the box that holds all the options (never an option's own label).
+  const box = group.length > 1 ? commonAncestor(group) : (el.closest('label') ?? el);
+  return precedingText(box) || clean(el.getAttribute('name'));
 }
 const optionLabel = (input: HTMLInputElement): string => {
   const own = labelOf(input);
@@ -127,6 +139,14 @@ function formRoot(doc: Document): Element {
 }
 function jobText(doc: Document, form: Element): string {
   const parts: string[] = [];
+  // An application opened in a window over a list of jobs (Internshala, Naukri, LinkedIn search): the window itself
+  // names the job; the page behind it is a list of other jobs.
+  if (form !== doc.body && form.tagName !== 'FORM') {
+    const copy = form.cloneNode(true) as Element;
+    copy.querySelectorAll('script, style, noscript, svg, form, input, select, textarea, button').forEach(e => e.remove());
+    const t = clean(copy.textContent);
+    if (t.length > 80) parts.push(`APPLICATION WINDOW: ${t.slice(0, 6000)}`);
+  }
   for (const s of doc.querySelectorAll('script[type="application/ld+json"]')) {
     try {
       const data = JSON.parse(s.textContent ?? '') as unknown;
@@ -142,7 +162,7 @@ function jobText(doc: Document, form: Element): string {
       /* not JSON */
     }
   }
-  if (!parts.length) {
+  if (!parts.some(p => p.startsWith('DESCRIPTION'))) {
     const linkedin = doc.querySelector('.jobs-description__content, .jobs-box__html-content, #job-details, .jobs-description');
     const title = clean(
       doc.querySelector('.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title, h1')?.textContent,
@@ -161,7 +181,7 @@ function jobText(doc: Document, form: Element): string {
       if (main.contains(form) && form !== main) {
         /* the form itself was removed above */
       }
-      parts.push(`PAGE TEXT: ${clean(copy.textContent).slice(0, 9000)}`);
+      parts.push(`PAGE TEXT: ${clean(copy.textContent).slice(0, parts.length ? 3000 : 9000)}`);
     }
   }
   return parts.join('\n').slice(0, 12000);
@@ -406,13 +426,13 @@ function create(): ApplyApi {
             kind = 'radio';
             els = group;
             options = group.map(optionLabel);
-            label = groupLabel(input);
+            label = groupLabel(input, group);
             value = group.find(g => g.checked) ? optionLabel(group.find(g => g.checked)!) : '';
           } else if (type === 'checkbox' && group.length > 1) {
             kind = 'checkboxes';
             els = group;
             options = group.map(optionLabel);
-            label = groupLabel(input);
+            label = groupLabel(input, group);
             value = group
               .filter(g => g.checked)
               .map(optionLabel)
@@ -455,6 +475,10 @@ function create(): ApplyApi {
           kind = 'combobox';
           label = labelOf(el);
           value = clean(el.textContent);
+        }
+        if (kind === 'file' && (!label || /^(upload( a)?( file)?|browse|choose( a)? file|attach( file)?|select file)$/i.test(label))) {
+          const heading = precedingText(el.closest('label') ?? el, 5);
+          if (heading) label = label ? `${heading} (${label})` : heading;
         }
         if (!label && kind !== 'file') continue;
         const id = idFor(el);

@@ -23,6 +23,7 @@ export const selectors = {
     stop: ['button[data-testid="stop-button"]', 'button[aria-label*="Stop"]'],
     reply: [
       '[data-talvt-turn-state="complete"]',
+      '[data-response-body] [data-dil-response]',
       '[data-message-author-role="assistant"] .markdown',
       '[data-message-author-role="assistant"]',
     ],
