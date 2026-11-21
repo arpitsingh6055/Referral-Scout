@@ -33,3 +33,9 @@ it('finds our message and reads only the answer', async () => {
   expect(reply?.hasAttribute('data-response-body')).toBe(true);
   expect(JSON.parse(__test.replyValue(reply!)).summary).toBe('General Management Intern at NearBond');
 });
+
+it('does not throw in the page when the extension was reloaded under an open tab', async () => {
+  vi.stubGlobal('chrome', {});
+  const { send } = await import('../src/content/dom');
+  await expect(send({ kind: 'x' })).rejects.toThrow(/Extension context invalidated/);
+});

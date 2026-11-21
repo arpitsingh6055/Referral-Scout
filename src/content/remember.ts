@@ -1,4 +1,4 @@
-import { visible } from './dom';
+import { visible, send } from './dom';
 import { relationship } from './network';
 import { pageItem, type PageItem } from './page-item';
 
@@ -21,8 +21,7 @@ type Reply = { ok: true; saved: Saved | null } | { ok: false };
 
 const ask = async (action: 'get' | 'save' | 'remove', item: PageItem & { note?: string }): Promise<Reply> => {
   try {
-    const reply = (await chrome.runtime.sendMessage({ kind: 'network.remember', action, item: { note: '', ...item } })) as
-      { saved?: Saved | null } | undefined;
+    const reply = (await send({ kind: 'network.remember', action, item: { note: '', ...item } })) as { saved?: Saved | null } | undefined;
     return reply ? { ok: true, saved: reply.saved ?? null } : { ok: false };
   } catch {
     return { ok: false };
@@ -86,19 +85,18 @@ const referralButton = (mode: 'referral' | 'connections', label: string): HTMLBu
       return;
     }
     b.textContent = 'Starting…';
-    void chrome.runtime
-      .sendMessage({
-        kind: 'network.referral',
-        mode,
-        job: {
-          url: job.url,
-          title: job.title,
-          company: job.subtitle,
-          location: job.location ?? '',
-          ...(job.companyUrl ? { companyUrl: job.companyUrl } : {}),
-          ...(job.suggested ? { suggested: job.suggested } : {}),
-        },
-      })
+    void send({
+      kind: 'network.referral',
+      mode,
+      job: {
+        url: job.url,
+        title: job.title,
+        company: job.subtitle,
+        location: job.location ?? '',
+        ...(job.companyUrl ? { companyUrl: job.companyUrl } : {}),
+        ...(job.suggested ? { suggested: job.suggested } : {}),
+      },
+    })
       .then((reply: { message?: string } | undefined) => {
         b.textContent = reply?.message ?? 'Open Referral Scout to see progress.';
       })

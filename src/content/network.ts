@@ -13,7 +13,7 @@ import {
   jobRows,
 } from '../parsers/network';
 import { pageItem } from './page-item';
-import { visible, wait, sleep, guard, insert, readEditor, sameText, canon, queryAll } from './dom';
+import { visible, wait, sleep, guard, insert, readEditor, sameText, canon, queryAll, send } from './dom';
 
 /*
  * Actions on LinkedIn pages. Controls are found by their visible label or aria-label,
@@ -123,7 +123,7 @@ async function follow(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
 async function authorize(cmd: NetworkPageCommand, claim: boolean, signal: AbortSignal): Promise<void> {
   guard(signal);
   topCard(cmd.url);
-  const reply: unknown = await chrome.runtime.sendMessage({ kind: 'network.authorize', id: cmd.intentId, claim });
+  const reply: unknown = await send({ kind: 'network.authorize', id: cmd.intentId, claim });
   guard(signal);
   if (!reply || typeof reply !== 'object' || !('allowed' in reply) || reply.allowed !== true)
     throw new Error('Outreach is paused or this action is no longer authorized.');

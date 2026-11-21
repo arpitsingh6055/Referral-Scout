@@ -1,4 +1,19 @@
 import { selectors, siteForHost } from '../shared/selectors.config';
+/**
+ * Messages to the extension from a page script. After the extension is reloaded or updated, scripts already running in
+ * open tabs lose chrome.runtime entirely; calling it then throws a TypeError in the page. This returns a rejected
+ * promise with the browser's own wording instead, which callers already turn into "refresh the tab".
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- callers type the reply where they use it, as with chrome.runtime.sendMessage
+export function send<T = any>(message: unknown): Promise<T> {
+  try {
+    const runtime = (globalThis as { chrome?: typeof chrome }).chrome?.runtime;
+    if (!runtime?.sendMessage) return Promise.reject(new Error('Extension context invalidated.'));
+    return runtime.sendMessage(message) as Promise<T>;
+  } catch (e) {
+    return Promise.reject(e instanceof Error ? e : new Error(String(e)));
+  }
+}
 export const visible = (e: Element): boolean => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
 export function find(variants: readonly string[], root: ParentNode = document): HTMLElement | null {
   for (const q of variants) {

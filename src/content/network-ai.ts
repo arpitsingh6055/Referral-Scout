@@ -1,6 +1,6 @@
 /** Visible, main-frame ChatGPT DOM bridge. No API calls or page-context injection. */
 import { z } from 'zod';
-import { describeMismatch, find, guard, insert, readEditor, sameText, sleep, visible, wait } from './dom';
+import { describeMismatch, find, guard, insert, readEditor, sameText, sleep, visible, wait, send } from './dom';
 import { selectors } from '../shared/selectors.config';
 
 const documentId = crypto.randomUUID();
@@ -83,7 +83,7 @@ async function progress(id: string, stage: string, extra: { text?: string; error
     if (extra.text !== undefined) job.text = extra.text;
     if (extra.error) job.error = extra.error;
   }
-  await chrome.runtime.sendMessage({ kind: 'network.ai.event', id, documentId, stage, ...extra }).catch(() => undefined);
+  await send({ kind: 'network.ai.event', id, documentId, stage, ...extra }).catch(() => undefined);
 }
 function relevantAssistant(user: HTMLElement): HTMLElement | null {
   // Only take the first assistant turn following OUR verified user turn, never an older response.
@@ -457,8 +457,7 @@ if (window.top === window && chrome.runtime?.onMessage)
     return false;
   });
 
-if (window.top === window)
-  void chrome.runtime.sendMessage({ kind: 'network.ai.hello', documentId, url: location.href }).catch(() => undefined);
+if (window.top === window) void send({ kind: 'network.ai.hello', documentId, url: location.href }).catch(() => undefined);
 
 /** For tests only. */
 export const __test = { turnFor, relevantAssistant, replyValue, userTurns, assistantTurns };

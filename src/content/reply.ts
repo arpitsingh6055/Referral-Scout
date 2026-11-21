@@ -10,7 +10,7 @@
  * person's; the box is `.msg-form__contenteditable`. Chat windows on other pages use the same message markup inside
  * LinkedIn's messaging shadow root; their header has not been checked live.
  */
-import { insert, queryAll, readEditor, visible } from './dom';
+import { insert, queryAll, readEditor, visible, send } from './dom';
 import { friendlyError } from '../shared/errors';
 
 export interface ThreadMessage {
@@ -169,7 +169,7 @@ async function look(): Promise<void> {
   signature = now;
   let reply: { ours?: boolean; info?: Info } | undefined;
   try {
-    reply = (await chrome.runtime.sendMessage({ kind: 'network.thread', action: 'sync', ...thread })) as typeof reply;
+    reply = (await send({ kind: 'network.thread', action: 'sync', ...thread })) as typeof reply;
   } catch {
     reply = undefined; // the extension was reloaded: the card comes back after the tab is refreshed
   }
@@ -211,8 +211,7 @@ pill.addEventListener('click', () => {
   pill.textContent = 'Drafting…';
   pill.style.opacity = '.7';
   say('Asking ChatGPT. This can take up to two minutes; you can keep reading.');
-  void chrome.runtime
-    .sendMessage({ kind: 'network.thread', action: 'draft', ...thread })
+  void send({ kind: 'network.thread', action: 'draft', ...thread })
     .then((reply: { ok?: boolean; text?: string; error?: string } | undefined) => {
       const again = current(),
         target = again ? ((again.scope as ParentNode).querySelector<HTMLElement>('.msg-form__contenteditable') ?? null) : null;
