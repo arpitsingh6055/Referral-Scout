@@ -144,6 +144,13 @@ describe('checking ChatGPT’s answer before anything is typed', () => {
     expect(prompt).toMatch(/Never decide to submit/);
     expect(prompt).toMatch(/Leave "eeo" \(diversity\) fields out entirely/);
     expect(prompt).not.toMatch(/profile photo/);
+    // The writing standard: obey stated limits, lead with the point, cite real evidence, no filler.
+    expect(prompt).toMatch(/tier-1/);
+    expect(prompt).toMatch(/Obey any limit stated in the label/);
+    expect(prompt).toMatch(/Most impressive thing/);
+    expect(prompt).toMatch(/Never invent an employer, degree, grade, date, number, metric/);
+    expect(prompt).toMatch(/"passionate"/);
+    expect(prompt).toMatch(/FINAL CHECK/);
   });
 });
 
