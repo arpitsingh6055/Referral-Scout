@@ -1,0 +1,1 @@
+var e=new URL(`../assets/pdf.worker.min-CIqJB0yW.mjs`,import.meta.url).href;export{e as default};
