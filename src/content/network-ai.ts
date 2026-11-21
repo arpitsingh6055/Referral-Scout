@@ -7,7 +7,16 @@ const documentId = crypto.randomUUID();
 const start = Date.now();
 const requests = new Map<
   string,
-  { chunks: string[]; total: number; state: string; text?: string; error?: string; running?: boolean; parentId?: string }
+  {
+    chunks: string[];
+    total: number;
+    state: string;
+    text?: string;
+    error?: string;
+    running?: boolean;
+    parentId?: string;
+    thinking?: boolean;
+  }
 >();
 let lastComposer: Element | null = null;
 let composerSince = 0;
@@ -171,7 +180,47 @@ function sendButton(): HTMLElement | null {
     null
   );
 }
-async function perform(id: string, prompt: string, parentId?: string): Promise<void> {
+/**
+ * Sets ChatGPT's "Think" switch before a prompt is pasted (checked live, November 2026: a composer button labelled
+ * "Think" with aria-pressed). Accounts that show an effort or model menu instead get "Medium" picked when it is
+ * offered. When neither exists the prompt still goes out in the normal mode, and the stage says so.
+ */
+async function setThinking(id: string, want: boolean, signal: AbortSignal): Promise<void> {
+  const toggle = (): HTMLElement | undefined =>
+    [...document.querySelectorAll<HTMLElement>('main button, form button')]
+      .filter(visible)
+      .find(b => /^think(ing)?$/i.test((b.innerText || b.getAttribute('aria-label') || '').trim()) && b.hasAttribute('aria-pressed'));
+  const t = toggle();
+  if (t) {
+    if ((t.getAttribute('aria-pressed') === 'true') !== want) {
+      t.click();
+      await sleep(600, signal);
+    }
+    const on = toggle()?.getAttribute('aria-pressed') === 'true';
+    if (want) await progress(id, on ? 'thinking_verified' : 'thinking_unverified');
+    return;
+  }
+  if (!want) return;
+  const menu = find(selectors.chatgpt.thinking);
+  if (menu) {
+    menu.click();
+    await sleep(500, signal);
+    const medium =
+      find(selectors.chatgpt.thinkingMedium) ??
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"],[role="menuitemradio"],[role="option"]')].find(e =>
+        /\bmedium\b/i.test(e.textContent ?? ''),
+      );
+    if (medium) {
+      medium.click();
+      await sleep(400, signal);
+      await progress(id, 'thinking_verified');
+      return;
+    }
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  }
+  await progress(id, 'thinking_skipped');
+}
+async function perform(id: string, prompt: string, parentId?: string, thinking?: boolean): Promise<void> {
   const signal = new AbortController().signal;
   let clicked = false; // once Send was pressed, a failure may hide a real submission
   const full = `${marker(id)}\n${prompt}`;
@@ -188,6 +237,7 @@ async function perform(id: string, prompt: string, parentId?: string): Promise<v
         throw new Error('This ChatGPT conversation is not empty and does not contain this job. Open a fresh chat; nothing was submitted.');
       await wait(() => chatGptReady(), signal, 30000);
       await progress(id, 'composer_stable');
+      if (thinking !== undefined) await setThinking(id, thinking, signal);
       const editor = composer();
       if (!editor) throw new Error('ChatGPT composer disappeared.');
       const leftover = readEditor(editor).trim();
@@ -327,6 +377,7 @@ const begin = z.object({
     .regex(/^[a-f0-9]{64}$/)
     .optional(),
   chunk: z.string().max(30000).optional(),
+  thinking: z.boolean().optional(),
 });
 const secureSender = (sender: chrome.runtime.MessageSender) =>
   sender.id === chrome.runtime.id &&
@@ -370,6 +421,7 @@ if (window.top === window && chrome.runtime?.onMessage)
           total: parsed.data.total,
           state: 'receiving',
           ...(parsed.data.parentId ? { parentId: parsed.data.parentId } : {}),
+          ...(parsed.data.thinking !== undefined ? { thinking: parsed.data.thinking } : {}),
         });
       respond({ ok: true, documentId });
       return false;
@@ -391,7 +443,7 @@ if (window.top === window && chrome.runtime?.onMessage)
       return false;
     }
     record.running = true;
-    void perform(id, record.chunks.join(''), record.parentId);
+    void perform(id, record.chunks.join(''), record.parentId, record.thinking);
     respond({ ok: true, state: 'running', documentId });
     return false;
   });

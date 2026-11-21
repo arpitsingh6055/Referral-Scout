@@ -28,7 +28,7 @@ export type AiStage =
   | 'uncertain';
 interface AiJob {
   id: string;
-  kind: 'BUILD_DOSSIER' | 'WRITE_INVITATION_NOTE' | 'WRITE_ACCEPTANCE_FOLLOWUP' | 'LEGACY';
+  kind: 'BUILD_DOSSIER' | 'WRITE_INVITATION_NOTE' | 'WRITE_ACCEPTANCE_FOLLOWUP' | 'FILL_APPLICATION' | 'LEGACY';
   owner: string;
   tab?: number;
   documentId?: string;
@@ -36,6 +36,8 @@ interface AiJob {
   updatedAt: number;
   stage: AiStage;
   prompt: string;
+  /** Ask ChatGPT to think before answering (its "Think" switch); false switches it off; absent leaves it as it is. */
+  thinking?: boolean;
   parentId?: string;
   result?: string;
   error?: string;
@@ -210,6 +212,7 @@ async function dispatch(job: AiJob, signal: AbortSignal): Promise<void> {
     id: job.id,
     total: chunks.length,
     ...(job.parentId ? { parentId: job.parentId } : {}),
+    ...(job.thinking !== undefined ? { thinking: job.thinking } : {}),
   });
   if (!hello?.ok) throw new Error('ChatGPT content script did not accept the task handshake.');
   for (let index = 0; index < chunks.length; index++) {
@@ -237,14 +240,19 @@ export async function apiConfig(): Promise<ApiConfig | null> {
 export async function saveApiConfig(config: ApiConfig | null): Promise<void> {
   await writeState('llm-api', config);
 }
-export async function askApi(prompt: string, signal: AbortSignal, api: ApiConfig): Promise<string> {
+export async function askApi(prompt: string, signal: AbortSignal, api: ApiConfig, reasoning = false): Promise<string> {
   let res: Response;
   try {
     res = await fetch(`${API_ORIGIN}/v1/chat/completions`, {
       method: 'POST',
       signal,
       headers: { 'content-type': 'application/json', authorization: `Bearer ${api.key}` },
-      body: JSON.stringify({ model: api.model, messages: [{ role: 'user', content: prompt }] }),
+      // Reasoning models take an effort level; "medium" is the balance of care and speed. Other models do not accept it.
+      body: JSON.stringify({
+        model: api.model,
+        messages: [{ role: 'user', content: prompt }],
+        ...(reasoning && /^(o\d|gpt-5)/i.test(api.model) ? { reasoning_effort: 'medium' } : {}),
+      }),
     });
   } catch (error) {
     if (signal.aborted) throw error;
@@ -277,10 +285,10 @@ export async function askChatGpt(
   kind: AiJob['kind'] = 'LEGACY',
   owner = '',
   parentId = '',
-  limits?: { startMs: number; totalMs: number; onStage?: (stage: string) => void },
+  limits?: { startMs: number; totalMs: number; onStage?: (stage: string) => void; thinking?: boolean },
 ): Promise<string> {
   const api = await apiConfig();
-  if (api) return askApi(prompt, signal, api);
+  if (api) return askApi(prompt, signal, api, !!limits?.thinking);
   const id = await aiJobId(prompt, kind, owner, parentId);
   let job = await load(id);
   if (job?.result) return job.result;
@@ -295,6 +303,9 @@ export async function askChatGpt(
       updatedAt: Date.now(),
       stage: 'queued',
       trace: [],
+      // Every task says explicitly whether ChatGPT should think, so a slow thinking setting left on by one task
+      // never makes the next (time-limited) task slow.
+      thinking: !!limits?.thinking,
     };
     await save(job, 'queued');
   }
@@ -331,7 +342,9 @@ export async function askChatGpt(
   });
   const began = Date.now();
   let seen = '';
-  for (let i = 0; i < 180; i++) {
+  // Thinking answers to long prompts can take several minutes, so the wait follows the caller's limit.
+  const rounds = limits ? Math.max(180, Math.ceil(limits.totalMs / 1500) + 20) : 180;
+  for (let i = 0; i < rounds; i++) {
     signal.throwIfAborted();
     const stored = await load(id);
     if (limits && !stored?.result) {

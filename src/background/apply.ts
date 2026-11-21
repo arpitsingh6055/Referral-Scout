@@ -1,0 +1,695 @@
+/**
+ * "Fill this application": reads the job application open in the person's tab, asks ChatGPT (thinking) what goes in
+ * each field from their own LinkedIn profile, CV and saved answers, types it in, and walks a multi-step application
+ * one step at a time when the person asks. It never presses Submit: the last step is always the person's.
+ *
+ * The CV file and profile photo are kept only on this device, under their own keys, and leave it only when they are
+ * put into an upload field of an application the person chose to fill.
+ */
+import { z } from 'zod';
+import {
+  canFill,
+  emptyApplyProfile,
+  fillPrompt,
+  pageKindFromUrl,
+  planFromReply,
+  questionKey,
+  rememberedFor,
+  type ApplyProfile,
+  type FillPlan,
+  type FormField,
+  type PageKind,
+  type PageSnapshot,
+} from '../shared/apply';
+import { seekerEvidence } from '../shared/seeker';
+import { extractJson } from '../parsers/json';
+import { read, write } from '../storage/state';
+import { remove } from '../storage/database';
+import { trustedExtension } from '../validators/security';
+import { askChatGpt } from './network-ai';
+import { getNetwork } from './network';
+import type { ApplyApi, FillResult } from '../content/apply';
+
+export const SESSION_KEY = 'apply-session';
+export const PROFILE_KEY = 'apply-profile';
+export const CV_FILE_KEY = 'cv-file';
+export const PHOTO_KEY = 'apply-photo';
+export const PHOTO_ORIGIN = 'https://media.licdn.com/*';
+const MAX_FILE = 8 * 1024 * 1024;
+
+export interface StoredFile {
+  name: string;
+  type: string;
+  /** Base64 of the file's bytes. */
+  data: string;
+  size: number;
+  savedAt: number;
+}
+export type ApplyStage = 'reading' | 'opening' | 'thinking' | 'filling' | 'review' | 'moving' | 'permission' | 'error' | 'done';
+export interface ApplySession {
+  tabId: number;
+  url: string;
+  stage: ApplyStage;
+  message: string;
+  aiStage?: string | undefined;
+  startedAt: number;
+  updatedAt: number;
+  step: string;
+  stepCount: number;
+  summary: string;
+  filled: { id: string; label: string; value: string; confidence: 'high' | 'medium' | 'low'; why: string; ok: boolean; note?: string }[];
+  files: { id: string; label: string; file: 'cv' | 'photo'; ok: boolean; note?: string }[];
+  ask: { id: string; frame: number; label: string; question: string; options?: string[]; kind?: string | undefined }[];
+  leftForYou: { id: string; label: string; reason: string }[];
+  hasNext: boolean;
+  hasSubmit: boolean;
+  captcha: boolean;
+  needOrigins?: string[];
+  /** Kept in the background only: the fields of the current step, to fill answers the person gives. */
+  form?: FormField[];
+}
+export const fileFromBase64Size = (data: string): number => Math.floor((data.length * 3) / 4);
+
+/* ---------- small storage helpers ---------- */
+export const applyProfile = async (): Promise<ApplyProfile> => ({
+  ...emptyApplyProfile(),
+  ...((await read<ApplyProfile>(PROFILE_KEY)) ?? {}),
+});
+export const cvFile = async (): Promise<StoredFile | undefined> => await read<StoredFile>(CV_FILE_KEY);
+export const photoFile = async (): Promise<StoredFile | undefined> => await read<StoredFile>(PHOTO_KEY);
+export async function saveCvFile(file: { name: string; type: string; data: string }): Promise<void> {
+  const size = fileFromBase64Size(file.data);
+  if (size > MAX_FILE) throw new Error('That CV is larger than 8 MB. Save a smaller PDF and upload it again.');
+  await write(CV_FILE_KEY, { ...file, size, savedAt: Date.now() } satisfies StoredFile);
+}
+export async function clearApplyData(): Promise<void> {
+  for (const key of [SESSION_KEY, PROFILE_KEY, CV_FILE_KEY, PHOTO_KEY]) await remove('meta', key);
+}
+function toBase64(bytes: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(out);
+}
+/** Downloads the person's own LinkedIn profile photo (from the address read at onboarding) and keeps it locally. */
+export async function captureProfilePhoto(): Promise<StoredFile> {
+  const s = await getNetwork();
+  const url = s.profile?.photo;
+  if (!url) throw new Error('No LinkedIn photo was found on your profile. Refresh your profile in Settings, or upload a photo.');
+  if (!(await chrome.permissions.contains({ origins: [PHOTO_ORIGIN] })))
+    throw new Error('Allow Referral Scout to download your LinkedIn photo first.');
+  const res = await fetch(url, { credentials: 'omit' });
+  if (!res.ok) throw new Error(`LinkedIn did not return your photo (error ${res.status}). Refresh your profile and try again.`);
+  const type = res.headers.get('content-type')?.split(';')[0] || 'image/jpeg';
+  if (!type.startsWith('image/')) throw new Error('LinkedIn did not return an image.');
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const file: StoredFile = {
+    name: `${(s.profile?.name || 'photo').replace(/[^\w-]+/g, '-').toLowerCase()}.${type.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg'}`,
+    type,
+    data: toBase64(bytes),
+    size: bytes.length,
+    savedAt: Date.now(),
+  };
+  await write(PHOTO_KEY, file);
+  return file;
+}
+
+/* ---------- the page ---------- */
+const originOf = (url: string): string => {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return '';
+  }
+};
+const LINKEDIN = /^https:\/\/(www\.)?linkedin\.com$/;
+async function allowed(origin: string): Promise<boolean> {
+  if (LINKEDIN.test(origin)) return true;
+  return chrome.permissions.contains({ origins: [`${origin}/*`] }).catch(() => false);
+}
+type Frame = { frameId: number; result: ReturnType<ApplyApi['scan']> };
+async function inject(tabId: number): Promise<void> {
+  await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['apply.js'] });
+}
+async function scanAll(tabId: number): Promise<Frame[]> {
+  await inject(tabId);
+  const results = await chrome.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    func: () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.scan() ?? null,
+  });
+  return results.filter(r => r.result).map(r => ({ frameId: r.frameId, result: r.result as Frame['result'] }));
+}
+async function inFrame<T>(
+  tabId: number,
+  frameId: number,
+  func: (...args: never[]) => T,
+  args: unknown[] = [],
+): Promise<Awaited<T> | undefined> {
+  const [r] = await chrome.scripting.executeScript({
+    target: { tabId, frameIds: [frameId] },
+    func: func as never,
+    args: args as never,
+  });
+  return r?.result as Awaited<T> | undefined;
+}
+async function everyFrame(tabId: number, func: () => unknown): Promise<unknown[]> {
+  const results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func }).catch(() => []);
+  return results.map(r => r.result);
+}
+/** The application as one snapshot: every frame's fields (tagged with their frame) and the best job text. */
+function merge(frames: Frame[], tabUrl: string, title: string): PageSnapshot & { frames: string[] } {
+  const withForm = frames.filter(f => f.result.form.length);
+  const main = frames.find(f => f.frameId === 0)?.result;
+  const job = [main?.job, ...frames.map(f => f.result.job)].filter(Boolean).sort((a, b) => b!.length - a!.length)[0] ?? '';
+  const primary = withForm.sort((a, b) => b.result.form.length - a.result.form.length)[0]?.result;
+  return {
+    url: tabUrl,
+    title,
+    job,
+    html: withForm
+      .map(f => f.result.html)
+      .join('\n')
+      .slice(0, 16000),
+    form: withForm.flatMap(f => f.result.form.map(x => ({ ...x, frame: f.frameId }))),
+    step: primary?.step ?? main?.step ?? '',
+    hasNext: withForm.some(f => f.result.hasNext),
+    hasSubmit: withForm.some(f => f.result.hasSubmit),
+    captcha: frames.some(f => f.result.captcha),
+    frames: main?.frames ?? [],
+  };
+}
+
+/* ---------- the session ---------- */
+let running: AbortController | null = null;
+const loadSession = async (): Promise<ApplySession | undefined> => await read<ApplySession>(SESSION_KEY);
+async function update(fn: (s: ApplySession) => ApplySession | void): Promise<ApplySession | undefined> {
+  const s = await loadSession();
+  if (!s) return undefined;
+  const next = fn(s) ?? s;
+  next.updatedAt = Date.now();
+  await write(SESSION_KEY, next);
+  return next;
+}
+export function sessionView(s: ApplySession | undefined): Omit<ApplySession, 'form'> | null {
+  if (!s) return null;
+  const { form, ...view } = s;
+  void form;
+  // A worker restart stops a run silently; say so instead of showing a spinner forever.
+  if (!running && ['reading', 'opening', 'thinking', 'filling', 'moving'].includes(s.stage) && Date.now() - s.updatedAt > 60000)
+    return { ...view, stage: 'error', message: 'This fill was interrupted. Press Fill again.' };
+  return view;
+}
+const aiWords: Record<string, string> = {
+  queued: 'Opening ChatGPT',
+  current_document_ready: 'ChatGPT is ready',
+  thinking_verified: 'Thinking mode is on',
+  thinking_unverified: 'Thinking mode could not be confirmed; continuing',
+  thinking_skipped: 'Thinking mode is not available on this account; using the standard model',
+  composer_stable: 'Pasting the application into ChatGPT',
+  prompt_inserted: 'Checking the question was pasted completely',
+  insertion_verified: 'Sending',
+  send_clicked: 'Waiting for ChatGPT to accept it',
+  user_turn_verified: 'ChatGPT is reading the job and the form',
+  assistant_streaming: 'ChatGPT is writing the answers',
+  completion_verified: 'Reading the answers',
+  response_extracted: 'Checking every answer against the form',
+};
+const background = async (): Promise<{ text: string; name: string; url: string; roles: string[] }> => {
+  const s = await getNetwork();
+  if (!s.profile) throw new Error('Set up Referral Scout with your LinkedIn profile first.');
+  const evidence = seekerEvidence(
+    {
+      headline: s.profile.headline,
+      location: s.profile.location,
+      about: s.profile.about,
+      sections: s.profile.sections,
+      rawText: s.profile.rawText,
+    },
+    7000,
+  );
+  const cv = (s.cv?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 14000);
+  return {
+    text: `${evidence}${cv ? `\nCV (full text): ${cv}` : ''}`,
+    name: s.profile.name,
+    url: s.profile.url,
+    roles: s.settings?.roles ?? [],
+  };
+};
+
+export interface Detect {
+  tabId: number | null;
+  url: string;
+  origin: string;
+  kind: PageKind;
+  canFill: boolean;
+  permission: boolean;
+  onboarded: boolean;
+  cv: { name: string; size: number } | null;
+  photo: { name: string; size: number; type: string; data: string } | null;
+  linkedinPhoto: boolean;
+  photoPermission: boolean;
+  session: ReturnType<typeof sessionView>;
+  profile: ApplyProfile;
+}
+async function detect(tabId?: number, withPhoto = false): Promise<Detect> {
+  const tab =
+    tabId !== undefined
+      ? await chrome.tabs.get(tabId).catch(() => undefined)
+      : (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0];
+  const url = tab?.url ?? '';
+  const kind = pageKindFromUrl(url);
+  const origin = originOf(url);
+  const [s, cv, photo, session, profile] = await Promise.all([getNetwork(), cvFile(), photoFile(), loadSession(), applyProfile()]);
+  return {
+    tabId: tab?.id ?? null,
+    url,
+    origin,
+    kind,
+    canFill: canFill(kind),
+    permission: canFill(kind) ? await allowed(origin) : false,
+    onboarded: !!s.profile,
+    cv: cv ? { name: cv.name, size: cv.size } : null,
+    // A small preview for the panel; the photo is the person's own.
+    photo: photo
+      ? { name: photo.name, size: photo.size, type: photo.type, data: withPhoto && photo.size < 400000 ? photo.data : '' }
+      : null,
+    linkedinPhoto: !!s.profile?.photo,
+    photoPermission: await chrome.permissions.contains({ origins: [PHOTO_ORIGIN] }).catch(() => false),
+    session: session && session.tabId === tab?.id ? sessionView(session) : null,
+    profile,
+  };
+}
+
+async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Promise<void> {
+  const tab = await chrome.tabs.get(tabId);
+  const url = tab.url ?? '';
+  const kind = pageKindFromUrl(url);
+  if (!canFill(kind)) throw new Error('Open a single job or its application form first; a list of jobs cannot be filled.');
+  if (!(await allowed(originOf(url))))
+    return void (await update(s => ({
+      ...s,
+      stage: 'permission',
+      needOrigins: [originOf(url)],
+      message: 'Allow Referral Scout on this site first.',
+    })));
+  await update(s => ({ ...s, stage: 'reading', message: 'Reading the application form…', url }));
+  let frames = await scanAll(tabId);
+  let page = merge(frames, url, tab.title ?? '');
+  if (!page.form.length && kind === 'linkedin-job') {
+    const opened = await inFrame(tabId, 0, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.openEasyApply());
+    if (opened === 'external')
+      throw new Error(
+        'This job is applied for on the company’s own site. Press Apply on LinkedIn, then press "Fill this application" on the page that opens.',
+      );
+    if (opened === 'opened') {
+      await update(s => ({ ...s, stage: 'opening', message: 'Opening Easy Apply…' }));
+      for (let i = 0; i < 10 && !page.form.length; i++) {
+        await new Promise(r => setTimeout(r, 700));
+        signal.throwIfAborted();
+        frames = await scanAll(tabId);
+        page = merge(frames, url, tab.title ?? '');
+      }
+    }
+  }
+  if (!page.form.length) {
+    // The form may live in a frame from another site (a careers page embedding Greenhouse, say).
+    const missing: string[] = [];
+    for (const src of page.frames) {
+      const o = originOf(src);
+      if (o && !missing.includes(o) && !(await allowed(o))) missing.push(o);
+    }
+    if (missing.length)
+      return void (await update(s => ({
+        ...s,
+        stage: 'permission',
+        needOrigins: missing,
+        message: `The form on this page comes from ${missing.map(m => new URL(m).host).join(', ')}. Allow it to fill the form.`,
+      })));
+    throw new Error(
+      kind === 'linkedin-job'
+        ? 'No application form is open. Press Easy Apply (or Apply) on the job first.'
+        : 'No form fields were found on this page. Open the application form itself (often behind an "Apply" button), then try again.',
+    );
+  }
+  const [bg, profile, photo, cv] = await Promise.all([background(), applyProfile(), photoFile(), cvFile()]);
+  if (!cv) throw new Error('Upload your CV (PDF or Word) in Settings first: applications need the file.');
+  const prompt =
+    fillPrompt({ page, background: bg.text, roles: bg.roles, profile, name: bg.name, linkedinUrl: bg.url, photo: !!photo }) +
+    (attempt > 1 ? `\n(Attempt ${attempt}: answer afresh.)` : '');
+  await update(s => ({
+    ...s,
+    stage: 'thinking',
+    message: 'ChatGPT is reading the job and the form…',
+    step: page.step,
+    hasNext: page.hasNext,
+    hasSubmit: page.hasSubmit,
+    captcha: page.captcha,
+    form: page.form,
+  }));
+  const reply = await askChatGpt(prompt, signal, 'FILL_APPLICATION', bg.url, '', {
+    startMs: 90000,
+    totalMs: 8 * 60000,
+    thinking: true,
+    onStage: stage => void update(s => ({ ...s, aiStage: stage, message: `${aiWords[stage] ?? 'Working'}…` })),
+  });
+  signal.throwIfAborted();
+  let plan: FillPlan;
+  try {
+    plan = planFromReply(extractJson(reply), page.form, profile, !!photo);
+  } catch {
+    throw new Error('ChatGPT’s answer could not be read. Press Fill again.');
+  }
+  // Questions the person already answered on an earlier application are filled, not asked again.
+  const remembered = new Map(rememberedFor(page.form, profile).map(r => [r.id, r.value]));
+  for (const q of [...plan.ask]) {
+    const value = remembered.get(q.id);
+    const f = page.form.find(x => x.id === q.id);
+    if (value && f) {
+      plan.ask = plan.ask.filter(a => a !== q);
+      plan.fill.push({ id: f.id, frame: f.frame, kind: f.kind, label: f.label, value, confidence: 'high', why: 'Your earlier answer' });
+    }
+  }
+  await update(s => ({ ...s, stage: 'filling', message: 'Filling the form…', summary: plan.summary }));
+  const results = await applyPlan(tabId, plan, page.form, cv, photo);
+  const byId = new Map(results.map(r => [r.id, r]));
+  await mark(tabId, page.form, plan, byId);
+  const failed = results.filter(r => !r.ok).length;
+  await update(s => ({
+    ...s,
+    stage: 'review',
+    aiStage: undefined,
+    message: reviewMessage(plan, failed, page),
+    filled: plan.fill.map(f => ({
+      id: f.id,
+      label: f.label,
+      value: Array.isArray(f.value) ? f.value.join(', ') : f.value,
+      confidence: f.confidence,
+      why: f.why,
+      ok: byId.get(f.id)?.ok ?? false,
+      ...(byId.get(f.id)?.note ? { note: byId.get(f.id)!.note } : {}),
+    })),
+    files: plan.files.map(f => ({
+      id: f.id,
+      label: f.label,
+      file: f.file,
+      ok: byId.get(f.id)?.ok ?? false,
+      ...(byId.get(f.id)?.note ? { note: byId.get(f.id)!.note } : {}),
+    })),
+    ask: plan.ask.map(a => ({ ...a, kind: page.form.find(f => f.id === a.id)?.kind })),
+    leftForYou: plan.leftForYou,
+  }));
+}
+function reviewMessage(plan: FillPlan, failed: number, page: PageSnapshot): string {
+  const parts = [
+    `Filled ${plan.fill.length + plan.files.filter(f => f).length} field${plan.fill.length + plan.files.length === 1 ? '' : 's'}.`,
+  ];
+  if (plan.ask.length) parts.push(`${plan.ask.length} need${plan.ask.length === 1 ? 's' : ''} your answer below.`);
+  if (failed) parts.push(`${failed} could not be typed; fill ${failed === 1 ? 'it' : 'them'} on the page.`);
+  if (page.captcha) parts.push('There is a security check on the page for you to complete.');
+  parts.push(
+    page.hasNext
+      ? 'Check the page, then press Next step.'
+      : page.hasSubmit
+        ? 'This looks like the last step: check everything and press Submit on the page yourself.'
+        : 'Check the page before you submit it yourself.',
+  );
+  return parts.join(' ');
+}
+async function applyPlan(
+  tabId: number,
+  plan: FillPlan,
+  form: FormField[],
+  cv: StoredFile,
+  photo: StoredFile | undefined,
+): Promise<FillResult[]> {
+  const frames = new Set(form.map(f => f.frame));
+  const out: FillResult[] = [];
+  for (const frame of frames) {
+    const items = plan.fill.filter(f => f.frame === frame).map(f => ({ id: f.id, kind: f.kind, value: f.value }));
+    const files = plan.files
+      .filter(f => f.frame === frame)
+      .map(f => {
+        const src = f.file === 'cv' ? cv : photo!;
+        return { id: f.id, name: src.name, type: src.type, data: src.data };
+      });
+    if (!items.length && !files.length) continue;
+    const results = await inFrame(
+      tabId,
+      frame,
+      (i: unknown, f: unknown) =>
+        (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.fill(i as never, f as never) ?? Promise.resolve([]),
+      [items, files],
+    ).catch(() => undefined);
+    out.push(
+      ...((results as FillResult[] | undefined) ?? items.map(i => ({ id: i.id, ok: false, note: 'The page changed while filling.' }))),
+    );
+  }
+  return out;
+}
+async function mark(tabId: number, form: FormField[], plan: FillPlan, results: Map<string, FillResult>): Promise<void> {
+  const tones = new Map<string, 'done' | 'check' | 'you'>();
+  for (const f of plan.fill)
+    tones.set(f.id, !results.get(f.id)?.ok ? 'you' : f.confidence === 'low' || results.get(f.id)?.note ? 'check' : 'done');
+  for (const f of plan.files) tones.set(f.id, results.get(f.id)?.ok ? 'done' : 'you');
+  for (const a of plan.ask) tones.set(a.id, 'you');
+  for (const l of plan.leftForYou) tones.set(l.id, 'you');
+  for (const frame of new Set(form.map(f => f.frame))) {
+    const ids = [...tones].filter(([id]) => form.find(f => f.id === id)?.frame === frame).map(([id, tone]) => ({ id, tone }));
+    if (ids.length)
+      await inFrame(
+        tabId,
+        frame,
+        (x: unknown) => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.mark(x as never),
+        [ids],
+      ).catch(() => undefined);
+  }
+}
+async function run(task: (signal: AbortSignal) => Promise<void>): Promise<void> {
+  running?.abort();
+  const controller = new AbortController();
+  running = controller;
+  const keepAlive = setInterval(() => void chrome.runtime.getPlatformInfo(), 20000);
+  try {
+    await task(controller.signal);
+  } catch (e) {
+    if (!controller.signal.aborted)
+      await update(s => ({ ...s, stage: 'error', aiStage: undefined, message: e instanceof Error ? e.message : String(e) }));
+  } finally {
+    clearInterval(keepAlive);
+    if (running === controller) running = null;
+  }
+}
+const signature = (p: { form: FormField[]; step: string }): string => `${p.step}|${p.form.map(f => f.label).join('|')}`;
+async function start(tabId: number, attempt = 1): Promise<void> {
+  const tab = await chrome.tabs.get(tabId);
+  const old = await loadSession();
+  const same = old && old.tabId === tabId;
+  await write(SESSION_KEY, {
+    tabId,
+    url: tab.url ?? '',
+    stage: 'reading',
+    message: 'Reading the application form…',
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+    step: '',
+    stepCount: same ? old.stepCount : 1,
+    summary: same ? old.summary : '',
+    filled: [],
+    files: [],
+    ask: [],
+    leftForYou: [],
+    hasNext: false,
+    hasSubmit: false,
+    captcha: false,
+  } satisfies ApplySession);
+  void run(signal => fillStep(tabId, signal, attempt));
+}
+async function nextStep(): Promise<void> {
+  const s = await loadSession();
+  if (!s) throw new Error('Nothing is being filled.');
+  const frame = s.form?.find(f => f.frame !== undefined)?.frame ?? 0;
+  const before = signature({ form: s.form ?? [], step: s.step });
+  await update(x => ({ ...x, stage: 'moving', message: 'Moving to the next step…' }));
+  void run(async signal => {
+    const clicked = await inFrame(s.tabId, frame, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.next());
+    if (!clicked?.clicked) throw new Error(clicked?.error ?? 'The page changed; press Fill again.');
+    // Wait for the site to show the next step (or reload into it), then fill that step.
+    for (let i = 0; i < 16; i++) {
+      await new Promise(r => setTimeout(r, 750));
+      signal.throwIfAborted();
+      const tab = await chrome.tabs.get(s.tabId);
+      if (tab.status === 'loading') continue;
+      const frames = await scanAll(s.tabId).catch(() => [] as Frame[]);
+      const page = merge(frames, tab.url ?? '', tab.title ?? '');
+      if (page.form.length && signature(page) !== before) {
+        await update(x => ({ ...x, stepCount: x.stepCount + 1 }));
+        return fillStep(s.tabId, signal, 1);
+      }
+      if (!page.form.length && i > 4) {
+        await update(x => ({ ...x, stage: 'done', message: 'The form moved on and no fields are left on this page. Check the page.' }));
+        return;
+      }
+    }
+    await update(x => ({
+      ...x,
+      stage: 'review',
+      message: 'The site stayed on this step. It usually marks what is missing in red: fix it on the page, then press Next step again.',
+    }));
+  });
+}
+async function answer(answers: { id: string; value: string; remember: boolean }[]): Promise<void> {
+  const s = await loadSession();
+  if (!s?.form) throw new Error('Nothing is being filled.');
+  const items = answers
+    .map(a => ({ a, f: s.form!.find(f => f.id === a.id) }))
+    .filter((x): x is { a: (typeof answers)[number]; f: FormField } => !!x.f && !!x.a.value.trim() && !x.f.sensitive);
+  if (!items.length) throw new Error('Type an answer first.');
+  const remember = items.filter(x => x.a.remember);
+  if (remember.length) {
+    const profile = await applyProfile();
+    for (const { a, f } of remember) profile.answers[questionKey(f.label)] = a.value.trim().slice(0, 2000);
+    await write(PROFILE_KEY, profile);
+  }
+  const results: FillResult[] = [];
+  for (const frame of new Set(items.map(x => x.f.frame))) {
+    const list = items.filter(x => x.f.frame === frame).map(x => ({ id: x.f.id, kind: x.f.kind, value: x.a.value.trim() }));
+    const r = await inFrame(
+      s.tabId,
+      frame,
+      (i: unknown) => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.fill(i as never, []) ?? Promise.resolve([]),
+      [list],
+    ).catch(() => undefined);
+    results.push(...((r as FillResult[] | undefined) ?? []));
+    const ok = ((r as FillResult[] | undefined) ?? []).filter(x => x.ok).map(x => ({ id: x.id, tone: 'done' as const }));
+    if (ok.length)
+      await inFrame(
+        s.tabId,
+        frame,
+        (x: unknown) => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.mark(x as never),
+        [ok],
+      ).catch(() => undefined);
+  }
+  const done = new Set(results.filter(r => r.ok).map(r => r.id));
+  await update(x => ({
+    ...x,
+    ask: x.ask.filter(q => !done.has(q.id)),
+    filled: [
+      ...x.filled,
+      ...items
+        .filter(i => done.has(i.f.id))
+        .map(i => ({ id: i.f.id, label: i.f.label, value: i.a.value.trim(), confidence: 'high' as const, why: 'Your answer', ok: true })),
+    ],
+    message:
+      done.size === items.length
+        ? `Added your answer${items.length === 1 ? '' : 's'}.`
+        : 'Some answers could not be typed; fill them on the page.',
+  }));
+}
+
+/* ---------- messages from the side panel ---------- */
+const file = z.object({ name: z.string().min(1).max(200), type: z.string().max(120), data: z.string().min(4).max(12_000_000) });
+const detailsSchema = z
+  .object({
+    phone: z.string().max(40),
+    email: z.string().max(200),
+    city: z.string().max(120),
+    currentCtc: z.string().max(80),
+    expectedCtc: z.string().max(80),
+    noticePeriod: z.string().max(80),
+    startDate: z.string().max(80),
+    workAuthorization: z.string().max(300),
+    relocate: z.string().max(120),
+    links: z.string().max(600),
+  })
+  .partial();
+export const applyRequest = z.discriminatedUnion('action', [
+  z.object({
+    kind: z.literal('apply'),
+    action: z.literal('detect'),
+    tabId: z.number().int().optional(),
+    withPhoto: z.boolean().optional(),
+  }),
+  z.object({ kind: z.literal('apply'), action: z.literal('start'), tabId: z.number().int(), again: z.boolean().optional() }),
+  z.object({ kind: z.literal('apply'), action: z.literal('next') }),
+  z.object({ kind: z.literal('apply'), action: z.literal('undo') }),
+  z.object({ kind: z.literal('apply'), action: z.literal('stop') }),
+  z.object({
+    kind: z.literal('apply'),
+    action: z.literal('answer'),
+    answers: z.array(z.object({ id: z.string().max(60), value: z.string().max(4000), remember: z.boolean() })).max(60),
+  }),
+  z.object({
+    kind: z.literal('apply'),
+    action: z.literal('saveProfile'),
+    details: detailsSchema,
+    eeo: z.enum(['leave', 'decline']),
+    forget: z.array(z.string().max(200)).max(200).optional(),
+  }),
+  z.object({ kind: z.literal('apply'), action: z.literal('capturePhoto') }),
+  z.object({ kind: z.literal('apply'), action: z.literal('savePhoto'), file }),
+  z.object({ kind: z.literal('apply'), action: z.literal('deletePhoto') }),
+]);
+export type ApplyRequest = z.infer<typeof applyRequest>;
+export function registerApplyMessages(): void {
+  chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
+    if (!input || typeof input !== 'object' || (input as { kind?: unknown }).kind !== 'apply') return false;
+    if (!trustedExtension(sender, chrome.runtime.id)) return false;
+    const parsed = applyRequest.safeParse(input);
+    if (!parsed.success) {
+      respond({ ok: false, error: 'That request was not understood. Reload the side panel.' });
+      return false;
+    }
+    const req = parsed.data;
+    void (async () => {
+      if (req.action === 'start') {
+        const s = await getNetwork();
+        if (!s.profile) throw new Error('Set up Referral Scout with your LinkedIn profile first.');
+        if (!(await cvFile())) throw new Error('Upload your CV in Settings first: applications need the file itself.');
+        const old = await loadSession();
+        await start(req.tabId, req.again && old?.tabId === req.tabId ? 2 + Math.floor(Math.random() * 1000) : 1);
+      }
+      if (req.action === 'next') await nextStep();
+      if (req.action === 'answer') await answer(req.answers);
+      if (req.action === 'undo') {
+        const s = await loadSession();
+        if (s) {
+          running?.abort();
+          await everyFrame(s.tabId, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.undo());
+          await update(x => ({ ...x, stage: 'done', filled: [], files: [], ask: [], message: 'Put back what was on the page before.' }));
+        }
+      }
+      if (req.action === 'stop') {
+        const s = await loadSession();
+        running?.abort();
+        if (s) await everyFrame(s.tabId, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.clear());
+        await remove('meta', SESSION_KEY);
+      }
+      if (req.action === 'saveProfile') {
+        const profile = await applyProfile();
+        profile.details = Object.fromEntries(
+          Object.entries(req.details)
+            .map(([k, v]) => [k, (v ?? '').trim()])
+            .filter(([, v]) => v),
+        );
+        profile.eeo = req.eeo;
+        for (const k of req.forget ?? []) delete profile.answers[k];
+        await write(PROFILE_KEY, profile);
+      }
+      if (req.action === 'capturePhoto') await captureProfilePhoto();
+      if (req.action === 'savePhoto') {
+        if (!req.file.type.startsWith('image/')) throw new Error('Choose an image (JPG or PNG).');
+        const size = fileFromBase64Size(req.file.data);
+        if (size > 4 * 1024 * 1024) throw new Error('That photo is larger than 4 MB.');
+        await write(PHOTO_KEY, { ...req.file, size, savedAt: Date.now() } satisfies StoredFile);
+      }
+      if (req.action === 'deletePhoto') await remove('meta', PHOTO_KEY);
+      return detect(
+        req.action === 'detect' || req.action === 'start' ? req.tabId : (await loadSession())?.tabId,
+        req.action === 'detect' ? !!req.withPhoto : req.action.endsWith('Photo'),
+      );
+    })()
+      .then(data => respond({ ok: true, data }))
+      .catch(e => respond({ ok: false, error: e instanceof Error ? e.message : String(e) }));
+    return true;
+  });
+}

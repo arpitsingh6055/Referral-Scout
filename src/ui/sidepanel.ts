@@ -17,6 +17,7 @@ import { consentGate, welcome, askTarget, buildSetup } from './setup';
 import { buildSaved, buildReferrals } from './jobs';
 import { buildPeople } from './people';
 import { buildActivity } from './activity';
+import { applyHome } from './apply';
 
 /** The running build, so it is easy to tell whether the extension was reloaded after an update. */
 const version = (globalThis as { chrome?: typeof chrome }).chrome?.runtime?.getManifest?.().version ?? '';
@@ -386,7 +387,7 @@ function render(s: NetworkState): void {
     k.addEventListener('click', go);
     kpis.append(k);
   }
-  home.append(hello, run);
+  home.append(applyHome(), hello, run);
   const tracker = live(s, stage);
   if (tracker) home.append(tracker);
   if (s.undo && Date.now() - s.undo.at < 10 * 60000) {

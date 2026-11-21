@@ -1,9 +1,11 @@
 import { openDatabase } from '../storage/database';
 import { registerAiMessages } from './network-ai';
 import { registerNetworkMessages } from './network-messages';
+import { registerApplyMessages } from './apply';
 import { networkTick, updateNetwork } from './network';
 registerNetworkMessages();
 registerAiMessages();
+registerApplyMessages();
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === 'network-tick') void networkTick();
 });

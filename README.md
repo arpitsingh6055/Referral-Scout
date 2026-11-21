@@ -62,6 +62,8 @@ It runs that routine from a side panel, on your own signed-in LinkedIn:
 4. **Find the right people.** At each company it uses LinkedIn's *Current company* filter to find people whose referral counts and who are likely to answer, starting with people you already know.
 5. **Reach out, slowly.** People you know get a message; the strongest three to five others get a connection request with a short note written for who they are, and a follow-up once they accept. By default every message waits for your approval.
 
+6. **Fill the application.** Open one job (LinkedIn Easy Apply, or the company's own application page on Greenhouse, Lever, Workday, Ashby and most other sites) and press **Fill this application** in the side panel. ChatGPT, in thinking mode where your plan has it, reads the job and every field on the form and fills it from your profile, CV and saved answers: written answers are specific to that job, your CV is attached to the upload field, and multi-page applications are filled one step at a time with **Next step**. Anything it cannot know (salary, notice period, visa) is asked once in the side panel and remembered. Fields are outlined on the page so you can check them, **Undo** puts back what was there, and it **never presses Submit**: you do. Passwords, CAPTCHAs, legal declarations and diversity questions are always left to you.
+
 You can also start from any LinkedIn job page with the **Ask for referrals** and **My connections here** buttons. When someone replies, a small card in LinkedIn messaging reminds you which job you asked about and can draft your answer.
 
 ## How jobs are ranked
@@ -119,6 +121,7 @@ LinkedIn's User Agreement does not allow automated activity, and accounts that s
 - Your LinkedIn profile, CV, job lists, people and messages are stored in your browser, on your device.
 - After you agree on the first screen, the extension sends one usage record per LinkedIn account (a random install ID, your name, your LinkedIn profile ID and when you first used it) so we can count users. Nothing else is sent to us, and nothing is sold or used for ads.
 - To rank jobs and write messages, prompts in your own ChatGPT account can include your profile and CV text, job descriptions and the public details of people you contact. They follow your ChatGPT history settings.
+- Your CV file and, if you choose, your profile photo are kept on your device and attached only to application forms you press **Fill this application** on. The extension reads a company's site only after you allow that one site and press the button; it then sends that form, the job description and your profile and CV text to your ChatGPT account to work out the answers. Answers you choose to remember stay on your device.
 - An API key, if you add one, stays on your device and is left out of exports. **Settings → Export saved data** downloads everything; **Delete everything** removes it.
 
 Full policy: **https://referral-scout.vercel.app/privacy**

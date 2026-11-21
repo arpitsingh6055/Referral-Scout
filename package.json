@@ -1,6 +1,6 @@
 {
   "name": "referral-scout",
-  "version": "0.45.5",
+  "version": "0.46.0",
   "private": true,
   "type": "module",
   "description": "Referral Scout: LinkedIn job search and referral outreach as a browser side panel",
@@ -12,9 +12,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build": "tsc --noEmit && vite build && vite build --mode content && node scripts/check-build.mjs",
+    "build": "tsc --noEmit && vite build && vite build --mode content && vite build --mode apply && node scripts/check-build.mjs",
     "package": "pnpm build && node scripts/package-extension.mjs",
-    "check": "prettier --check src tests scripts && vitest run && tsc --noEmit && vite build && vite build --mode content && node scripts/check-build.mjs",
+    "check": "prettier --check src tests scripts && vitest run && tsc --noEmit && vite build && vite build --mode content && vite build --mode apply && node scripts/check-build.mjs",
     "lint": "tsc --noEmit",
     "format": "prettier --write src tests scripts",
     "format:check": "prettier --check src tests scripts"

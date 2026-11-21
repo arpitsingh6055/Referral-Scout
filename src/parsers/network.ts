@@ -65,6 +65,15 @@ export function topCardFacts(top: ParentNode, usable: (e: Element) => boolean = 
 
 const SECTION = /^(about|experience|education|skills|projects|licenses|certifications|volunteering|honors|languages|publications)/i;
 
+/** The profile photo in the top card: LinkedIn serves it from media.licdn.com as a "profile-displayphoto" image. */
+export function photoOf(top: ParentNode): string | undefined {
+  const imgs = [...top.querySelectorAll('img')] as HTMLImageElement[];
+  const img =
+    imgs.find(i => /profile-displayphoto/.test(i.src)) ??
+    imgs.find(i => /media\.licdn\.com\/dms\/image/.test(i.src) && !/background|banner/i.test(i.className + i.alt));
+  const src = img?.src ?? '';
+  return /^https:\/\/media\.licdn\.com\//.test(src) ? src.slice(0, 1500) : undefined;
+}
 export function readNetworkProfile(doc: ParentNode, url: string, usable: (e: Element) => boolean = () => true): NetworkProfile {
   const canonical = profileUrl(url);
   if (!canonical) throw new Error('Open a LinkedIn personal profile.');
@@ -101,6 +110,7 @@ export function readNetworkProfile(doc: ParentNode, url: string, usable: (e: Ele
     rawText,
     ...(facts.degree ? { degree: facts.degree } : {}),
     ...(facts.company ? { current: facts.company } : {}),
+    ...(photoOf(top) ? { photo: photoOf(top) } : {}),
   });
 }
 

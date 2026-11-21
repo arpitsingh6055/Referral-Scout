@@ -28,6 +28,8 @@ export const networkProfileSchema = z.object({
   completeness: z.record(z.string(), z.boolean()).optional(),
   /** LinkedIn's own "Current: Recruiter at X" line from search results, or the company shown on the profile. */
   current: z.string().max(300).optional(),
+  /** Address of the person's own LinkedIn profile photo, read at onboarding (used for photo upload fields). */
+  photo: z.string().max(1500).optional(),
 });
 export type NetworkProfile = z.infer<typeof networkProfileSchema>;
 /** A person or job the user chose to remember from a LinkedIn page, with their own note. */
@@ -434,6 +436,8 @@ export const networkRequest = z.discriminatedUnion('action', [
     type: z.string().max(120),
     text: z.string().min(1),
     pages: z.number().int().optional(),
+    /** The file itself (base64), kept on this device for application upload fields. */
+    file: z.string().max(12_000_000).optional(),
   }),
   z.object({ kind: z.literal('network'), action: z.literal('prepare'), url: z.string() }),
   z.object({ kind: z.literal('network'), action: z.literal('skip'), url: z.string() }),

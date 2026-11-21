@@ -7,7 +7,13 @@ const manifestPlugin: Plugin = {
   }
 };
 
-export default defineConfig(({ mode }) => mode === "content" ? {
+export default defineConfig(({ mode }) => mode === "apply" ? {
+  publicDir: false,
+  build: {
+    emptyOutDir: false, target: "chrome120",
+    lib: { entry: "src/content/apply.ts", name: "ReferralScoutApply", formats: ["iife"], fileName: () => "apply.js" }
+  }
+} : mode === "content" ? {
   publicDir: false,
   build: {
     emptyOutDir: false, target: "chrome120",

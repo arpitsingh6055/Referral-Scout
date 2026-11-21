@@ -1,26 +1,9 @@
 /** Setup and Settings screens: welcome, the target question, messages, limits, the API key and the CV. */
 import { errorText } from './render';
 import { defaultSettings, introduction, renderNote, type NetworkState, type OutreachSettings, SAFE, riskNotes } from '../shared/network';
-import { completeCvText } from './cv-text';
+import { buildApplySettings, uploadCv } from './apply';
 import { qualificationPicker } from './qualifications';
-import {
-  node,
-  csv,
-  optional,
-  pad,
-  request,
-  notify,
-  withProgress,
-  button,
-  act,
-  field,
-  choice,
-  accordion,
-  bubble,
-  flags,
-  rerender,
-  ui,
-} from './core';
+import { node, csv, optional, pad, request, notify, withProgress, button, act, field, choice, accordion, bubble, flags, ui } from './core';
 
 /* ---------- screens ---------- */
 export function consentGate(): HTMLElement {
@@ -353,7 +336,7 @@ export function buildSetup(
       'btn block',
     ),
   );
-  panel.append(who, wordsAcc.box, advanced.box, chatGpt, api, general.box);
+  panel.append(who, wordsAcc.box, advanced.box, chatGpt, buildApplySettings(), api, general.box);
   panel.append(
     button(
       'Save changes',
@@ -432,63 +415,41 @@ export function buildApi(s: NetworkState): HTMLElement {
 
 /* optional ChatGPT personalisation: CV, dossier and recovery */
 export function buildChatGpt(s: NetworkState): HTMLElement {
-  const { box, body } = accordion('chatgpt', 'Your CV (optional)', s.cv ? 'added' : '');
+  const { box, body } = accordion('chatgpt', 'Your CV', s.cv ? 'added' : 'needed to fill applications');
   body.append(
     node(
       'p',
-      'Outreach works without a CV. Add one only if you use “Rewrite with ChatGPT”: ChatGPT then knows your background and can mention one relevant thing in the message after someone accepts. There is nothing else to set up.',
+      'Needed to fill job applications: the file is attached to upload fields and ChatGPT answers the form from it. Outreach also uses it when you choose “Rewrite with ChatGPT”.',
       'card-sub',
     ),
   );
   const cv = node('input', '', 'input');
   cv.type = 'file';
-  cv.accept = '.pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain';
+  cv.accept = '.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   const cvField = node('div', '', 'field');
   cvField.append(
     node(
       'span',
-      s.cv ? `CV: ${s.cv.name} · ${(s.cv.characterCount ?? 0).toLocaleString()} characters` : 'Your CV (PDF, DOCX or TXT)',
+      s.cv ? `CV: ${s.cv.name} · ${(s.cv.characterCount ?? 0).toLocaleString()} characters` : 'Your CV (PDF or DOCX)',
       'field-label',
     ),
     cv,
-    node('p', 'Read inside the extension. Only text is used, no file is attached or uploaded.', 'field-help'),
+    node('p', 'Read and kept on this device only. It is attached only to application forms you choose to fill.', 'field-help'),
   );
   cv.addEventListener('change', () => {
     if (flags.busy) return;
     const file = cv.files?.[0];
     if (!file) return;
-    if (file.size > 30_000_000) {
-      notify('error', 'The CV is larger than 30 MB. Convert it to a text-searchable PDF or DOCX first.');
-      cv.value = '';
-      return;
-    }
     flags.busy = true;
     cv.disabled = true;
     flags.spoke = false;
-    notify('info', 'Reading your CV on this device. No file is kept…');
-    void file
-      .arrayBuffer()
-      .then(async buffer => {
-        const extracted = await completeCvText(buffer, file.name),
-          pages = (extracted.match(/^\[Page \d+\]/gm) || []).length;
-        const saved = await request({
-          kind: 'network',
-          action: 'saveCv',
-          name: file.name,
-          type: file.type || 'text/plain',
-          text: extracted,
-          ...(pages ? { pages } : {}),
-        });
-        rerender(saved);
-        notify(
-          'success',
-          `CV saved: ${extracted.length.toLocaleString()} characters. It is used the next time ChatGPT rewrites a message.`,
-        );
-      })
+    notify('info', 'Reading your CV on this device…');
+    void uploadCv(file)
       .catch(e => notify('error', `The CV could not be read: ${errorText(e)}`))
       .finally(() => {
         flags.busy = false;
         cv.disabled = false;
+        cv.value = '';
       });
   });
   body.append(cvField);
@@ -505,7 +466,8 @@ export function buildChatGpt(s: NetworkState): HTMLElement {
       button(
         'Delete CV',
         async () => {
-          if (confirm('Delete your CV text from this device?')) await act({ kind: 'network', action: 'deleteCv' }, 'CV deleted.');
+          if (confirm('Delete your CV (text and file) from this device? Applications cannot be filled without it.'))
+            await act({ kind: 'network', action: 'deleteCv' }, 'CV deleted.');
         },
         'btn sm ghost danger',
       ),

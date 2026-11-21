@@ -45,6 +45,7 @@ import {
   saveApiConfig,
 } from './network-ai';
 import { validatedDossier } from '../shared/dossier';
+import { clearApplyData, saveCvFile, CV_FILE_KEY } from './apply';
 
 const authorization = z.object({ kind: z.literal('network.authorize'), id: z.uuid(), claim: z.boolean() });
 async function importProfile(): Promise<void> {
@@ -79,6 +80,7 @@ async function importProfile(): Promise<void> {
 }
 async function clearAllNetwork(): Promise<void> {
   await remove('meta', networkKey);
+  await clearApplyData();
   await clearAiJobs();
   await remove('meta', 'network-tab');
 }
@@ -434,6 +436,7 @@ export function registerNetworkMessages(): void {
           if (current.active) throw new Error('Pause outreach before changing your CV.');
           if (!current.profile) throw new Error('Read your own LinkedIn profile before adding a CV so text is linked to the right owner.');
           await clearAiJobs();
+          if (req.file) await saveCvFile({ name: req.name, type: req.type || 'application/pdf', data: req.file });
           await updateNetwork(s => ({
             ...s,
             cv: {
@@ -453,13 +456,14 @@ export function registerNetworkMessages(): void {
               void oldNote;
               return { ...rest, message: '' };
             }),
-            status: `CV saved (${req.text.length.toLocaleString()} characters, text only). ChatGPT will use it when you ask it to rewrite a message.`,
+            status: `CV saved (${req.text.length.toLocaleString()} characters${req.file ? '' : ', text only'}). ${req.file ? 'The file is kept on this device for application forms.' : 'Upload the file again to use it in application forms.'}`,
           }));
         }
         if (req.action === 'deleteCv') {
           if (current.active) throw new Error('Pause outreach before deleting your CV.');
           await clearAiJobs();
-          await updateNetwork(s => ({ ...s, cv: null, dossier: '', dossierSavedAt: 0, status: 'CV text deleted from this device.' }));
+          await remove('meta', CV_FILE_KEY);
+          await updateNetwork(s => ({ ...s, cv: null, dossier: '', dossierSavedAt: 0, status: 'CV deleted from this device.' }));
         }
         if (req.action === 'analyze') {
           if (current.active) throw new Error('Pause outreach before reprocessing the owner dossier.');

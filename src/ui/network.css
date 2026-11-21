@@ -1858,3 +1858,76 @@ details.person-row > .person .person-head {
   color: inherit;
   font-size: 14px;
 }
+
+/* ---------- Fill this application ---------- */
+.apply-card {
+  border: 1px solid var(--primary-soft);
+  display: grid;
+  gap: 10px;
+}
+.apply-card.quiet {
+  border-color: var(--border);
+}
+.apply-card .card-title {
+  margin: 2px 0 0;
+}
+.apply-head {
+  display: grid;
+  gap: 2px;
+}
+.apply-progress {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: var(--muted);
+}
+.apply-msg {
+  margin: 0;
+}
+.apply-msg.bad {
+  color: var(--bad);
+}
+.apply-list,
+.apply-ask {
+  display: grid;
+  gap: 6px;
+}
+.apply-ask {
+  background: var(--warn-soft);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+}
+.apply-item {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border-left: 3px solid var(--border);
+}
+.apply-item.done {
+  border-left-color: var(--ok);
+}
+.apply-item.check {
+  border-left-color: var(--warn);
+}
+.apply-item.you {
+  border-left-color: var(--primary);
+}
+.apply-label {
+  font-weight: 600;
+}
+.apply-value {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.apply-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.apply-photo {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: cover;
+}
