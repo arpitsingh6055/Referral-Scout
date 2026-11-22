@@ -210,8 +210,9 @@ export function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
         'btn sm ghost',
       ),
     );
+  // Their profile is one press away on every card, whatever the stage.
+  actions.append(link('Open profile ↗', p.url, 'btn sm'));
   if (p.state === 'attention') {
-    actions.append(link('Open on LinkedIn ↗', p.url, 'btn sm'));
     if (p.followOnly) actions.append(button('Follow', () => act({ kind: 'network', action: 'followNow', url: p.url }), 'btn sm primary'));
     // A follow-only reading can be wrong (a page that painted slowly), so it can be re-checked.
     if (!p.emailRequired)

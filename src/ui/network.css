@@ -2001,3 +2001,15 @@ details.person-row > .person .person-head {
 .fine.warn {
   color: #b45309;
 }
+.person-row-name {
+  font-weight: 700;
+  color: inherit;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.person-row-name:hover,
+.person-row-name:focus-visible {
+  text-decoration: underline;
+}

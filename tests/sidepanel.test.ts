@@ -511,7 +511,11 @@ it('shows a way forward under Needs you, a preview of what will be sent, and nev
       },
     ],
   });
-  expect(byText('a', 'Open on LinkedIn')!.getAttribute('href')).toContain('/in/');
+  expect(byText('a', 'Open profile')!.getAttribute('href')).toContain('/in/');
+  // In the job's list the name itself opens the profile too (the card's own header is hidden there).
+  const names = [...document.querySelectorAll<HTMLAnchorElement>('a.person-row-name')];
+  expect(names.length).toBeGreaterThan(0);
+  expect(names.every(a => a.href.includes('/in/') && a.target === '_blank')).toBe(true);
   expect(byText('button', 'Try again')).toBeTruthy();
   expect(byText('details.inline', 'Preview what will be sent')!.textContent).toContain('Ops Intern');
   expect(byText('button', 'Save changes')).toBeTruthy();

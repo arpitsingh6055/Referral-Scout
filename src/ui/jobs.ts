@@ -505,7 +505,11 @@ export function buildReferrals(s: NetworkState): HTMLElement {
         const row = node('details', '', 'person-row'),
           summary = node('summary'),
           who = node('span', '', 'person-row-who');
-        who.append(node('b', p.name), node('span', p.headline, 'muted small'));
+        // The name opens their LinkedIn profile in a new tab; the rest of the row opens the details below.
+        const name = link(p.name, p.url, 'person-row-name');
+        name.title = `Open ${p.name}'s LinkedIn profile`;
+        name.addEventListener('click', e => e.stopPropagation());
+        who.append(name, node('span', p.headline, 'muted small'));
         summary.append(
           who,
           node('span', p.outcome ? outcomeLabels[p.outcome] : stateLabels[p.state], `badge ${p.outcome ? 'connected' : p.state}`),
