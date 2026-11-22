@@ -21,6 +21,7 @@ import {
   matchOption,
   applyError,
   sameApplication,
+  outboundUrl,
   needsWork,
   localPlan,
   wantsThinking,
@@ -89,6 +90,12 @@ export interface ApplySession {
   form?: FormField[];
   /** The job description read from the page, kept for rewriting one answer on request. */
   jobText?: string;
+  /** On a company's site reached from LinkedIn: the LinkedIn tab the application started in. */
+  from?: number;
+  /** On LinkedIn: the tab where the company's own application is being filled. */
+  handoff?: { tabId: number; host: string };
+  /** The site asked to sign in or create an account: filling carries on once the form shows. */
+  waitSignIn?: boolean;
 }
 export const fileFromBase64Size = (data: string): number => Math.floor((data.length * 3) / 4);
 
@@ -319,6 +326,8 @@ export interface Detect {
   history: { title: string; company: string; url: string; at: number }[];
   /** Applications sent since midnight, for the gentle daily limit on assisted applying. */
   today: number;
+  /** A LinkedIn job applied for on the company's site: where its Apply link leads. */
+  external: { url: string; host: string; origin: string; permission: boolean } | null;
   /** The last ChatGPT task's outcome, when it pointed at a problem with ChatGPT's page. */
   aiHealth: AiHealth | null;
   profile: ApplyProfile;
@@ -352,6 +361,27 @@ function startOfToday(): number {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   return d.getTime();
+}
+const externalCheck = new Map<string, { dest: string; at: number }>();
+/** Where a LinkedIn job's "Apply on company website" leads, read from the link itself (LinkedIn is always readable). */
+async function externalFor(tabId: number | undefined, url: string): Promise<Detect['external']> {
+  if (tabId === undefined || pageKindFromUrl(url) !== 'linkedin-job') return null;
+  const key = url.split('#')[0]!;
+  const seen = externalCheck.get(key);
+  let dest = seen?.dest ?? '';
+  // A found link is kept; "none" is checked again after a while, since the job's details may still have been loading.
+  if (!seen || (!seen.dest && Date.now() - seen.at > 15000)) {
+    const links = await inFrames(
+      tabId,
+      () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.externalApply(false) ?? '',
+    );
+    dest = outboundUrl(links.find(l => l.result)?.result ?? '');
+    externalCheck.set(key, { dest, at: Date.now() });
+    if (externalCheck.size > 200) externalCheck.delete(externalCheck.keys().next().value!);
+  }
+  if (!dest) return null;
+  const u = new URL(dest);
+  return { url: dest, host: u.host.replace(/^www\./, ''), origin: u.origin, permission: await allowed(u.origin) };
 }
 const formCheck = new Map<string, boolean>();
 /** A page outside known job sites counts as an application when it has a form of several fields or a CV upload. */
@@ -402,7 +432,12 @@ async function detect(tabId?: number, withPhoto = false): Promise<Detect> {
     if (await checkSubmitted(session.tabId).catch(() => false)) session = await loadSession(session.tabId);
   }
   // The tab moved to another job (LinkedIn changes the job in the same tab): the old fill no longer applies.
-  if (session && url && !sameApplication(session.url, url)) {
+  // Waiting for a sign-in: checked on every panel refresh too, since a single-page site may not reload after it.
+  if (session?.waitSignIn && !isRunning(session.tabId)) await resumeAfterSignIn(session.tabId).catch(() => undefined);
+  // A company site's application may move between addresses (the job page, a separate form site, a sign-in page) while
+  // it is filled or waits for a sign-in: kept then. On LinkedIn a different job always ends the old fill.
+  const keep = session && !/linkedin\.com/.test(url) && (isRunning(session.tabId) || session.waitSignIn || session.from !== undefined);
+  if (session && url && !keep && !sameApplication(session.url, url)) {
     runs.get(session.tabId)?.abort();
     await remove('meta', sessionKey(session.tabId));
     session = undefined;
@@ -426,6 +461,7 @@ async function detect(tabId?: number, withPhoto = false): Promise<Detect> {
     session: session ? sessionView(session) : null,
     history: history.slice(0, 15),
     today: history.filter(h => h.at >= since).length,
+    external: session && session.stage !== 'error' ? null : await externalFor(tab?.id, url),
     aiHealth: health && !health.ok ? health : null,
     profile,
   };
@@ -469,6 +505,12 @@ async function captureJob(tabId: number, url: string): Promise<void> {
   }));
 }
 
+async function resumeAfterSignIn(tabId: number): Promise<void> {
+  const still = await inFrames(tabId, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.signIn() ?? false);
+  if (still.some(r => r.result) || isRunning(tabId)) return;
+  await update(tabId, x => ({ ...x, waitSignIn: false, stage: 'reading', message: 'Signed in. Reading the application form…' }));
+  void run(tabId, signal => autoRun(tabId, signal, 1));
+}
 /**
  * Checks, once the last step was reached, whether the site confirmed the application (LinkedIn's "Application sent",
  * a thank-you page). Then the application is recorded and, unless the person turned it off, the referral search for
@@ -502,6 +544,15 @@ export async function checkSubmitted(tabId: number): Promise<boolean> {
     sent,
     message: job?.company ? `Application sent to ${job.company}.` : 'Application sent.',
   }));
+  // Started on LinkedIn: that tab's card shows the same result, so the referral step is offered wherever the person looks.
+  if (s.from !== undefined && (await loadSession(s.from))?.handoff?.tabId === tabId)
+    await update(s.from, x => ({
+      ...x,
+      stage: 'submitted',
+      sent,
+      ...(job ? { job } : {}),
+      message: job?.company ? `Application sent to ${job.company} on its own site.` : 'Application sent on the company’s site.',
+    }));
   return true;
 }
 async function startReferral(job: ApplySession['job'], appliedAt: number): Promise<NonNullable<ApplySession['sent']>> {
@@ -559,6 +610,171 @@ async function editAnswer(tabId: number, id: string, value: string, why: string)
   }));
 }
 /** Fills the step on screen. advance: true when nothing is left for the person and the site has a Next button. */
+/** Runs one content-script call in every frame and returns the results that came back. */
+async function inFrames<T>(tabId: number, func: () => T): Promise<{ frameId: number; result: Awaited<T> }[]> {
+  await inject(tabId).catch(() => undefined);
+  const r = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func }).catch(() => []);
+  return r.map(x => ({ frameId: x.frameId, result: x.result as Awaited<T> }));
+}
+const pause = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => (clearTimeout(t), reject(signal.reason)), { once: true });
+  });
+/**
+ * On a company's own site: clears the cookie banner, opens the application form from the job's page (pressing
+ * "Apply", then "Apply manually" where a site asks how to apply), and stops at a sign-in or account page, which only
+ * the person may complete. Only at the first step of a fill, so a button on a later step is never mistaken for it.
+ */
+async function openCompanyApplication(tabId: number, signal: AbortSignal): Promise<'form' | 'signin' | 'none'> {
+  const s0 = await loadSession(tabId);
+  const firstStep = !!s0 && s0.stepCount <= 1 && !s0.filled.length && !s0.files.length;
+  for (let i = 0; i < 4; i++) {
+    if (
+      (
+        await inFrames(tabId, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.dismissCookies() ?? false)
+      ).some(r => r.result)
+    )
+      await pause(600, signal);
+    if (
+      (await inFrames(tabId, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.signIn() ?? false)).some(
+        r => r.result,
+      )
+    ) {
+      const host = (() => {
+        try {
+          return new URL(s0?.url ?? '').host;
+        } catch {
+          return 'this site';
+        }
+      })();
+      await update(tabId, x => ({
+        ...x,
+        stage: 'review',
+        waitSignIn: true,
+        message: `${host} asks you to sign in or create an account before applying. Do that in this tab (Referral Scout never types passwords); filling carries on by itself once the application form shows.`,
+      }));
+      return 'signin';
+    }
+    if (!firstStep) return 'form';
+    const looks = await inFrames(
+      tabId,
+      () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.openApplication(false) ?? 'none',
+    );
+    if (looks.some(r => r.result === 'form')) return 'form';
+    const target = looks.find(r => r.result === 'opened');
+    if (!target) return 'none';
+    await update(tabId, x => ({ ...x, stage: 'opening', message: 'Opening the application form…' }));
+    await inFrame(tabId, target.frameId, () =>
+      (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.openApplication(true),
+    );
+    // The form opens on the same page, on a new page, or (on some sites) in a new tab: wait for the page to settle.
+    await pause(1500, signal);
+    for (let w = 0; w < 20; w++) {
+      const t = await chrome.tabs.get(tabId).catch(() => undefined);
+      if (!t || t.status === 'complete') break;
+      await pause(500, signal);
+    }
+    await pause(800, signal);
+  }
+  return 'form';
+}
+/**
+ * A LinkedIn job applied for on the company's site. Presses LinkedIn's own Apply (so LinkedIn records it), follows the
+ * tab it opens to the company's site, and carries on filling there, with the LinkedIn job kept for the referral step.
+ * Without permission for that site the new tab asks for it with one button; nothing is read there before.
+ */
+async function handOff(tabId: number, url: string, jobText: string, signal: AbortSignal): Promise<void> {
+  await captureJob(tabId, url);
+  if (jobText) await update(tabId, x => ({ ...x, jobText: jobText.slice(0, 7000) }));
+  const links = await inFrames(
+    tabId,
+    () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.externalApply(false) ?? '',
+  );
+  const link = links.find(l => l.result);
+  if (!link)
+    throw new Error('LinkedIn’s Apply button for the company site was not found. Open the job so its details show, then press Fill again.');
+  const dest = outboundUrl(link.result);
+  await update(tabId, x => ({ ...x, stage: 'opening', message: 'Opening the company’s application page…' }));
+  // LinkedIn opens the site in a new tab: watch for a tab opened from this one.
+  let opened: number | undefined;
+  const onCreated = (t: chrome.tabs.Tab) => {
+    if (t.openerTabId === tabId && t.id !== undefined && opened === undefined) opened = t.id;
+  };
+  chrome.tabs.onCreated.addListener(onCreated);
+  try {
+    await inFrame(tabId, link.frameId, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.externalApply(true));
+    // Chrome may block a tab opened by a script's click as a pop-up: then the destination is opened directly below.
+    for (let i = 0; i < 8 && opened === undefined; i++) await pause(500, signal);
+  } finally {
+    chrome.tabs.onCreated.removeListener(onCreated);
+  }
+  // No new tab (a pop-up blocker, or the site opened in this same tab): open the destination ourselves.
+  let target = opened;
+  if (target === undefined) {
+    const now = await chrome.tabs.get(tabId).catch(() => undefined);
+    if (now?.url && !/linkedin\.com/.test(now.url)) target = tabId;
+    else if (dest) target = (await chrome.tabs.create({ url: dest, openerTabId: tabId, active: true })).id;
+  }
+  if (target === undefined)
+    throw new Error('The company’s application page did not open. Press Apply on LinkedIn, then press Fill on that page.');
+  // Wait for LinkedIn's redirect to reach the company's site; a "you are leaving LinkedIn" page is passed by opening the destination.
+  let page = '';
+  for (let i = 0; i < 40; i++) {
+    const t = await chrome.tabs.get(target).catch(() => undefined);
+    if (!t) throw new Error('The company’s application tab was closed.');
+    page = t.url || t.pendingUrl || '';
+    if (page && !/^https?:\/\/([^/]+\.)?linkedin\.com\//.test(page) && !/^(about|chrome):/.test(page) && t.status === 'complete') break;
+    if (i === 10 && /linkedin\.com\/(safety\/go|redir)/.test(page) && dest) await chrome.tabs.update(target, { url: dest });
+    await pause(500, signal);
+  }
+  if (!page || /linkedin\.com/.test(page))
+    throw new Error('The company’s application page did not finish opening. Press Fill on that page when it loads.');
+  const host = new URL(page).host;
+  const linkedinSession = await loadSession(tabId);
+  await write(sessionKey(target), {
+    tabId: target,
+    url: page,
+    stage: 'reading',
+    message: `Opening the application on ${host}…`,
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+    stageSince: Date.now(),
+    step: '',
+    stepCount: 1,
+    summary: linkedinSession?.job?.title
+      ? `${linkedinSession.job.title}${linkedinSession.job.company ? ` · ${linkedinSession.job.company}` : ''}`
+      : '',
+    filled: [],
+    files: [],
+    ask: [],
+    leftForYou: [],
+    hasNext: false,
+    hasSubmit: false,
+    captcha: false,
+    from: tabId,
+    ...(linkedinSession?.job ? { job: linkedinSession.job } : {}),
+    ...(linkedinSession?.jobText ? { jobText: linkedinSession.jobText } : {}),
+  } satisfies ApplySession);
+  if (target !== tabId)
+    await update(tabId, x => ({
+      ...x,
+      stage: 'done',
+      handoff: { tabId: target, host },
+      message: `This job is applied for on ${host}. Referral Scout opened it in a new tab and is filling the application there.`,
+    }));
+  if (!(await allowed(originOf(page)))) {
+    await update(target, x => ({
+      ...x,
+      stage: 'permission',
+      needOrigins: [originOf(page)],
+      message: `To fill this application, allow Referral Scout on ${host}. It reads the form only while it fills it.`,
+    }));
+    return;
+  }
+  // The new tab gets its own run; this one (the LinkedIn tab) is finished.
+  void run(target, sig => autoRun(target, sig, 1));
+}
 async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Promise<{ advance: boolean } | void> {
   const tab = await chrome.tabs.get(tabId);
   const url = tab.url ?? '';
@@ -575,6 +791,10 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
   const linkedin = kind === 'linkedin-job';
   // LinkedIn may put a "Job search safety reminder" in front of the form: pass it, the person need not see it.
   if (linkedin) await passInterstitials(tabId);
+  if (!linkedin) {
+    const opened = await openCompanyApplication(tabId, signal);
+    if (opened === 'signin') return;
+  }
   let frames = await scanAll(tabId, linkedin);
   let page = merge(frames, url, tab.title ?? '');
   if (!page.form.length && (page.hasNext || page.hasSubmit)) {
@@ -630,10 +850,7 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
     }
     if (opened === 'none')
       throw new Error('The Easy Apply button was not found on this job. Open the job so its details show, then press Fill again.');
-    if (opened === 'external')
-      throw new Error(
-        'This job is applied for on the company’s own site. Press Apply on LinkedIn, then press "Fill this application" on the page that opens.',
-      );
+    if (opened === 'external') return void (await handOff(tabId, url, page.job, signal));
     if (opened === 'opened') {
       await update(tabId, s => ({ ...s, stage: 'opening', message: 'Opening Easy Apply…' }));
       for (let i = 0; i < 12 && !page.form.length; i++) {
@@ -946,6 +1163,10 @@ async function start(tabId: number, attempt = 1): Promise<void> {
     hasNext: false,
     hasSubmit: false,
     captcha: false,
+    // A fill handed over from LinkedIn keeps the LinkedIn job (for the referral step) and its description.
+    ...(same && old.from !== undefined
+      ? { from: old.from, ...(old.job ? { job: old.job } : {}), ...(old.jobText ? { jobText: old.jobText } : {}) }
+      : {}),
   } satisfies ApplySession);
   void run(tabId, signal => autoRun(tabId, signal, attempt));
 }
@@ -1142,6 +1363,9 @@ export function registerApplyMessages(): void {
     void loadSession(tabId).then(s => {
       if (s && !s.sent && s.hasSubmit && !s.hasNext && !isRunning(tabId))
         setTimeout(() => void checkSubmitted(tabId).catch(() => undefined), 1500);
+      // Signed in: once a page finishes loading without a password field, the fill picks up where it stopped.
+      if (s?.waitSignIn && (info.status === 'complete' || info.url) && !isRunning(tabId))
+        setTimeout(() => void resumeAfterSignIn(tabId).catch(() => undefined), 1500);
     });
   });
   chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {

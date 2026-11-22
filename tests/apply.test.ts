@@ -16,6 +16,7 @@ import {
   wantsThinking,
   applyError,
   rewritePrompt,
+  outboundUrl,
   type FormField,
 } from '../src/shared/apply';
 import type { ApplyApi } from '../src/content/apply';
@@ -735,5 +736,85 @@ describe('a job already applied to', () => {
     expect(api.openEasyApply(false)).toBe('applied');
     document.querySelector('main')!.innerHTML = '<h1>Product Manager</h1><button aria-label="Easy Apply to this job">Easy Apply</button>';
     expect(api.openEasyApply(false)).toBe('opened');
+  });
+});
+
+describe('applying on the company’s own site', () => {
+  const load = async (html: string) => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    Element.prototype.scrollIntoView = function () {};
+    document.body.innerHTML = html;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    return (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+  };
+  it('finds LinkedIn’s "Apply on company website" link (November 2026 markup) and where it really leads', async () => {
+    const go =
+      'https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fwww.rubrik.com%2Fcompany%2Fcareers%2Fdepartments%2Fjob.8345283%3Fgh_jid%3D8345283&urlhash=x&isSdui=true';
+    const api = await load(`
+      <div componentkey="job-card-component-ref-1"><a href="/jobs/view/1/">Other job · Apply</a></div>
+      <main><h1>Product Management Intern</h1>
+        <a aria-label="Apply on company website" target="_blank" href="${go}">Apply</a></main>`);
+    let clicked = 0;
+    document.querySelector('main a')!.addEventListener('click', e => {
+      e.preventDefault();
+      clicked++;
+    });
+    expect(api.externalApply(false)).toBe(go);
+    expect(clicked).toBe(0); // looking never presses it
+    api.externalApply(true);
+    expect(clicked).toBe(1);
+    expect(outboundUrl(go)).toBe('https://www.rubrik.com/company/careers/departments/job.8345283?gh_jid=8345283');
+    expect(outboundUrl('https://www.linkedin.com/safety/go/?url=javascript%3Aalert(1)')).toBe('');
+    expect(outboundUrl('https://jobs.lever.co/acme/123')).toBe('https://jobs.lever.co/acme/123');
+  });
+  it('opens the form from a job page, but never presses an Apply that would send a form', async () => {
+    const api = await load(`
+      <header><input type="search" aria-label="Search jobs"></header>
+      <h1>Product Intern</h1><p>About the role…</p>
+      <a href="/acme/123/apply" class="postings-btn">Apply for this job</a>`);
+    const link = document.querySelector('a')!;
+    let opened = 0;
+    link.addEventListener('click', e => {
+      e.preventDefault();
+      opened++;
+    });
+    expect(api.openApplication(false)).toBe('opened');
+    expect(api.openApplication(true)).toBe('opened');
+    expect(opened).toBe(1);
+    expect(api.openApplication(true)).toBe('none'); // pressed once, never again
+    const form = await load(`
+      <form><label for="n">Name</label><input id="n"><label for="e">Email</label><input id="e" type="email">
+        <button type="submit">Apply</button></form>`);
+    expect(form.openApplication(true)).toBe('none');
+    const full = await load(
+      `<form><input aria-label="First name"><input aria-label="Last name"><input aria-label="Email"><input type="file" aria-label="Resume"></form>`,
+    );
+    expect(full.openApplication(false)).toBe('form');
+  });
+  it('skips "apply with LinkedIn" and picks "Apply manually" where a site asks how to apply', async () => {
+    const api = await load(`
+      <div role="dialog"><button>Autofill with Resume</button><button>Apply with LinkedIn</button><button>Apply Manually</button></div>`);
+    const picked: string[] = [];
+    document.querySelectorAll('button').forEach(b => b.addEventListener('click', () => picked.push(b.textContent!)));
+    api.openApplication(true);
+    expect(picked).toEqual(['Apply Manually']);
+  });
+  it('declines optional cookies and notices a sign-in page', async () => {
+    const api = await load(`
+      <div class="cookie-banner"><button>Accept all</button><button>Reject all</button></div>
+      <form><input type="email" aria-label="Email"><input type="password" aria-label="Password"><button>Sign in</button></form>`);
+    const pressed: string[] = [];
+    document.querySelectorAll('button').forEach(b => b.addEventListener('click', e => (e.preventDefault(), pressed.push(b.textContent!))));
+    expect(api.dismissCookies()).toBe(true);
+    expect(pressed).toEqual(['Reject all']);
+    expect(api.signIn()).toBe(true);
+    const form = await load(
+      `<form>${['First name', 'Last name', 'Email', 'Phone', 'City', 'LinkedIn'].map(l => `<input aria-label="${l}">`).join('')}<input type="password" aria-label="Create a password (optional)"></form>`,
+    );
+    expect(form.signIn()).toBe(false); // a long application with an optional account box is still the application
   });
 });

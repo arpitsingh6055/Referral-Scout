@@ -57,6 +57,17 @@ export interface ApplyApi {
   jobMeta(): { title: string; company: string; location: string; companyUrl: string };
   /** On a LinkedIn job list: opens the next Easy Apply job not yet applied to. Returns its job id, or '' when none. */
   openNextJob(): string;
+  /** On a LinkedIn job applied for on the company's site: the "Apply on company website" link (its address), pressed when click. */
+  externalApply(click?: boolean): string;
+  /**
+   * On a company's job page: 'form' when an application form is already showing; otherwise presses the control that
+   * opens it ("Apply", "Apply for this job", "Apply manually") and says 'opened'. Never a button that sends a form.
+   */
+  openApplication(click?: boolean): 'form' | 'opened' | 'none';
+  /** Declines optional cookies on a site's cookie banner, so it does not cover the form. True when it pressed one. */
+  dismissCookies(): boolean;
+  /** True when the page asks to sign in or create an account (a password field on a short form). */
+  signIn(): boolean;
 }
 const VERSION = 10;
 const scope = globalThis as typeof globalThis & { __referralScoutApply?: ApplyApi };
@@ -880,6 +891,68 @@ function create(): ApplyApi {
       if (box.checked) return 'already';
       box.click();
       return box.checked ? 'checked' : 'none';
+    },
+    externalApply(click = true) {
+      const cards = '[componentkey^="job-card-component-ref-"], [data-job-id], .job-card-container, .jobs-search-results-list';
+      const links = [...document.querySelectorAll<HTMLElement>('a[href], button')].filter(b => visible(b) && !b.closest(cards));
+      const name = (b: HTMLElement) => clean(b.getAttribute('aria-label')) || clean(b.textContent);
+      // Checked live (22 Nov 2026): <a aria-label="Apply on company website" target="_blank" href="/safety/go/?url=...">Apply</a>.
+      const link =
+        links.find(b => /^apply on (the )?company('s)? (web)?site/i.test(name(b))) ??
+        links.find(b => /^apply( now)?$/i.test(name(b)) && /\/safety\/go\/|\/redir\//.test(b.getAttribute('href') ?? ''));
+      if (!link) return '';
+      const href = link instanceof HTMLAnchorElement ? link.href : 'button';
+      if (click) link.click();
+      return href;
+    },
+    openApplication(click = true) {
+      const fields = [
+        ...document.querySelectorAll<HTMLElement>(
+          'input:not([type="hidden"]):not([type="search"]):not([type="submit"]):not([type="button"]):not([type="image"]):not([type="reset"]), select, textarea',
+        ),
+      ].filter(visible);
+      if (fields.length >= 3 || fields.some(f => (f as HTMLInputElement).type === 'file')) return 'form';
+      const OPEN =
+        /^(apply|apply now|apply here|apply online|apply for (this|the) (job|position|role|opening)|apply to (this|the) (job|position|role)|apply for job|apply manually|start (my |your )?application|begin (my |your )?application|i'?m interested|submit (your |my )?(cv|resume))$/i;
+      const name = (b: HTMLElement) =>
+        (clean(b.getAttribute('aria-label')) || clean(b.textContent) || clean((b as HTMLInputElement).value)).replace(/[›→>]+$/, '').trim();
+      const controls = [
+        ...document.querySelectorAll<HTMLElement>('a, button, [role="button"], input[type="button"], input[type="submit"]'),
+      ].filter(visible);
+      const pick = controls.find(b => {
+        if (!OPEN.test(name(b)) || b.hasAttribute('data-rs-opened')) return false; // each control is pressed once
+        // Signing in through another account (LinkedIn, Indeed, Google) or a resume autofill is never chosen for the person.
+        if (/linkedin|indeed|google|facebook|seek|autofill/i.test(`${name(b)} ${b.getAttribute('href') ?? ''}`)) return false;
+        // A button inside a form that already holds fields would send that form: never pressed.
+        const form = b.closest('form');
+        return !(form && [...form.querySelectorAll('input:not([type="hidden"]), select, textarea')].some(visible));
+      });
+      if (!pick) return 'none';
+      if (click) {
+        pick.setAttribute('data-rs-opened', '1');
+        pick.scrollIntoView({ block: 'center' });
+        pick.click();
+      }
+      return 'opened';
+    },
+    dismissCookies() {
+      const REJECT =
+        /^(reject all|reject( all)? (non-essential|optional|additional)( cookies)?|reject cookies|decline( all)?( cookies)?|deny( all)?|refuse all|necessary (cookies )?only|only (necessary|essential|required)( cookies)?|use (only )?(necessary|essential) cookies( only)?|essential (cookies )?only|continue without accepting|allow (only )?(necessary|essential|required)( cookies)?)$/i;
+      const b = [...document.querySelectorAll<HTMLElement>('button, a[role="button"], [role="button"]')].find(
+        x => visible(x) && REJECT.test(clean(x.textContent) || clean(x.getAttribute('aria-label'))),
+      );
+      if (!b) return false;
+      b.click();
+      return true;
+    },
+    signIn() {
+      const all = [
+        ...document.querySelectorAll<HTMLInputElement>(
+          'input:not([type="hidden"]):not([type="submit"]):not([type="button"]), select, textarea',
+        ),
+      ].filter(visible);
+      const pw = all.filter(i => i instanceof HTMLInputElement && i.type === 'password');
+      return pw.length > 0 && all.length - pw.length <= 4;
     },
     openNextJob() {
       const current = new URL(location.href).searchParams.get('currentJobId') ?? /\/jobs\/view\/(\d+)/.exec(location.pathname)?.[1] ?? '';

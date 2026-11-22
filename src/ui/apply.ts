@@ -316,11 +316,13 @@ function draw(d: Detect): void {
     card.append(
       node(
         'p',
-        d.kind === 'linkedin-job'
-          ? 'Fills every Easy Apply step and moves on by itself, using what LinkedIn already has, your saved answers and ChatGPT for the rest. It stops at the final review: you press Submit.'
-          : d.kind === 'other'
-            ? 'If this page is a job application, ChatGPT can fill it from your profile and CV. You review it and submit it yourself.'
-            : 'Fills the form and moves through its steps by itself, from your profile, CV and saved answers, with ChatGPT for anything new. It stops at the final review: you press Submit.',
+        d.external
+          ? `This job is applied for on ${d.external.host}. Referral Scout presses Apply, opens the company’s page, finds the application form and fills every step there, with your CV attached. It stops at the final review: you press Submit.`
+          : d.kind === 'linkedin-job'
+            ? 'Fills every Easy Apply step and moves on by itself, using what LinkedIn already has, your saved answers and ChatGPT for the rest. It stops at the final review: you press Submit.'
+            : d.kind === 'other'
+              ? 'If this page is a job application, ChatGPT can fill it from your profile and CV. You review it and submit it yourself.'
+              : 'Fills the form and moves through its steps by itself, from your profile, CV and saved answers, with ChatGPT for anything new. It stops at the final review: you press Submit.',
         'card-sub',
       ),
     );
@@ -332,14 +334,31 @@ function draw(d: Detect): void {
       return;
     }
     const row = node('div', '', 'row');
+    const ext = d.external;
     row.append(
-      button(
-        d.permission ? 'Fill this application' : `Allow on ${host(d.origin)} and fill`,
-        () => startFill(d),
-        d.kind === 'other' ? 'btn sm' : 'btn primary',
-      ),
+      ext
+        ? button(
+            `Apply on ${ext.host} and fill`,
+            async () => {
+              // Asked now, while the button press allows it: the company's site cannot be read without it. If the person
+              // declines, the company's tab still opens and asks again there.
+              if (!ext.permission) await chrome.permissions.request({ origins: [`${ext.origin}/*`] }).catch(() => false);
+              await startFill(d);
+            },
+            'btn primary',
+            `Opening ${ext.host}…`,
+          )
+        : button(
+            d.permission ? 'Fill this application' : `Allow on ${host(d.origin)} and fill`,
+            () => startFill(d),
+            d.kind === 'other' ? 'btn sm' : 'btn primary',
+          ),
     );
     card.append(row);
+    if (ext && !ext.permission)
+      card.append(
+        node('p', `Chrome asks once to allow ${ext.host}. Referral Scout reads that site only while it fills your application.`, 'fine'),
+      );
     if (!d.permission)
       card.append(
         node(
@@ -370,7 +389,8 @@ function draw(d: Detect): void {
   if (s.stage === 'permission') {
     const origins = s.needOrigins ?? [d.origin];
     card.append(node('p', s.message, 'card-sub'));
-    card.append(
+    const row = node('div', '', 'row');
+    row.append(
       button(
         `Allow ${origins.map(host).join(', ')}`,
         async () => {
@@ -378,6 +398,40 @@ function draw(d: Detect): void {
         },
         'btn primary',
       ),
+      // Company sites, their form providers (Greenhouse, Workday, Lever...) and their sign-in pages differ for every
+      // job: one permission for all of them lets an application run through without stopping at each new site.
+      button(
+        'Allow all job sites',
+        async () => {
+          if (await chrome.permissions.request({ origins: ['https://*/*'] })) await startFill({ ...d, permission: true });
+          else notify('error', 'Nothing was changed. You can still allow one site at a time.');
+        },
+        'btn sm ghost',
+      ),
+    );
+    card.append(
+      row,
+      node(
+        'p',
+        'Chrome describes "all job sites" as reading and changing data on every website. Referral Scout only reads a page when it fills an application you started, and you can remove this in Chrome’s extension settings.',
+        'fine',
+      ),
+    );
+    return;
+  }
+  if (s.stage === 'done' && s.handoff) {
+    const to = s.handoff;
+    card.append(node('p', s.message, 'card-sub'));
+    card.append(
+      button(
+        `Go to ${to.host}`,
+        async () => {
+          await chrome.tabs.update(to.tabId, { active: true });
+        },
+        'btn primary',
+        'Switched.',
+      ),
+      button('Close', async () => draw(await applyRequest({ kind: 'apply', action: 'stop' })), 'btn sm ghost', 'Closed.'),
     );
     return;
   }
@@ -813,6 +867,35 @@ export function buildApplySettings(): HTMLElement {
       testAiButton(),
     );
     slot.append(check);
+    const sites = node('div', '', 'field');
+    const all = await chrome.permissions.contains({ origins: ['https://*/*'] }).catch(() => false);
+    sites.append(
+      node('span', 'Company application sites', 'field-label'),
+      node(
+        'p',
+        all
+          ? 'Allowed on all job sites: applications on company sites run through without asking for each site.'
+          : 'Each company site is allowed once, when its application opens. Allow all job sites to never be stopped by this; Chrome calls it reading and changing data on every website, and Referral Scout only reads a page while it fills an application you started.',
+        'fine',
+      ),
+      all
+        ? button(
+            'Ask for each site again',
+            async () => {
+              await chrome.permissions.remove({ origins: ['https://*/*', 'http://*/*'] });
+              notify('success', 'Removed. Each company site will be asked for once.');
+            },
+            'btn sm ghost',
+          )
+        : button(
+            'Allow all job sites',
+            async () => {
+              if (await chrome.permissions.request({ origins: ['https://*/*'] })) notify('success', 'Allowed on all job sites.');
+            },
+            'btn sm',
+          ),
+    );
+    slot.append(sites);
     // CV
     const cvRow = node('div', '', 'field');
     cvRow.append(

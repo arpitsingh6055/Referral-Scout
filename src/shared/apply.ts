@@ -606,3 +606,17 @@ export const isWritten = (f: Pick<FormField, 'kind' | 'label'>): boolean =>
 
 /** LinkedIn watches for bursts of applications; past this many in a day the panel suggests a break. */
 export const DAILY_SOFT_CAP = 25;
+
+/** The real destination of a LinkedIn "Apply on company website" link (LinkedIn routes it through /safety/go/). */
+export function outboundUrl(href: string): string {
+  try {
+    const u = new URL(href);
+    if (/(^|\.)linkedin\.com$/.test(u.hostname) && /^\/(safety\/go|redir)/.test(u.pathname)) {
+      const to = new URL(u.searchParams.get('url') ?? '');
+      return to.protocol === 'https:' || to.protocol === 'http:' ? to.href : '';
+    }
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : '';
+  } catch {
+    return '';
+  }
+}
