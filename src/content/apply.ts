@@ -250,7 +250,8 @@ function stepOf(doc: Document, root: Element): string {
   const bar = root.querySelector('[role="progressbar"]');
   const now = bar?.getAttribute('aria-valuenow');
   const text = clean(root.textContent);
-  const match = text.match(/\bstep \d+ (of|\/) \d+\b/i) ?? text.match(/\b\d+ of \d+\b(?= steps?)/i);
+  const match =
+    text.match(/\bstep \d+ (of|\/) \d+\b/i) ?? text.match(/\b\d+ of \d+\b(?= steps?)/i) ?? text.match(/\b\d+\s*\/\s*\d+ pages?/i);
   const heading = clean(root.querySelector('h3, h2')?.textContent).slice(0, 80);
   return (
     [match?.[0], now ? `${Math.round(Number(now))}% complete` : '', heading].filter(Boolean).join(' · ') || clean(doc.title).slice(0, 80)
@@ -696,39 +697,24 @@ function create(): ApplyApi {
     },
     openEasyApply(click = true) {
       if (easyApplyDialog(document)) return 'open';
-      const controls = (scopeEl: ParentNode) =>
-        [...scopeEl.querySelectorAll<HTMLElement>('button, a, [role="button"]')].filter(
-          b =>
-            visible(b) &&
-            // The "Easy Apply" filter on job search is a toggle, not the job's button.
-            !b.hasAttribute('aria-pressed') &&
-            !b.closest('[role="radiogroup"], [aria-label*="filter" i], .search-reusables__filter-list, [class*="filter" i]'),
-        );
-      const isEasy = (b: HTMLElement) => /easy apply/i.test(buttonText(b));
-      const isApply = (b: HTMLElement) => /^apply\b|apply on company|apply now/i.test(buttonText(b));
-      // The job's own button sits near the job's title in the detail pane.
-      const titles = [
-        ...document.querySelectorAll('.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title, main h1, main h2'),
-      ].filter(visible);
-      for (const title of titles) {
-        let box: Element | null = title;
-        for (let depth = 0; box && depth < 8; depth++, box = box.parentElement) {
-          const found = controls(box);
-          const easy = found.find(isEasy);
-          if (easy) {
-            if (click) easy.click();
-            return 'opened';
-          }
-          if (found.some(isApply)) return 'external';
-        }
-      }
-      const any =
-        controls(document).find(b => /^easy apply to\b/i.test(b.getAttribute('aria-label') ?? '')) ?? controls(document).find(isEasy);
-      if (any) {
-        if (click) any.click();
+      // Only real buttons and links count. LinkedIn's job cards in the results list are clickable boxes that also say
+      // "Easy Apply" (pressing one only re-selects the job), and the "Easy Apply" search filter is a toggle.
+      const controls = [...document.querySelectorAll<HTMLElement>('button, a')].filter(
+        b =>
+          visible(b) &&
+          !b.hasAttribute('aria-pressed') &&
+          !b.closest('[componentkey^="job-card-component-ref-"], [data-job-id], .job-card-container, .jobs-search-results-list') &&
+          !b.closest('[role="radiogroup"], [aria-label*="filter" i], .search-reusables__filter-list'),
+      );
+      const label = (b: HTMLElement) => clean(b.getAttribute('aria-label'));
+      const own = (b: HTMLElement) => clean(b.textContent);
+      const easy =
+        controls.find(b => /^easy apply to\b/i.test(label(b))) ?? controls.find(b => /^easy apply$/i.test(own(b)) && !b.closest('form'));
+      if (easy) {
+        if (click) easy.click();
         return 'opened';
       }
-      return controls(document).some(isApply) ? 'external' : 'none';
+      return controls.some(b => /^apply( now)?$|^apply (on|to) (company|this)/i.test(label(b) || own(b))) ? 'external' : 'none';
     },
   };
 }

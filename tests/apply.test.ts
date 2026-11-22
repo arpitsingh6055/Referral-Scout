@@ -325,3 +325,45 @@ describe('LinkedIn Easy Apply', () => {
     expect(clicked).toBe('dialog');
   });
 });
+
+describe('LinkedIn Easy Apply, November 2026 markup', () => {
+  it('presses "Easy Apply to this job", never the job card that also says Easy Apply, and reads the dialog', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    document.body.innerHTML = `
+      <main>
+        <div componentkey="SearchResultsMainContent">
+          <div role="button" tabindex="0" componentkey="job-card-component-ref-4467186176">Selected, Founder’s Office Intern Weekday <a href="#">Easy Apply</a></div>
+        </div>
+        <h2>About the job</h2>
+        <div><div><button type="button" id="real" aria-label="Easy Apply to this job">Easy Apply</button><button>Save</button></div></div>
+      </main>`;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+    let pressed = '';
+    document.getElementById('real')!.addEventListener('click', () => {
+      pressed = 'real';
+      const d = document.createElement('dialog');
+      d.setAttribute('open', '');
+      d.setAttribute('data-testid', 'dialog');
+      d.innerHTML = `<h2 id="dialog-header">Apply to Weekday (YC W21)</h2><p>1/5 pages</p><h3>Contact info</h3>
+        <label for="a">First name*</label><input id="a" required value="Arpit">
+        <label for="b">Mobile phone number*</label><input id="b" type="tel" required>
+        <label for="c">Email address*</label><select id="c" required><option>Select an option</option><option>sarpit4545@gmail.com</option></select>
+        <button aria-label="Dismiss">x</button><button aria-label="Continue to next step">Next</button>`;
+      document.body.append(d);
+    });
+    document.querySelector('[componentkey^="job-card"]')!.addEventListener('click', () => (pressed = 'card'));
+    expect(api.scan({ linkedin: true }).easyApplyOpen).toBe(false);
+    expect(api.openEasyApply()).toBe('opened');
+    expect(pressed).toBe('real');
+    const snap = api.scan({ linkedin: true });
+    expect(snap.form.map(f => f.label)).toEqual(['First name', 'Mobile phone number', 'Email address']);
+    expect(snap.step).toMatch(/1\/5 pages/);
+    expect(snap.hasNext).toBe(true);
+    expect(api.openEasyApply(false)).toBe('open');
+  });
+});
