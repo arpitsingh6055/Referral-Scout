@@ -97,6 +97,7 @@ export interface FormField {
   help?: string;
   section?: string;
   maxLength?: number;
+  minLength?: number;
   accept?: string;
   sensitive?: Sensitive;
 }
@@ -195,6 +196,7 @@ const fieldForPrompt = (f: FormField) => ({
   ...(f.help ? { help: f.help.slice(0, 200) } : {}),
   ...(f.section ? { section: f.section } : {}),
   ...(f.maxLength ? { maxLength: f.maxLength } : {}),
+  ...(f.minLength ? { minLength: f.minLength } : {}),
   ...(f.accept ? { accept: f.accept } : {}),
   ...(f.sensitive ? { sensitive: f.sensitive } : {}),
 });
@@ -251,7 +253,7 @@ export function fillPrompt(input: {
     '9. Never decide to submit anything. You only fill fields.',
     '',
     'THE STANDARD FOR WRITTEN ANSWERS (any text or textarea that asks a question rather than a fact):',
-    'Length. Obey any limit stated in the label, help text or placeholder ("in one or two sentences", "100 words", "max 500 characters") and the field\u2019s maxLength, strictly. Without a stated limit: a one-line text box gets one sentence; a textarea gets 70 to 140 words; a cover letter box gets 180 to 250 words in three short paragraphs. Shorter and sharper beats longer.',
+    'Length. Obey any limit stated in the label, help text or placeholder ("in one or two sentences", "100 words", "max 500 characters") and the field\u2019s maxLength and minLength, strictly: maxLength counts characters including spaces, so aim for about 90% of it and never go over. Without a stated limit: a one-line text box gets one sentence; a textarea gets 70 to 140 words; a cover letter box gets 180 to 250 words in three short paragraphs. Shorter and sharper beats longer.',
     'Shape. Lead with the answer itself in the first sentence (the achievement, the reason, the fit), then the proof, then, only if there is room, one line tying it to this role. Every answer must contain at least one concrete, checkable detail from the background (a named project, employer, number or result) and, where the question allows, at least one concrete thing from this job (a responsibility, product, market or requirement named in the job text).',
     'By question type:',
     '- Most impressive thing / something you built or achieved: choose the single strongest achievement that is most relevant to this role (not a list). Say what it was, what the applicant personally did (specific verbs: built, designed, launched, cut, negotiated), its scale and its result in numbers, and in what setting. If the limit is one or two sentences, do exactly that in one or two sentences.',
@@ -260,6 +262,7 @@ export function fillPrompt(input: {
     '- Why should we hire you / what makes you a fit: map two or three of the role\u2019s top requirements to direct evidence, one sentence each.',
     '- Challenge, failure, conflict or leadership stories: situation in one line, the applicant\u2019s actions, the measurable result, and what they would repeat or change. Use only events from the background; if none fits, use the closest real one and set confidence "low".',
     '- Cover letter: first paragraph on why this role at this company in specific terms; second on the two strongest pieces of matching evidence; third a short close with availability if known. No "Dear Hiring Manager" unless the box is clearly a full letter.',
+    '- A note or message to the hiring team (for example LinkedIn\u2019s "Mark this job as a top choice" message, "Include a message with your application", "Anything else you want us to know"): two to four sentences in the applicant\u2019s voice. First why this specific role at this company is a top choice, naming something concrete from the job; then the one or two strongest proofs of fit from the background with a number; end on the applicant being ready to contribute. No greeting or sign-off unless the box looks like a letter.',
     '- Availability, notice period, relocation, salary and similar: facts only, from the details or earlier answers; otherwise "ask".',
     'Voice. First person, active voice, plain and confident, like a strong candidate speaking to a hiring manager. Numbers as digits. Name tools, domains and products precisely. Match the spelling of the job page. Plain text only: no markdown, no bullet points unless the field clearly asks for a list, no emojis.',
     'Never write: "passionate", "hardworking", "team player", "dynamic", "fast-paced", "synergy", "leverage", "spearheaded" (unless the applicant truly led it), "I believe I would be a great fit", "I am excited to apply", "dream company", "thrilled", "esteemed organisation", "learn and grow", or any sentence that restates the question. No contrast pivots such as "not just X but Y", no rhetorical questions, no em dashes, no lists of three adjectives, no placeholders like [Company].',
@@ -311,6 +314,15 @@ export interface FillPlan {
   /** Fields left to the person on purpose (sensitive), with the reason in plain words. */
   leftForYou: { id: string; label: string; reason: string }[];
   summary: string;
+}
+/** Shortens text to a limit at the end of a sentence, or else a word, never mid-word. */
+export function fitTo(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const sentence = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '));
+  if (sentence > max * 0.5) return cut.slice(0, sentence + 1);
+  const space = cut.lastIndexOf(' ');
+  return (space > max * 0.5 ? cut.slice(0, space) : cut).replace(/[,;:\s]+$/, '');
 }
 const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, ' ').trim();
 /** The listed option that a value names, matched loosely (case, spacing, a leading/trailing difference). */
@@ -379,7 +391,7 @@ export function planFromReply(json: unknown, form: FormField[], profile: ApplyPr
     } else {
       value = (Array.isArray(value) ? value.join(', ') : value).trim();
       if (!value) continue;
-      if (f.maxLength && value.length > f.maxLength) value = value.slice(0, f.maxLength);
+      if (f.maxLength && value.length > f.maxLength) value = fitTo(value, f.maxLength);
     }
     used.add(f.id);
     plan.fill.push({ id: f.id, frame: f.frame, kind: f.kind, label: f.label, value, confidence: item.confidence, why: item.why.trim() });
@@ -438,7 +450,7 @@ const DETAIL_FIELDS: [RegExp, keyof ApplyProfile['details']][] = [
 export function localPlan(
   fields: FormField[],
   profile: ApplyProfile,
-  ctx: { linkedinUrl: string; photo: boolean },
+  ctx: { linkedinUrl: string; photo: boolean; location?: string },
 ): Pick<FillPlan, 'fill' | 'files'> {
   const out: Pick<FillPlan, 'fill' | 'files'> = { fill: [], files: [] };
   for (const f of fields) {
@@ -454,6 +466,10 @@ export function localPlan(
     if (!value && /\blinked ?in\b/i.test(f.label) && /\b(url|profile|link)\b/i.test(f.label) && ctx.linkedinUrl) {
       value = ctx.linkedinUrl;
       why = 'Your LinkedIn profile';
+    }
+    if (!value && ctx.location && /\b(current )?(city|location)\b|where are you (based|located)/i.test(f.label) && !profile.details.city) {
+      value = ctx.location;
+      why = 'Your LinkedIn location';
     }
     if (!value)
       for (const [pattern, key] of DETAIL_FIELDS)

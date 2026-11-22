@@ -10,6 +10,7 @@ import {
   rememberedFor,
   sensitivity,
   needsWork,
+  fitTo,
   localPlan,
   wantsThinking,
   type FormField,
@@ -95,7 +96,7 @@ describe('checking ChatGPT’s answer before anything is typed', () => {
     expect(plan.fill.map(f => [f.id, f.value])).toEqual([
       ['a', 'Arpit'],
       ['b', '1-3'],
-      ['f', 'Because the mission '],
+      ['f', 'Because the mission'],
     ]);
     expect(plan.ask.map(a => a.id)).toEqual(['c']);
     expect(plan.ask[0]!.options).toEqual(['Yes', 'No']);
@@ -415,5 +416,53 @@ describe('the fast path', () => {
         { id: 'x', frame: 0, kind: 'radio', label: 'Are you comfortable working remotely?', required: true, options: ['Yes', 'No'] },
       ]),
     ).toBe(false);
+  });
+});
+
+describe('LinkedIn final page with a top-choice message', () => {
+  it('reads the message box with its on-page limits and leaves the top-choice tick alone', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    document.body.innerHTML = `
+      <dialog open data-testid="dialog"><h2>Apply to Weekday (YC W21)</h2>
+        <h3>Mark this job as a top choice</h3>
+        <label><input type="checkbox" checked> Mark job as a top choice</label>
+        <div><label for="m">Include a message with your application*</label>
+          <div><textarea id="m" required placeholder="Briefly describe why this job is a top choice and why you’re a good fit."></textarea>
+          <div><span>Minimum 20 characters</span><span>0/400</span></div></div></div>
+        <h3>Additional Questions</h3><p>What is your current location?</p><p>No answer provided</p>
+        <label><input type="checkbox"> Follow Weekday (YC W21) to stay up to date with their page</label>
+        <button aria-label="Submit application">Submit application</button>
+      </dialog>`;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+    const snap = api.scan({ linkedin: true });
+    const msg = snap.form.find(f => f.kind === 'textarea')!;
+    expect(msg).toMatchObject({ label: 'Include a message with your application', required: true, maxLength: 400, minLength: 20 });
+    expect(msg.placeholder).toMatch(/top choice/);
+    expect(snap.hasSubmit).toBe(true);
+    expect(snap.hasNext).toBe(false);
+    // Only the empty required message needs work; the top-choice and follow ticks are not touched.
+    expect(needsWork(snap.form, true).map(f => f.id)).toEqual([msg.id]);
+    expect(wantsThinking([msg])).toBe(true);
+    expect(
+      fillPrompt({
+        page: { ...snap, url: 'x', title: 't' },
+        background: '',
+        roles: [],
+        profile: emptyApplyProfile(),
+        name: 'A',
+        linkedinUrl: '',
+        photo: false,
+      }),
+    ).toMatch(/top choice/);
+  });
+  it('cuts an over-long answer at a sentence, never mid-word', () => {
+    const text = 'I built Digx Deploy for 50+ engineers at Oracle. It cut release effort sharply. I want to bring that to Weekday.';
+    expect(fitTo(text, 80)).toBe('I built Digx Deploy for 50+ engineers at Oracle. It cut release effort sharply.');
+    expect(fitTo('one two three four five six', 15)).toBe('one two three');
   });
 });

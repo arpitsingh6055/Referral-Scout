@@ -220,7 +220,7 @@ const aiWords: Record<string, string> = {
   completion_verified: 'Reading the answers',
   response_extracted: 'Checking every answer against the form',
 };
-const background = async (): Promise<{ text: string; name: string; url: string; roles: string[] }> => {
+const background = async (): Promise<{ text: string; location: string; name: string; url: string; roles: string[] }> => {
   const s = await getNetwork();
   if (!s.profile) throw new Error('Set up Referral Scout with your LinkedIn profile first.');
   const evidence = seekerEvidence(
@@ -236,6 +236,7 @@ const background = async (): Promise<{ text: string; name: string; url: string; 
   const cv = (s.cv?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 14000);
   return {
     text: `${evidence}${cv ? `\nCV (full text): ${cv}` : ''}`,
+    location: s.profile.location,
     name: s.profile.name,
     url: s.profile.url,
     roles: s.settings?.roles ?? [],
@@ -383,7 +384,8 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
   // Fast path. LinkedIn already fills most Easy Apply steps from the person's account, and many questions were
   // answered before: only what is still empty, and cannot be answered from saved answers and details, goes to ChatGPT.
   const todo = needsWork(page.form, linkedin);
-  const local = localPlan(todo, profile, { linkedinUrl: bg.url, photo: !!photo });
+  // Saved answers cost nothing, so they also go into empty optional fields (current location, links...).
+  const local = localPlan(needsWork(page.form, false), profile, { linkedinUrl: bg.url, photo: !!photo, location: bg.location });
   const covered = new Set([...local.fill.map(f => f.id), ...local.files.map(f => f.id)]);
   const rest = todo.filter(f => !covered.has(f.id));
   let plan: FillPlan = {
@@ -421,10 +423,13 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
       throw new Error('ChatGPT’s answer could not be read. Press Fill again.');
     }
     // Saved answers win over ChatGPT's; ChatGPT fills the rest.
+    // On LinkedIn ChatGPT may only answer what was empty, never change what LinkedIn or the person already set
+    // (such as "Mark this job as a top choice", which uses a monthly allowance, or "Follow the company").
+    const allowed = (id: string) => !covered.has(id) && (!linkedin || rest.some(f => f.id === id));
     plan = {
-      fill: [...local.fill, ...ai.fill.filter(f => !covered.has(f.id))],
-      files: [...local.files, ...ai.files.filter(f => !covered.has(f.id))],
-      ask: ai.ask.filter(a => !covered.has(a.id)),
+      fill: [...local.fill, ...ai.fill.filter(f => allowed(f.id))],
+      files: [...local.files, ...ai.files.filter(f => allowed(f.id))],
+      ask: ai.ask.filter(a => allowed(a.id)),
       leftForYou: ai.leftForYou,
       summary: ai.summary,
     };

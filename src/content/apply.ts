@@ -115,6 +115,31 @@ function groupLabel(el: Element, group: Element[] = [el]): string {
   const box = group.length > 1 ? commonAncestor(group) : (el.closest('label') ?? el);
   return precedingText(box) || clean(el.getAttribute('name'));
 }
+/**
+ * Length limits shown next to a field rather than set on it: a "0/400" counter and a "Minimum 20 characters" note
+ * (LinkedIn's top-choice message, most ATS text boxes).
+ */
+function limitsNear(el: Element): { max?: number; min?: number; note: string } {
+  let box: Element | null = el.parentElement;
+  for (let depth = 0; box && depth < 4; depth++, box = box.parentElement) {
+    if (box.querySelectorAll('input, select, textarea, [contenteditable="true"]').length > 1) break;
+    // Text pieces joined with spaces: "Minimum 20 characters" and "0/400" are often separate elements.
+    const parts: string[] = [];
+    const walk = box.ownerDocument.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) parts.push(n.nodeValue ?? '');
+    const t = clean(parts.join(' '));
+    const counter = t.match(/\b\d{1,5}\s*\/\s*(\d{2,5})\b(?!\s*pages?)/);
+    const minimum = t.match(/\b(?:minimum|min\.?|at least)\s*(\d{1,5})\s*characters?\b/i);
+    const maximum = t.match(/\b(?:maximum|max\.?|up to)\s*(\d{1,5})\s*characters?\b/i);
+    if (counter || minimum || maximum)
+      return {
+        ...(counter ? { max: Number(counter[1]) } : maximum ? { max: Number(maximum[1]) } : {}),
+        ...(minimum ? { min: Number(minimum[1]) } : {}),
+        note: [minimum?.[0], maximum?.[0]].filter(Boolean).join('; '),
+      };
+  }
+  return { note: '' };
+}
 const optionLabel = (input: HTMLInputElement): string => {
   const own = labelOf(input);
   return own || clean(input.value);
@@ -533,14 +558,15 @@ function create(): ApplyApi {
         if (!label && kind !== 'file') continue;
         const id = idFor(el);
         entries.set(id, { kind, els, ...(options ? { options } : {}) });
-        const help = textOfIds(el.getAttribute('aria-describedby'), doc).slice(0, 200);
+        const near = kind === 'text' || kind === 'textarea' || kind === 'richtext' ? limitsNear(el) : { note: '' };
+        const help = [textOfIds(el.getAttribute('aria-describedby'), doc), near.note].filter(Boolean).join(' · ').slice(0, 200);
         const sensitive = sensitivity({ kind, label, help, inputType: type, name: el.getAttribute('name') ?? '' });
         const max =
           input?.maxLength && input.maxLength > 0
             ? input.maxLength
             : el instanceof HTMLTextAreaElement && el.maxLength > 0
               ? el.maxLength
-              : 0;
+              : (near.max ?? 0);
         form.push({
           id,
           frame: 0,
@@ -549,10 +575,11 @@ function create(): ApplyApi {
           required: isRequired(el, label),
           ...(options?.length ? { options } : {}),
           ...(value ? { value: value.slice(0, 500) } : {}),
-          ...(input?.placeholder ? { placeholder: input.placeholder.slice(0, 120) } : {}),
+          ...(el.getAttribute('placeholder') ? { placeholder: el.getAttribute('placeholder')!.slice(0, 160) } : {}),
           ...(help ? { help } : {}),
           ...(sectionOf(el) ? { section: sectionOf(el) } : {}),
           ...(max ? { maxLength: max } : {}),
+          ...(near.min ? { minLength: near.min } : {}),
           ...(input?.accept ? { accept: input.accept } : {}),
           ...(sensitive ? { sensitive } : {}),
         });
