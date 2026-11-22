@@ -15,6 +15,9 @@ import {
   planFromReply,
   questionKey,
   rememberedFor,
+  needsWork,
+  localPlan,
+  wantsThinking,
   type ApplyProfile,
   type FillPlan,
   type FormField,
@@ -162,7 +165,9 @@ function merge(frames: Frame[], tabUrl: string, title: string): PageSnapshot & {
   const withForm = frames.filter(f => f.result.form.length);
   const main = frames.find(f => f.frameId === 0)?.result;
   const job = [main?.job, ...frames.map(f => f.result.job)].filter(Boolean).sort((a, b) => b!.length - a!.length)[0] ?? '';
-  const primary = withForm.sort((a, b) => b.result.form.length - a.result.form.length)[0]?.result;
+  // A step can have no fields (LinkedIn's review page has only its Submit button): then the open Easy Apply window counts.
+  const active = withForm.length ? withForm : frames.filter(f => f.result.easyApplyOpen);
+  const primary = [...active].sort((a, b) => b.result.form.length - a.result.form.length)[0]?.result;
   return {
     url: tabUrl,
     title,
@@ -173,8 +178,8 @@ function merge(frames: Frame[], tabUrl: string, title: string): PageSnapshot & {
       .slice(0, 16000),
     form: withForm.flatMap(f => f.result.form.map(x => ({ ...x, frame: f.frameId }))),
     step: primary?.step ?? main?.step ?? '',
-    hasNext: withForm.some(f => f.result.hasNext),
-    hasSubmit: withForm.some(f => f.result.hasSubmit),
+    hasNext: active.some(f => f.result.hasNext),
+    hasSubmit: active.some(f => f.result.hasSubmit),
     captcha: frames.some(f => f.result.captcha),
     frames: main?.frames ?? [],
   };
@@ -281,7 +286,8 @@ async function detect(tabId?: number, withPhoto = false): Promise<Detect> {
   };
 }
 
-async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Promise<void> {
+/** Fills the step on screen. advance: true when nothing is left for the person and the site has a Next button. */
+async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Promise<{ advance: boolean } | void> {
   const tab = await chrome.tabs.get(tabId);
   const url = tab.url ?? '';
   const kind = pageKindFromUrl(url);
@@ -297,6 +303,23 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
   const linkedin = kind === 'linkedin-job';
   let frames = await scanAll(tabId, linkedin);
   let page = merge(frames, url, tab.title ?? '');
+  if (!page.form.length && (page.hasNext || page.hasSubmit)) {
+    // A step with nothing to fill: move on, or stop at the final review for the person to submit.
+    await update(s => ({
+      ...s,
+      step: page.step,
+      hasNext: page.hasNext,
+      hasSubmit: page.hasSubmit,
+      captcha: page.captcha,
+      form: [],
+      ask: [],
+      stage: page.hasNext ? 'moving' : 'review',
+      message: page.hasNext
+        ? `Step ${s.stepCount}: nothing to fill. Moving on…`
+        : 'All steps are filled. This is the final review: check the application and press Submit on the page yourself.',
+    }));
+    return { advance: page.hasNext && !page.captcha };
+  }
   if (!page.form.length && kind === 'linkedin-job') {
     // LinkedIn may show the job inside its in-app frame: find which frame has the button, then press it in that one only.
     const looks = await chrome.scripting
@@ -356,71 +379,109 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
   }
   const [bg, profile, photo, cv] = await Promise.all([background(), applyProfile(), photoFile(), cvFile()]);
   if (!cv) throw new Error('Upload your CV (PDF or Word) in Settings first: applications need the file.');
-  const prompt =
-    fillPrompt({ page, background: bg.text, roles: bg.roles, profile, name: bg.name, linkedinUrl: bg.url, photo: !!photo }) +
-    (attempt > 1 ? `\n(Attempt ${attempt}: answer afresh.)` : '');
-  await update(s => ({
-    ...s,
-    stage: 'thinking',
-    message: 'ChatGPT is reading the job and the form…',
-    step: page.step,
-    hasNext: page.hasNext,
-    hasSubmit: page.hasSubmit,
-    captcha: page.captcha,
-    form: page.form,
-  }));
-  const reply = await askChatGpt(prompt, signal, 'FILL_APPLICATION', bg.url, '', {
-    startMs: 90000,
-    totalMs: 8 * 60000,
-    thinking: true,
-    onStage: stage => void update(s => ({ ...s, aiStage: stage, message: `${aiWords[stage] ?? 'Working'}…` })),
-  });
-  signal.throwIfAborted();
-  let plan: FillPlan;
-  try {
-    plan = planFromReply(extractJson(reply), page.form, profile, !!photo);
-  } catch {
-    throw new Error('ChatGPT’s answer could not be read. Press Fill again.');
-  }
-  // Questions the person already answered on an earlier application are filled, not asked again.
-  const remembered = new Map(rememberedFor(page.form, profile).map(r => [r.id, r.value]));
-  for (const q of [...plan.ask]) {
-    const value = remembered.get(q.id);
-    const f = page.form.find(x => x.id === q.id);
-    if (value && f) {
-      plan.ask = plan.ask.filter(a => a !== q);
-      plan.fill.push({ id: f.id, frame: f.frame, kind: f.kind, label: f.label, value, confidence: 'high', why: 'Your earlier answer' });
+  await update(s => ({ ...s, step: page.step, hasNext: page.hasNext, hasSubmit: page.hasSubmit, captcha: page.captcha, form: page.form }));
+  // Fast path. LinkedIn already fills most Easy Apply steps from the person's account, and many questions were
+  // answered before: only what is still empty, and cannot be answered from saved answers and details, goes to ChatGPT.
+  const todo = needsWork(page.form, linkedin);
+  const local = localPlan(todo, profile, { linkedinUrl: bg.url, photo: !!photo });
+  const covered = new Set([...local.fill.map(f => f.id), ...local.files.map(f => f.id)]);
+  const rest = todo.filter(f => !covered.has(f.id));
+  let plan: FillPlan = {
+    fill: local.fill,
+    files: local.files,
+    ask: [],
+    leftForYou: page.form
+      .filter(f => f.sensitive && !(f.sensitive === 'eeo' && profile.eeo === 'decline'))
+      .map(f => ({ id: f.id, label: f.label, reason: 'Left for you to answer.' })),
+    summary: '',
+  };
+  if (rest.length) {
+    const thinking = wantsThinking(rest);
+    const prompt =
+      fillPrompt({ page, background: bg.text, roles: bg.roles, profile, name: bg.name, linkedinUrl: bg.url, photo: !!photo }) +
+      (attempt > 1 ? `\n(Attempt ${attempt}: answer afresh.)` : '');
+    await update(s => ({
+      ...s,
+      stage: 'thinking',
+      message: thinking
+        ? 'ChatGPT is writing your answers…'
+        : `ChatGPT is answering ${rest.length} question${rest.length === 1 ? '' : 's'}…`,
+    }));
+    const reply = await askChatGpt(prompt, signal, 'FILL_APPLICATION', bg.url, '', {
+      startMs: 90000,
+      totalMs: (thinking ? 8 : 3) * 60000,
+      thinking,
+      onStage: stage => void update(s => ({ ...s, aiStage: stage, message: `${aiWords[stage] ?? 'Working'}…` })),
+    });
+    signal.throwIfAborted();
+    let ai: FillPlan;
+    try {
+      ai = planFromReply(extractJson(reply), page.form, profile, !!photo);
+    } catch {
+      throw new Error('ChatGPT’s answer could not be read. Press Fill again.');
+    }
+    // Saved answers win over ChatGPT's; ChatGPT fills the rest.
+    plan = {
+      fill: [...local.fill, ...ai.fill.filter(f => !covered.has(f.id))],
+      files: [...local.files, ...ai.files.filter(f => !covered.has(f.id))],
+      ask: ai.ask.filter(a => !covered.has(a.id)),
+      leftForYou: ai.leftForYou,
+      summary: ai.summary,
+    };
+    // Questions the person already answered on an earlier application are filled, not asked again.
+    const remembered = new Map(rememberedFor(page.form, profile).map(r => [r.id, r.value]));
+    for (const q of [...plan.ask]) {
+      const value = remembered.get(q.id);
+      const f = page.form.find(x => x.id === q.id);
+      if (value && f) {
+        plan.ask = plan.ask.filter(a => a !== q);
+        plan.fill.push({ id: f.id, frame: f.frame, kind: f.kind, label: f.label, value, confidence: 'high', why: 'Your earlier answer' });
+      }
     }
   }
-  await update(s => ({ ...s, stage: 'filling', message: 'Filling the form…', summary: plan.summary }));
-  const results = await applyPlan(tabId, plan, page.form, cv, photo);
+  signal.throwIfAborted();
+  if (plan.fill.length || plan.files.length) await update(s => ({ ...s, stage: 'filling', message: 'Filling the form…' }));
+  const results = plan.fill.length || plan.files.length ? await applyPlan(tabId, plan, page.form, cv, photo) : [];
   const byId = new Map(results.map(r => [r.id, r]));
   await mark(tabId, page.form, plan, byId);
+  const failedRequired = results.filter(r => !r.ok && page.form.find(f => f.id === r.id)?.required).length;
   const failed = results.filter(r => !r.ok).length;
+  const stillEmptyRequired = rest.filter(f => f.required && !plan.fill.some(x => x.id === f.id) && !plan.files.some(x => x.id === f.id));
+  const advance = !!page.hasNext && !page.captcha && !plan.ask.length && !failedRequired && !stillEmptyRequired.length;
   await update(s => ({
     ...s,
-    stage: 'review',
+    stage: advance ? 'moving' : 'review',
     aiStage: undefined,
-    message: reviewMessage(plan, failed, page),
-    filled: plan.fill.map(f => ({
-      id: f.id,
-      label: f.label,
-      value: Array.isArray(f.value) ? f.value.join(', ') : f.value,
-      confidence: f.confidence,
-      why: f.why,
-      ok: byId.get(f.id)?.ok ?? false,
-      ...(byId.get(f.id)?.note ? { note: byId.get(f.id)!.note } : {}),
-    })),
-    files: plan.files.map(f => ({
-      id: f.id,
-      label: f.label,
-      file: f.file,
-      ok: byId.get(f.id)?.ok ?? false,
-      ...(byId.get(f.id)?.note ? { note: byId.get(f.id)!.note } : {}),
-    })),
+    summary: plan.summary || s.summary,
+    message: advance
+      ? `Step ${s.stepCount} done${plan.fill.length + plan.files.length ? '' : ' (already filled)'}. Moving on…`
+      : reviewMessage(plan, failed, page),
+    filled: [
+      ...s.filled.filter(x => !plan.fill.some(f => f.id === x.id)),
+      ...plan.fill.map(f => ({
+        id: f.id,
+        label: f.label,
+        value: Array.isArray(f.value) ? f.value.join(', ') : f.value,
+        confidence: f.confidence,
+        why: f.why,
+        ok: byId.get(f.id)?.ok ?? false,
+        ...(byId.get(f.id)?.note ? { note: byId.get(f.id)!.note } : {}),
+      })),
+    ],
+    files: [
+      ...s.files.filter(x => !plan.files.some(f => f.id === x.id)),
+      ...plan.files.map(f => ({
+        id: f.id,
+        label: f.label,
+        file: f.file,
+        ok: byId.get(f.id)?.ok ?? false,
+        ...(byId.get(f.id)?.note ? { note: byId.get(f.id)!.note } : {}),
+      })),
+    ],
     ask: plan.ask.map(a => ({ ...a, kind: page.form.find(f => f.id === a.id)?.kind })),
-    leftForYou: plan.leftForYou,
+    leftForYou: [...s.leftForYou.filter(x => !plan.leftForYou.some(l => l.id === x.id)), ...plan.leftForYou],
   }));
+  return { advance };
 }
 function reviewMessage(plan: FillPlan, failed: number, page: PageSnapshot): string {
   const parts = [
@@ -431,9 +492,9 @@ function reviewMessage(plan: FillPlan, failed: number, page: PageSnapshot): stri
   if (page.captcha) parts.push('There is a security check on the page for you to complete.');
   parts.push(
     page.hasNext
-      ? 'Check the page, then press Next step.'
+      ? 'Answer what is left, then press Next step and the rest is filled for you.'
       : page.hasSubmit
-        ? 'This looks like the last step: check everything and press Submit on the page yourself.'
+        ? 'This is the last step: review the application and press Submit on the page yourself.'
         : 'Check the page before you submit it yourself.',
   );
   return parts.join(' ');
@@ -525,40 +586,60 @@ async function start(tabId: number, attempt = 1): Promise<void> {
     hasSubmit: false,
     captcha: false,
   } satisfies ApplySession);
-  void run(signal => fillStep(tabId, signal, attempt));
+  void run(signal => autoRun(tabId, signal, attempt));
+}
+/** Presses the site's Next / Continue / Review and waits for the next step. False when the site stayed put. */
+async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
+  const s = await loadSession();
+  if (!s) return false;
+  const frame = s.form?.[0]?.frame ?? 0;
+  const before = signature({ form: s.form ?? [], step: s.step });
+  await update(x => ({ ...x, stage: 'moving' }));
+  const clicked = await inFrame(tabId, frame, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.next());
+  if (!clicked?.clicked) throw new Error(clicked?.error ?? 'The page changed; press Fill again.');
+  for (let i = 0; i < 16; i++) {
+    await new Promise(r => setTimeout(r, i < 4 ? 400 : 750));
+    signal.throwIfAborted();
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === 'loading') continue;
+    const frames = await scanAll(tabId, pageKindFromUrl(tab.url ?? '') === 'linkedin-job').catch(() => [] as Frame[]);
+    const page = merge(frames, tab.url ?? '', tab.title ?? '');
+    // A step can have no fields at all (LinkedIn's review page has only Submit), so a changed step counts too.
+    if (signature(page) !== before && (page.form.length || page.hasSubmit || page.hasNext)) {
+      await update(x => ({ ...x, stepCount: x.stepCount + 1 }));
+      return true;
+    }
+    if (!page.form.length && !page.hasNext && !page.hasSubmit && i > 5) {
+      await update(x => ({ ...x, stage: 'done', message: 'The form moved on and nothing is left to fill on this page. Check the page.' }));
+      return false;
+    }
+  }
+  await update(x => ({
+    ...x,
+    stage: 'review',
+    message: 'The site stayed on this step. It usually marks what is missing in red: fix it on the page, then press Next step.',
+  }));
+  return false;
+}
+/** Fills each step and moves on by itself; stops for the person's answers, a site error, or the final Submit. */
+async function autoRun(tabId: number, signal: AbortSignal, attempt: number, moveFirst = false): Promise<void> {
+  if (moveFirst && !(await pressNext(tabId, signal))) return;
+  for (let i = 0; i < 25; i++) {
+    const r = await fillStep(tabId, signal, i === 0 ? attempt : 1);
+    if (!r?.advance) return;
+    if (!(await pressNext(tabId, signal))) return;
+  }
+  await update(x => ({
+    ...x,
+    stage: 'review',
+    message: 'This application has many steps. Check the page, then press Next step to keep going.',
+  }));
 }
 async function nextStep(): Promise<void> {
   const s = await loadSession();
   if (!s) throw new Error('Nothing is being filled.');
-  const frame = s.form?.find(f => f.frame !== undefined)?.frame ?? 0;
-  const before = signature({ form: s.form ?? [], step: s.step });
   await update(x => ({ ...x, stage: 'moving', message: 'Moving to the next step…' }));
-  void run(async signal => {
-    const clicked = await inFrame(s.tabId, frame, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.next());
-    if (!clicked?.clicked) throw new Error(clicked?.error ?? 'The page changed; press Fill again.');
-    // Wait for the site to show the next step (or reload into it), then fill that step.
-    for (let i = 0; i < 16; i++) {
-      await new Promise(r => setTimeout(r, 750));
-      signal.throwIfAborted();
-      const tab = await chrome.tabs.get(s.tabId);
-      if (tab.status === 'loading') continue;
-      const frames = await scanAll(s.tabId, pageKindFromUrl(tab.url ?? '') === 'linkedin-job').catch(() => [] as Frame[]);
-      const page = merge(frames, tab.url ?? '', tab.title ?? '');
-      if (page.form.length && signature(page) !== before) {
-        await update(x => ({ ...x, stepCount: x.stepCount + 1 }));
-        return fillStep(s.tabId, signal, 1);
-      }
-      if (!page.form.length && i > 4) {
-        await update(x => ({ ...x, stage: 'done', message: 'The form moved on and no fields are left on this page. Check the page.' }));
-        return;
-      }
-    }
-    await update(x => ({
-      ...x,
-      stage: 'review',
-      message: 'The site stayed on this step. It usually marks what is missing in red: fix it on the page, then press Next step again.',
-    }));
-  });
+  void run(signal => autoRun(s.tabId, signal, 1, true));
 }
 async function answer(answers: { id: string; value: string; remember: boolean }[]): Promise<void> {
   const s = await loadSession();
@@ -607,6 +688,10 @@ async function answer(answers: { id: string; value: string; remember: boolean }[
         ? `Added your answer${items.length === 1 ? '' : 's'}.`
         : 'Some answers could not be typed; fill them on the page.',
   }));
+  // Everything this step needed is answered: carry on through the remaining steps by itself.
+  const after = await loadSession();
+  if (after && !after.ask.length && after.hasNext && done.size === items.length && !after.captcha)
+    void run(signal => autoRun(after.tabId, signal, 1, true));
 }
 
 /* ---------- messages from the side panel ---------- */

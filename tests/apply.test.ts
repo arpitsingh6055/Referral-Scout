@@ -9,6 +9,9 @@ import {
   questionKey,
   rememberedFor,
   sensitivity,
+  needsWork,
+  localPlan,
+  wantsThinking,
   type FormField,
 } from '../src/shared/apply';
 import type { ApplyApi } from '../src/content/apply';
@@ -365,5 +368,52 @@ describe('LinkedIn Easy Apply, November 2026 markup', () => {
     expect(snap.step).toMatch(/1\/5 pages/);
     expect(snap.hasNext).toBe(true);
     expect(api.openEasyApply(false)).toBe('open');
+  });
+});
+
+describe('the fast path', () => {
+  const contact: FormField[] = [
+    { id: 'fn', frame: 0, kind: 'text', label: 'First name', required: true, value: 'Arpit' },
+    { id: 'cc', frame: 0, kind: 'select', label: 'Phone country code', required: true, options: ['India (+91)'], value: 'India (+91)' },
+    { id: 'ph', frame: 0, kind: 'tel', label: 'Mobile phone number', required: true, value: '8968771062' },
+    { id: 'cl', frame: 0, kind: 'textarea', label: 'Cover letter', required: false },
+  ];
+  it('skips ChatGPT on an Easy Apply step LinkedIn already filled', () => {
+    expect(needsWork(contact, true)).toEqual([]);
+    expect(needsWork(contact, false).map(f => f.id)).toEqual(['cl']);
+  });
+  it('answers from saved details, earlier answers and the CV without ChatGPT', () => {
+    const fields: FormField[] = [
+      {
+        id: 'np',
+        frame: 0,
+        kind: 'select',
+        label: 'What is your notice period?',
+        required: true,
+        options: ['Immediate', '30 days', '60 days'],
+      },
+      { id: 'yrs', frame: 0, kind: 'text', label: 'How many years of experience do you have with SQL?', required: true },
+      { id: 'li', frame: 0, kind: 'url', label: 'LinkedIn profile URL', required: true },
+      { id: 'cv', frame: 0, kind: 'file', label: 'Upload resume', required: true },
+      { id: 'why', frame: 0, kind: 'textarea', label: 'Why do you want to join us?', required: true },
+    ];
+    const profile = {
+      ...emptyApplyProfile(),
+      details: { noticePeriod: '30 days' },
+      answers: { [questionKey('How many years of experience do you have with SQL?')]: '3' },
+    };
+    const plan = localPlan(fields, profile, { linkedinUrl: 'https://www.linkedin.com/in/arpit45/', photo: false });
+    expect(plan.fill.map(f => [f.id, f.value])).toEqual([
+      ['np', '30 days'],
+      ['yrs', '3'],
+      ['li', 'https://www.linkedin.com/in/arpit45/'],
+    ]);
+    expect(plan.files).toEqual([{ id: 'cv', frame: 0, label: 'Upload resume', file: 'cv' }]);
+    expect(wantsThinking(fields.filter(f => f.id === 'why'))).toBe(true);
+    expect(
+      wantsThinking([
+        { id: 'x', frame: 0, kind: 'radio', label: 'Are you comfortable working remotely?', required: true, options: ['Yes', 'No'] },
+      ]),
+    ).toBe(false);
   });
 });

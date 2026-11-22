@@ -408,3 +408,75 @@ export function rememberedFor(form: FormField[], profile: ApplyProfile): { id: s
   }
   return out;
 }
+
+/* ---------- the fast path: what a step really needs ---------- */
+const hasValue = (f: FormField): boolean => (f.kind === 'checkbox' ? f.value === 'true' : !!f.value?.trim());
+/**
+ * Fields on this step that still need an answer. LinkedIn keeps the person's details and fills most Easy Apply steps
+ * itself, so there only empty REQUIRED fields count; on other sites empty optional fields are worth filling too.
+ */
+export function needsWork(form: FormField[], linkedin: boolean): FormField[] {
+  return form.filter(f => !f.sensitive && !hasValue(f) && (f.required || (!linkedin && f.kind !== 'file' && f.kind !== 'checkbox')));
+}
+const DETAIL_FIELDS: [RegExp, keyof ApplyProfile['details']][] = [
+  [/\b(mobile|phone|contact) ?(number|no)?\b/i, 'phone'],
+  [/\be-?mail\b/i, 'email'],
+  [/\b(current )?(city|location)\b|where are you (based|located)/i, 'city'],
+  [/\bexpected (ctc|salary|compensation|pay|stipend)\b|salary expectation/i, 'expectedCtc'],
+  [/\bcurrent (ctc|salary|compensation|pay)\b/i, 'currentCtc'],
+  [/\bnotice period\b/i, 'noticePeriod'],
+  [/\b(earliest )?start date\b|when can you (start|join)/i, 'startDate'],
+  [/\b(work authori[sz]ation|authori[sz]ed to work|visa|sponsorship)\b/i, 'workAuthorization'],
+  [/\brelocat/i, 'relocate'],
+  [/\b(portfolio|github|website|personal site)\b/i, 'links'],
+];
+/**
+ * Answers that need no ChatGPT: the person's saved answers (by question), their saved details (phone, email, notice
+ * period...), their LinkedIn address, and the CV or photo for an upload field. Choice fields only take a value that is
+ * one of their options.
+ */
+export function localPlan(
+  fields: FormField[],
+  profile: ApplyProfile,
+  ctx: { linkedinUrl: string; photo: boolean },
+): Pick<FillPlan, 'fill' | 'files'> {
+  const out: Pick<FillPlan, 'fill' | 'files'> = { fill: [], files: [] };
+  for (const f of fields) {
+    if (f.sensitive) continue;
+    if (f.kind === 'file') {
+      if (/\b(resume|résumé|cv|curriculum)\b/i.test(f.label)) out.files.push({ id: f.id, frame: f.frame, label: f.label, file: 'cv' });
+      else if (ctx.photo && /\b(photo|picture|headshot|image)\b/i.test(f.label))
+        out.files.push({ id: f.id, frame: f.frame, label: f.label, file: 'photo' });
+      continue;
+    }
+    let value: string | undefined = profile.answers[questionKey(f.label)];
+    let why = 'Your earlier answer';
+    if (!value && /\blinked ?in\b/i.test(f.label) && /\b(url|profile|link)\b/i.test(f.label) && ctx.linkedinUrl) {
+      value = ctx.linkedinUrl;
+      why = 'Your LinkedIn profile';
+    }
+    if (!value)
+      for (const [pattern, key] of DETAIL_FIELDS)
+        if (pattern.test(f.label) && profile.details[key]?.trim()) {
+          value = profile.details[key]!.trim();
+          why = 'Your saved details';
+          break;
+        }
+    if (!value) continue;
+    if (f.options?.length && (f.kind === 'select' || f.kind === 'radio' || f.kind === 'combobox')) {
+      const hit = matchOption(value, f.options);
+      if (!hit) continue;
+      value = hit;
+    }
+    if (f.kind === 'checkbox' || f.kind === 'checkboxes') continue;
+    out.fill.push({ id: f.id, frame: f.frame, kind: f.kind, label: f.label, value, confidence: 'high', why });
+  }
+  return out;
+}
+const OPEN_QUESTION =
+  /\b(why|describe|tell us|explain|cover letter|achiev|impressive|about (yourself|you)|motivat|interest(ed)? in|strength|weakness|challenge|project|summary|built)\b/i;
+/** Thinking mode only for written answers; yes/no, numbers and choices are answered in seconds without it. */
+export const wantsThinking = (fields: FormField[]): boolean =>
+  fields.some(
+    f => f.kind === 'textarea' || f.kind === 'richtext' || (f.kind === 'text' && (f.label.length > 80 || OPEN_QUESTION.test(f.label))),
+  );

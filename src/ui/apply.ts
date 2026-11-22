@@ -156,10 +156,10 @@ function draw(d: Detect): void {
       node(
         'p',
         d.kind === 'linkedin-job'
-          ? 'ChatGPT (thinking) reads this job, your profile and CV, and fills Easy Apply one step at a time. You review each step; you press Submit.'
+          ? 'Fills every Easy Apply step and moves on by itself, using what LinkedIn already has, your saved answers and ChatGPT for the rest. It stops at the final review: you press Submit.'
           : d.kind === 'other'
             ? 'If this page is a job application, ChatGPT can fill it from your profile and CV. You review it and submit it yourself.'
-            : 'ChatGPT (thinking) reads this job, your profile and CV, and fills the form. You review it; you press Submit.',
+            : 'Fills the form and moves through its steps by itself, from your profile, CV and saved answers, with ChatGPT for anything new. It stops at the final review: you press Submit.',
         'card-sub',
       ),
     );
@@ -184,8 +184,18 @@ function draw(d: Detect): void {
   }
   if (BUSY.includes(s.stage)) {
     card.append(stepsLine(s));
-    if (s.stage === 'thinking')
-      card.append(node('p', 'Thinking takes one to four minutes. You can keep using the browser; ChatGPT works in its own tab.', 'fine'));
+    if (s.stepCount > 1 || s.filled.length)
+      card.append(
+        node('p', `Step ${s.stepCount}${s.step ? ` · ${s.step}` : ''} · ${s.filled.length + s.files.length} filled so far`, 'fine'),
+      );
+    if (s.stage === 'thinking' && /writing/i.test(s.message))
+      card.append(
+        node(
+          'p',
+          'Written answers use ChatGPT\u2019s thinking mode and take a minute or two. Every other step moves on by itself.',
+          'fine',
+        ),
+      );
     card.append(button('Stop', async () => draw(await applyRequest({ kind: 'apply', action: 'stop' })), 'btn sm ghost', 'Stopped.'));
     return;
   }
