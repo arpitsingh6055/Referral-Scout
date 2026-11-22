@@ -418,10 +418,30 @@ export function planFromReply(json: unknown, form: FormField[], profile: ApplyPr
     } else {
       value = (Array.isArray(value) ? value.join(', ') : value).trim();
       if (!value) continue;
+      if (f.kind === 'number') {
+        // A number field refuses "2+ years": the number itself goes in, or the person is asked.
+        const n = /-?\d+(?:\.\d+)?/.exec(value.replace(/,/g, ''))?.[0];
+        if (!n) {
+          used.add(f.id);
+          plan.ask.push({ id: f.id, frame: f.frame, label: f.label, question: f.label });
+          continue;
+        }
+        value = n;
+      }
       if (f.maxLength && value.length > f.maxLength) value = fitTo(value, f.maxLength);
     }
     used.add(f.id);
-    plan.fill.push({ id: f.id, frame: f.frame, kind: f.kind, label: f.label, value, confidence: item.confidence, why: item.why.trim() });
+    // Below the site's minimum length the site will refuse it: kept, but flagged for the person to lengthen (Rewrite).
+    const short = typeof value === 'string' && !!f.minLength && value.length < f.minLength;
+    plan.fill.push({
+      id: f.id,
+      frame: f.frame,
+      kind: f.kind,
+      label: f.label,
+      value,
+      confidence: short ? 'low' : item.confidence,
+      why: short ? `${item.why.trim()} (shorter than the ${f.minLength} characters the site asks for: use Rewrite)` : item.why.trim(),
+    });
   }
   for (const item of parsed.ask) {
     const f = byId.get(item.id);
@@ -443,7 +463,7 @@ export function rememberedFor(form: FormField[], profile: ApplyProfile): { id: s
   for (const f of form) {
     if (f.sensitive || f.kind === 'file') continue;
     const answer = profile.answers[questionKey(f.label)];
-    if (answer) out.push({ id: f.id, value: answer });
+    if (answer && answer.length <= 80) out.push({ id: f.id, value: answer });
   }
   return out;
 }
@@ -460,7 +480,11 @@ export function needsWork(form: FormField[], linkedin: boolean): FormField[] {
 const DETAIL_FIELDS: [RegExp, keyof ApplyProfile['details']][] = [
   [/\b(mobile|phone|contact) ?(number|no)?\b/i, 'phone'],
   [/\be-?mail\b/i, 'email'],
-  [/\b(current )?(city|location)\b|where are you (based|located)/i, 'city'],
+  // The applicant's own city only: not a preferred or job location, nor where a college or employer is.
+  [
+    /^(your )?(current )?(city|location)( of residence)?$|\bcurrent (city|location)\b|where are you (currently )?(based|located|living)|\bcity of residence\b/i,
+    'city',
+  ],
   [/\bexpected (ctc|salary|compensation|pay|stipend)\b|salary expectation/i, 'expectedCtc'],
   [/\bcurrent (ctc|salary|compensation|pay)\b/i, 'currentCtc'],
   [/\bnotice period\b/i, 'noticePeriod'],
@@ -474,6 +498,45 @@ const DETAIL_FIELDS: [RegExp, keyof ApplyProfile['details']][] = [
  * period...), their LinkedIn address, and the CV or photo for an upload field. Choice fields only take a value that is
  * one of their options.
  */
+/** A question about someone other than the applicant (a referrer, manager, reference...): never answered from their details. */
+export const ABOUT_SOMEONE_ELSE =
+  /\b(referr(er|al|ed)|referee|references?|manager|supervisor|emergency|recruiter|spouse|parent|guardian|father|mother|interviewer|employer|hr contact|point of contact|colleague|friend)\b/i;
+/** Location words that are not where the applicant lives now. */
+const NOT_HOME =
+  /\b(preferred|desired|job location|office|work ?location|college|university|school|institute|birth|native|hometown|relocat)/i;
+/**
+ * Whether a saved answer may be reused on a later application: short facts (notice period, salary, years, yes/no),
+ * never a written answer, and never one tied to a company or a place (those differ for every job).
+ */
+export function rememberable(
+  f: Pick<FormField, 'kind' | 'label' | 'maxLength'>,
+  value: string,
+  job?: { company?: string; location?: string },
+): boolean {
+  const v = value.trim();
+  if (!v || v.length > 80 || f.kind === 'textarea' || f.kind === 'richtext') return false;
+  if ((f.maxLength ?? 0) > 300) return false;
+  const words = [job?.company, ...(job?.location ?? '').split(/[,·|]/)].map(w => (w ?? '').trim()).filter(w => w.length > 2);
+  const text = `${f.label} ${v}`.toLowerCase();
+  if (words.some(w => text.includes(w.toLowerCase()))) return false;
+  // "Why do you want to join us?", "Are you willing to work from our office?": the answer belongs to that job.
+  return !/\b(why|our (company|team|office|mission)|this (role|position|job|company)|join us|work from (our|the) office)\b/i.test(f.label);
+}
+const CHOICE_KINDS = new Set<FieldKind>(['select', 'radio', 'combobox', 'checkbox', 'checkboxes']);
+/** A saved detail that is itself one of the options (not a sentence that merely mentions one, never a bare Yes / No). */
+function plainlyOption(detail: string, options: string[]): boolean {
+  const n = (t: string) =>
+    t
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  const d = n(detail);
+  return options.some(o => {
+    const x = n(o);
+    if (!x || /^(yes|no)$/.test(x)) return false;
+    return x === d || (d.length <= 30 && (x.startsWith(d) || d.startsWith(x)));
+  });
+}
 export function localPlan(
   fields: FormField[],
   profile: ApplyProfile,
@@ -488,20 +551,36 @@ export function localPlan(
         out.files.push({ id: f.id, frame: f.frame, label: f.label, file: 'photo' });
       continue;
     }
-    let value: string | undefined = profile.answers[questionKey(f.label)];
+    // An earlier answer to the same question is reused only when it is a short fact (see rememberable).
+    const saved = profile.answers[questionKey(f.label)];
+    let value: string | undefined = saved && saved.length <= 80 ? saved : undefined;
     let why = 'Your earlier answer';
-    if (!value && /\blinked ?in\b/i.test(f.label) && /\b(url|profile|link)\b/i.test(f.label) && ctx.linkedinUrl) {
+    const own = !ABOUT_SOMEONE_ELSE.test(f.label);
+    if (!value && own && /\blinked ?in\b/i.test(f.label) && /\b(url|profile|link)\b/i.test(f.label) && ctx.linkedinUrl) {
       value = ctx.linkedinUrl;
       why = 'Your LinkedIn profile';
     }
-    if (!value && ctx.location && /\b(current )?(city|location)\b|where are you (based|located)/i.test(f.label) && !profile.details.city) {
+    if (
+      !value &&
+      own &&
+      ctx.location &&
+      !NOT_HOME.test(f.label) &&
+      /\b(current )?(city|location)\b|where are you (based|located)/i.test(f.label) &&
+      !profile.details.city &&
+      !CHOICE_KINDS.has(f.kind)
+    ) {
       value = ctx.location;
       why = 'Your LinkedIn location';
     }
-    if (!value)
+    // Saved details are free text. In a choice they are used only when they plainly are one of the options ("30 days"
+    // among notice periods); "Indian citizen; needs sponsorship for the US" is never forced into Yes / No: ChatGPT,
+    // which reads the same details, picks that option instead.
+    if (!value && own && f.kind !== 'checkbox' && f.kind !== 'checkboxes')
       for (const [pattern, key] of DETAIL_FIELDS)
-        if (pattern.test(f.label) && profile.details[key]?.trim()) {
-          value = profile.details[key]!.trim();
+        if (pattern.test(f.label) && !(key === 'city' && NOT_HOME.test(f.label)) && profile.details[key]?.trim()) {
+          const detail = profile.details[key]!.trim();
+          if (CHOICE_KINDS.has(f.kind) && f.options?.length && !plainlyOption(detail, f.options)) break;
+          value = detail;
           why = 'Your saved details';
           break;
         }
@@ -618,5 +697,22 @@ export function outboundUrl(href: string): string {
     return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : '';
   } catch {
     return '';
+  }
+}
+
+/**
+ * A job link that only passes through a tracking or redirect service (Appcast, iCIMS click links and the like) on its
+ * way to the company's site. Permission for such a host is useless, so it is asked for the real site once it opens.
+ */
+export function looksLikeRedirect(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (/(^|\.)(appcast|clickcast|recruitics|jobs2web|joveo|pandologic|talroo|lnkd|bit|ow|t)\.(io|com|co|ly|net)$/i.test(u.hostname))
+      return true;
+    if (/^(click|track|tracking|redirect|go|r|link|links|out|email)\./i.test(u.hostname)) return true;
+    if (/\/(redirect|click|track|out|r)\b/i.test(u.pathname)) return true;
+    return [...u.searchParams.values()].some(v => /^https?:\/\//i.test(v));
+  } catch {
+    return false;
   }
 }

@@ -68,6 +68,15 @@ export interface ApplyApi {
   dismissCookies(): boolean;
   /** True when the page asks to sign in or create an account (a password field on a short form). */
   signIn(): boolean;
+  /**
+   * Attaches the CV where the form has no ordinary upload field: a field the site creates when "Attach" is pressed,
+   * or a drag-and-drop area. 'none' when the page asks for no CV this way.
+   */
+  attachFallback(file: {
+    name: string;
+    type: string;
+    data: string;
+  }): Promise<{ ok: boolean; note?: string; how: 'input' | 'drop' | 'none' }>;
 }
 const VERSION = 10;
 const scope = globalThis as typeof globalThis & { __referralScoutApply?: ApplyApi };
@@ -319,6 +328,22 @@ function cleanedHtml(root: Element): string {
 }
 const buttonText = (b: Element): string =>
   clean(b.getAttribute('aria-label')) || clean(b.textContent) || clean((b as HTMLInputElement).value);
+/** A review or confirmation page: headings that say so, or text warning that the next press sends the application. */
+function looksFinal(root: Element): boolean {
+  const scope = root.ownerDocument.body;
+  const headings = [...scope.querySelectorAll('h1, h2, h3, [role="heading"]')].filter(visible).map(h => clean(h.textContent));
+  if (
+    headings.some(h =>
+      /^(review|summary|confirm|preview|verify)\b|\b(review (your|and submit|application)|application (summary|review)|confirm (your )?(details|application|submission))\b/i.test(
+        h,
+      ),
+    )
+  )
+    return true;
+  return /\b(by (clicking|pressing|selecting|choosing) (continue|next|submit|apply)|you('re| are) about to submit|(cannot|can't|won't be able to) (be )?(change|edit)(ed)? (it |your application )?after (you )?submit|once submitted)/i.test(
+    clean(root.textContent).slice(0, 6000),
+  );
+}
 function buttons(root: Element): { el: HTMLElement; label: string; role: 'next' | 'submit' | null }[] {
   return [...root.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]')]
     .filter(visible)
@@ -335,6 +360,29 @@ function stepOf(doc: Document, root: Element): string {
   return (
     [match?.[0], now ? `${Math.round(Number(now))}% complete` : '', heading].filter(Boolean).join(' · ') || clean(doc.title).slice(0, 80)
   );
+}
+
+/**
+ * Honeypots: fields a person cannot see or reach, which sites add to catch bots (an application with one filled is
+ * quietly discarded). Choices and uploads are exempt: their real inputs are routinely hidden behind styled labels.
+ */
+function trap(el: Element, type: string): boolean {
+  if (type === 'radio' || type === 'checkbox' || type === 'file') return false;
+  const h = el as HTMLElement;
+  const id = `${el.getAttribute('name') ?? ''} ${el.id}`.toLowerCase();
+  if (/honeypot|gotcha|bot.?trap|hp.?field|leave.?(this.?)?(blank|empty)/.test(id)) return true;
+  const unreachable = h.tabIndex < 0 || /^(off|nope|false)$/i.test(el.getAttribute('autocomplete') ?? '');
+  if (unreachable && /(^|[\s_-])(website|url|fax|homepage|address2_confirm)([\s_-]|$)/.test(id)) return true;
+  const r = h.getBoundingClientRect();
+  const view = el.ownerDocument.defaultView;
+  if (r.width || r.height) {
+    if (r.width <= 1 && r.height <= 1) return true;
+    // Pushed far off the page (left: -9999px and the like).
+    if (r.right + (view?.scrollX ?? 0) < 0 || r.bottom + (view?.scrollY ?? 0) < 0) return true;
+  }
+  for (let n: Element | null = el, i = 0; n && i < 5; n = n.parentElement, i++)
+    if (view && view.getComputedStyle(n).opacity !== '' && Number(view.getComputedStyle(n).opacity) === 0) return true;
+  return false;
 }
 
 /* ---------- typing into the page the way a person would ---------- */
@@ -354,6 +402,28 @@ function fire(el: Element, ...types: string[]): void {
 }
 const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, ' ').trim();
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+/**
+ * Whether a site kept an uploaded file: no error next to the field, and either the file is still on the field or its
+ * name shows nearby (many sites move the file into their own list and clear the field).
+ */
+async function uploadOutcome(input: HTMLInputElement, name: string): Promise<{ ok: boolean; note?: string }> {
+  await sleep(1500);
+  let box: Element = input;
+  for (let i = 0; i < 4 && box.parentElement && !box.parentElement.matches('form, body'); i++) box = box.parentElement;
+  const near = clean(box.textContent);
+  if (
+    /\b(too large|exceeds|not supported|unsupported|invalid file|wrong (file )?(type|format)|upload failed|could not upload|error uploading)\b/i.test(
+      near,
+    )
+  )
+    return { ok: false, note: 'The site refused the file; attach your CV on the page.' };
+  const base = name
+    .replace(/\.[a-z0-9]+$/i, '')
+    .slice(0, 20)
+    .toLowerCase();
+  if ((input.files?.length ?? 0) > 0 || near.toLowerCase().includes(base)) return { ok: true };
+  return { ok: true, note: 'Attached; check the site shows your CV.' };
+}
 function bestMatch<T>(value: string, items: T[], text: (t: T) => string): T | undefined {
   const v = norm(value);
   return (
@@ -391,6 +461,67 @@ async function pickFromList(input: HTMLElement, value: string): Promise<boolean>
   }
   return false;
 }
+const digits = (v: string): string => v.replace(/\D+/g, '');
+/** A pause that varies like a person moving between fields (sites score an instant, evenly spaced fill as a bot). */
+const human = (min: number, max: number) => sleep(min + Math.floor(Math.random() * (max - min)));
+/** Reads a field back after the site's own scripts had a moment to react (React and masks may revert or reformat). */
+async function settled(el: HTMLInputElement | HTMLTextAreaElement, wanted: string): Promise<{ ok: boolean; note?: string }> {
+  await sleep(300);
+  const now = el.value.trim();
+  if (!now) return { ok: false, note: 'The site cleared this field; type it on the page.' };
+  const w = wanted.trim();
+  if (now === w || now.toLowerCase() === w.toLowerCase()) return { ok: true };
+  // A mask reformats ("9876543210" becomes "98765 43210"): the same digits are the same answer.
+  if (digits(w).length >= 3 && digits(now) === digits(w)) return { ok: true };
+  return { ok: true, note: `The site changed this to “${now.slice(0, 60)}”; check it.` };
+}
+/** A number field takes digits only: "2+ years" becomes 2, "3.5 yrs" becomes 3.5. */
+function numberFrom(v: string): string {
+  return /-?\d+(?:\.\d+)?/.exec(v.replace(/,/g, ''))?.[0] ?? '';
+}
+/** Types into a field key by key, for segmented date boxes and spin buttons that ignore a pasted value. */
+async function typeKeys(el: HTMLInputElement, text: string): Promise<void> {
+  el.focus();
+  setNative(el, '');
+  fire(el, 'input');
+  for (const ch of text) {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent('keypress', { key: ch, bubbles: true }));
+    setNative(el, el.value + ch);
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: ch, inputType: 'insertText' }));
+    el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
+    await sleep(40);
+  }
+  fire(el, 'change', 'blur');
+}
+/**
+ * A phone box with its own country-code picker next to it: the code goes in the picker (when it offers it) and only
+ * the national number in the box, so the code is never typed twice. Returns the value to type.
+ */
+function phoneFor(input: HTMLElement, value: string): string {
+  const m = /^\s*(?:\+|00)(\d{1,3})[\s\-().]*(.*)$/.exec(value);
+  if (!m) return value;
+  const [, code, rest] = m;
+  const national = rest!.replace(/[^\d]/g, '');
+  let box: Element | null = input.parentElement;
+  for (let i = 0; i < 4 && box; i++, box = box.parentElement) {
+    const picker = [...box.querySelectorAll('select')].find(
+      sel => sel !== input && [...sel.options].some(o => new RegExp(`\\+\\s?${code}\\b`).test(o.textContent ?? '')),
+    );
+    if (picker) {
+      const opt = [...picker.options].find(o => new RegExp(`\\+\\s?${code}\\b`).test(o.textContent ?? ''))!;
+      setNative(picker, opt.value);
+      fire(picker, 'input', 'change');
+      return national;
+    }
+    // A flag picker (intl-tel-input and similar) already showing this code next to the box.
+    const shown = [...box.querySelectorAll('div, span, button')].find(
+      e => !e.contains(input) && new RegExp(`^\\+\\s?${code}$`).test(clean(e.textContent)),
+    );
+    if (shown) return national;
+  }
+  return value;
+}
 async function fillOne(entry: Entry, value: string | string[]): Promise<{ ok: boolean; note?: string }> {
   const first = entry.els[0]!;
   const one = Array.isArray(value) ? (value[0] ?? '') : value;
@@ -403,7 +534,8 @@ async function fillOne(entry: Entry, value: string | string[]): Promise<{ ok: bo
       sel.focus();
       setNative(sel, opt.value);
       fire(sel, 'input', 'change', 'blur');
-      return { ok: true };
+      await sleep(200);
+      return sel.value === opt.value ? { ok: true } : { ok: false, note: 'The site did not keep this choice; pick it on the page.' };
     }
     case 'radio': {
       const radios = entry.els as HTMLInputElement[];
@@ -424,11 +556,14 @@ async function fillOne(entry: Entry, value: string | string[]): Promise<{ ok: bo
     }
     case 'checkboxes': {
       const want = new Set((Array.isArray(value) ? value : [value]).map(norm));
-      for (const box of entry.els as HTMLInputElement[]) {
+      const boxes = entry.els as HTMLInputElement[];
+      for (const box of boxes) {
         const on = want.has(norm(optionLabel(box)));
         if (box.checked !== on) box.click();
       }
-      return { ok: true };
+      return boxes.every(b => b.checked === want.has(norm(optionLabel(b))))
+        ? { ok: true }
+        : { ok: false, note: 'Some choices did not stick; check them on the page.' };
     }
     case 'combobox': {
       const input = first as HTMLInputElement;
@@ -440,8 +575,10 @@ async function fillOne(entry: Entry, value: string | string[]): Promise<{ ok: bo
       }
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
       const picked = await pickFromList(input, one);
-      if (!picked) return { ok: true, note: 'Typed; check the suggestion it picked.' };
-      return { ok: true };
+      if (picked) return { ok: true };
+      // A box with a plain suggestion list (a datalist) accepts typed text; a real dropdown needs a chosen option.
+      if (input instanceof HTMLInputElement && input.list && input.value.trim()) return { ok: true };
+      return { ok: false, note: 'Typed, but no option from its list was chosen; choose one on the page.' };
     }
     case 'richtext': {
       first.focus();
@@ -449,17 +586,37 @@ async function fillOne(entry: Entry, value: string | string[]): Promise<{ ok: bo
       doc.getSelection()?.selectAllChildren(first);
       if (!doc.execCommand('insertText', false, one)) first.textContent = one;
       fire(first, 'input', 'change', 'blur');
-      return { ok: true };
+      await sleep(300);
+      return clean(first.textContent).includes(clean(one).slice(0, 40))
+        ? { ok: true }
+        : { ok: false, note: 'The editor did not keep the text; paste it on the page.' };
     }
     default: {
       const input = first as HTMLInputElement | HTMLTextAreaElement;
+      let text = one;
+      if (input instanceof HTMLInputElement) {
+        if (entry.kind === 'number' || input.type === 'number' || input.getAttribute('role') === 'spinbutton') {
+          text = numberFrom(one);
+          if (!text) return { ok: false, note: 'This field takes a number; type it on the page.' };
+        } else if (entry.kind === 'date') text = dateFor(input, one);
+        else if (entry.kind === 'tel' || /\b(phone|mobile)\b/i.test(labelOf(input))) text = phoneFor(input, one);
+        // Segmented date parts (Workday's MM / YYYY boxes) and spin buttons listen to keys, not a pasted value.
+        if (input.getAttribute('role') === 'spinbutton') {
+          await typeKeys(input, text);
+          return settled(input, text);
+        }
+      }
+      // A date picker's box is often read-only so only its calendar can set it: set it directly, then restore.
+      const locked = input.readOnly;
+      if (locked) input.readOnly = false;
       input.focus();
-      setNative(input, input instanceof HTMLInputElement && entry.kind === 'date' ? dateFor(input, one) : one);
+      setNative(input, text);
       fire(input, 'input', 'change');
       input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
       input.blur();
       fire(input, 'blur', 'focusout');
-      return { ok: input.value.length > 0 };
+      if (locked) input.readOnly = true;
+      return settled(input, text);
     }
   }
 }
@@ -541,6 +698,7 @@ function create(): ApplyApi {
         }
         if (el.closest('[data-rs-ignore]') || el.closest('header, nav, footer, [role="search"], [role="banner"]') || el.closest(MESSAGING))
           continue;
+        if (trap(el, type)) continue; // a field people cannot see, there to catch bots
         let kind: FieldKind;
         let els: Control[] = [el];
         let label: string;
@@ -602,6 +760,14 @@ function create(): ApplyApi {
                   : 'text';
           if (list.length) options = list;
           label = labelOf(input);
+          // Segmented dates (Workday: separate Month / Day / Year spin buttons) name only the part; add the question.
+          if (input.getAttribute('role') === 'spinbutton') {
+            kind = 'number';
+            const part = clean(input.getAttribute('aria-label')) || label;
+            const group = input.closest('fieldset, [role="group"]');
+            const question = clean(group?.querySelector('legend, label')?.textContent) || precedingText(group ?? input, 4);
+            if (question && !question.toLowerCase().includes(part.toLowerCase())) label = `${question} (${part})`;
+          }
           value = type === 'file' ? (input.files?.[0]?.name ?? '') : input.value;
         } else if (el.getAttribute('contenteditable') === 'true') {
           kind = 'richtext';
@@ -640,7 +806,9 @@ function create(): ApplyApi {
           ...(help ? { help } : {}),
           ...(sectionOf(el) ? { section: sectionOf(el) } : {}),
           ...(max ? { maxLength: max } : {}),
-          ...(near.min ? { minLength: near.min } : {}),
+          ...(near.min || (input?.minLength ?? 0) > 0 || (el instanceof HTMLTextAreaElement && el.minLength > 0)
+            ? { minLength: near.min || (input?.minLength && input.minLength > 0 ? input.minLength : (el as HTMLTextAreaElement).minLength) }
+            : {}),
           ...(input?.accept ? { accept: input.accept } : {}),
           ...(sensitive ? { sensitive } : {}),
         });
@@ -697,7 +865,9 @@ function create(): ApplyApi {
         } catch (e) {
           results.push({ id: item.id, ok: false, note: e instanceof Error ? e.message.slice(0, 120) : 'Could not type here.' });
         }
-        await sleep(60);
+        // Long answers take a person longer to write; short ones are a quick move to the next box.
+        const len = (Array.isArray(item.value) ? item.value.join(' ') : item.value).length;
+        await human(len > 200 ? 600 : 150, len > 200 ? 1200 : 600);
       }
       for (const f of files) {
         const entry = entries.get(f.id);
@@ -707,16 +877,16 @@ function create(): ApplyApi {
           continue;
         }
         record.push({ id: f.id, values: [snapshot(input)] });
+        await human(800, 1500);
         try {
           const dt = new DataTransfer();
           dt.items.add(fromBase64(f.data, f.name, f.type));
           input.files = dt.files;
           fire(input, 'input', 'change');
-          results.push({ id: f.id, ok: (input.files?.length ?? 0) > 0 });
+          results.push({ id: f.id, ...(await uploadOutcome(input, f.name)) });
         } catch {
           results.push({ id: f.id, ok: false, note: 'This site did not accept the file; attach it yourself.' });
         }
-        await sleep(300);
       }
       undo.push(...record);
       return results;
@@ -810,6 +980,10 @@ function create(): ApplyApi {
         };
       if ((next.el as HTMLButtonElement).disabled || next.el.getAttribute('aria-disabled') === 'true')
         return { error: 'The site’s Next button is disabled: a required field still needs an answer.' };
+      // A few sites label the button that sends the application "Continue" or "Next", usually on a review page. Outside
+      // LinkedIn's Easy Apply (whose buttons are known), such a page is never moved on from: the person submits it.
+      if (!easyApplyDialog(document) && looksFinal(root))
+        return { error: 'This looks like the final review page: check it and submit it yourself.' };
       undo.splice(0);
       this.clear();
       next.el.click();
@@ -817,7 +991,7 @@ function create(): ApplyApi {
     },
     submitted() {
       const SENT =
-        /\b(your application was sent|application sent|application (has been |was )?(submitted|received)|thank(s| you) for (your )?appl(ying|ication)|we('ve| have) received your application|successfully (applied|submitted)|you applied\b)/i;
+        /\b(your application (was|has been) (sent|submitted|received)|application sent|application (has been |was |is )?(submitted|received|complete(d)?)|thank(s| you),? for (your )?(appl(ying|ication)|submi(tting|ssion)|interest in (joining|working))|thanks for applying|we('ve| have) (received|got) your (application|resume|cv)|successfully (applied|submitted)|submission (received|successful|complete)|you('re| are) all set|you applied\b|we('ll| will) (be in touch|review your application|get back to you))/i;
       // LinkedIn: the Easy Apply window is replaced by a short "Application sent" window, and the job shows "Applied".
       for (const d of document.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"]'))
         if (visible(d) && SENT.test(clean(d.textContent).slice(0, 600))) return true;
@@ -944,6 +1118,64 @@ function create(): ApplyApi {
       if (!b) return false;
       b.click();
       return true;
+    },
+    async attachFallback(file) {
+      const RESUME = /\b(resume|résumé|cv|curriculum vitae)\b/i;
+      const around = (e: Element) => clean(`${e.textContent ?? ''} ${e.parentElement?.parentElement?.textContent ?? ''}`).slice(0, 400);
+      const free = () =>
+        [...document.querySelectorAll<HTMLInputElement>('input[type="file"]')].find(i => !i.disabled && !(i.files?.length ?? 0));
+      let input = free();
+      if (!input) {
+        // Pressing "Attach" makes many sites add their file field. A script's press can never open the file picker
+        // (Chrome requires a real click for that), so this only reveals the field.
+        const attach = [...document.querySelectorAll<HTMLElement>('button, a, [role="button"], label')].find(
+          b =>
+            visible(b) &&
+            /\b(attach|upload|browse)\b|\b(choose|select|add) (a |your )?(file|resume|cv)\b/i.test(
+              `${clean(b.textContent)} ${b.getAttribute('aria-label') ?? ''}`,
+            ) &&
+            !b.closest('form button[type="submit"]') &&
+            RESUME.test(around(b)),
+        );
+        if (attach) {
+          attach.click();
+          await sleep(900);
+          input = free();
+        }
+      }
+      const blob = fromBase64(file.data, file.name, file.type);
+      if (input && RESUME.test(around(input))) {
+        const dt = new DataTransfer();
+        dt.items.add(blob);
+        input.files = dt.files;
+        fire(input, 'input', 'change');
+        return { ...(await uploadOutcome(input, file.name)), how: 'input' };
+      }
+      // A drag-and-drop area for the CV: the file is dropped onto it the way a person would.
+      const zone = [...document.querySelectorAll<HTMLElement>('div, section, label')].find(z => {
+        const t = clean(z.textContent);
+        return (
+          visible(z) &&
+          t.length < 300 &&
+          /drag (and|&) drop|drop (your |a )?(file|resume|cv)|drop files? here/i.test(t) &&
+          RESUME.test(around(z))
+        );
+      });
+      if (!zone) return { ok: false, how: 'none' };
+      const dt = new DataTransfer();
+      dt.items.add(blob);
+      for (const type of ['dragenter', 'dragover', 'drop'])
+        zone.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+      await sleep(1500);
+      const base = file.name
+        .replace(/\.[a-z0-9]+$/i, '')
+        .slice(0, 20)
+        .toLowerCase();
+      return clean(zone.parentElement?.textContent ?? zone.textContent)
+        .toLowerCase()
+        .includes(base)
+        ? { ok: true, how: 'drop' }
+        : { ok: false, note: 'Your CV could not be dropped into this site’s upload area; attach it on the page.', how: 'drop' };
     },
     signIn() {
       const all = [

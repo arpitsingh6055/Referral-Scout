@@ -3,6 +3,22 @@
 All versions below were built on 11 November 2026 on the `cleanup/linkedin-only` branch.
 What is and is not proven on the live site is recorded in `docs/live-verification.md`.
 
+## 0.52.0: application filling made dependable on real company sites
+- **Privacy:** on an ordinary website the panel shows one quiet "Is this page a job application?" line and reads nothing on the page until you press it, even with all job sites allowed. Before, it read every page you visited while the panel was open.
+- **No lost progress:** every change to a tab's application record goes through one queue, so a late ChatGPT progress note can no longer overwrite the filled answers.
+- **Saved details go only where they belong:** questions about someone else (referrer, manager, reference) never get your email, phone or LinkedIn; your city only goes into "current city", not preferred, job or college location; a Yes / No is answered by ChatGPT from your details rather than forced from saved text.
+- **Only short facts are remembered:** an answer tied to one company or place ("Why Acme?", "our Pune office") is used for that application only; long saved answers are no longer reused.
+- **A field counts as filled only if the site kept it:** values are read back after the site's own scripts react (a mask's reformat is accepted), a dropdown needs a chosen option, and an upload is checked for the site's own error.
+- **New questions revealed by an answer are filled** on the same step (up to two extra passes) before Next is pressed.
+- **Hidden trap fields are skipped**, and fields are filled at a person's pace (longer before uploads and long answers).
+- **Records are cleared when the browser starts**, so an old record can't attach itself to an unrelated tab; closing the company's tab updates the LinkedIn card.
+- **Slow sites:** up to 25 seconds for the next step, stopping early only when the site shows errors.
+- **Sent applications:** more confirmation wordings are recognised, and the final card has "I've sent it" for the rest.
+- **Redirect links:** permission is asked on the company's real site, not on a tracking domain.
+- **Forms:** number fields get a number ("2+ years" becomes 2), minimum lengths are checked, segmented and read-only date boxes are filled, the CV is attached where the field appears only after "Attach" or through a drag-and-drop area, and a phone number goes into a site's country-code picker plus the number box without the code twice.
+- **New tabs:** a form that opens in another tab is followed there.
+- **Submit stays yours:** outside LinkedIn's Easy Apply, a page that looks like a final review is never moved on from, even if its button says "Continue".
+
 ## 0.15.3
 - Remember button was invisible in browsers with an ad blocker. Blockers such as Stands AdBlocker hide any `div` placed directly under `<html>` that has an inline `z-index` (rule `head ~ div[style*="z-index"]`). The button is now its own element in `<body>`, with no inline style, positioned from a stylesheet inside its shadow root.
 - If something still hides it, it is moved once and the page console says so.

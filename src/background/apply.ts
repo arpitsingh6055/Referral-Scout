@@ -15,6 +15,7 @@ import {
   planFromReply,
   questionKey,
   rememberedFor,
+  rememberable,
   rewritePrompt,
   isWritten,
   fitTo,
@@ -93,7 +94,7 @@ export interface ApplySession {
   /** On a company's site reached from LinkedIn: the LinkedIn tab the application started in. */
   from?: number;
   /** On LinkedIn: the tab where the company's own application is being filled. */
-  handoff?: { tabId: number; host: string };
+  handoff?: { tabId: number; host: string } | undefined;
   /** The site asked to sign in or create an account: filling carries on once the form shows. */
   waitSignIn?: boolean;
 }
@@ -110,6 +111,9 @@ export async function saveCvFile(file: { name: string; type: string; data: strin
   const size = fileFromBase64Size(file.data);
   if (size > MAX_FILE) throw new Error('That CV is larger than 8 MB. Save a smaller PDF and upload it again.');
   await write(CV_FILE_KEY, { ...file, size, savedAt: Date.now() } satisfies StoredFile);
+}
+async function clearSessions(): Promise<void> {
+  for (const item of await all('meta')) if (item.id.startsWith(`${SESSION_KEY}:`)) await remove('meta', item.id);
 }
 export async function clearApplyData(): Promise<void> {
   for (const key of [SESSION_KEY, PROFILE_KEY, CV_FILE_KEY, PHOTO_KEY, HISTORY_KEY]) await remove('meta', key);
@@ -242,16 +246,36 @@ const loadSession = async (tabId: number | undefined): Promise<ApplySession | un
   tabId === undefined ? undefined : await read<ApplySession>(sessionKey(tabId));
 const runs = new Map<number, AbortController>();
 const isRunning = (tabId: number): boolean => runs.has(tabId);
-async function update(tabId: number, fn: (s: ApplySession) => ApplySession | void): Promise<ApplySession | undefined> {
-  const s = await loadSession(tabId);
-  if (!s) return undefined;
-  const before = s.stage;
-  const next = fn(s) ?? s;
-  next.updatedAt = Date.now();
-  if (next.stage !== before || !next.stageSince) next.stageSince = next.updatedAt; // for the panel's elapsed time
-  await write(sessionKey(tabId), next);
+/**
+ * Every change to a tab's record goes through one queue per tab, so two changes never overlap: a late ChatGPT progress
+ * note can no longer write back an older record over the filled answers (each change reads the record the previous
+ * one wrote).
+ */
+const queues = new Map<number, Promise<unknown>>();
+function serial<T>(tabId: number, task: () => Promise<T>): Promise<T> {
+  const next = (queues.get(tabId) ?? Promise.resolve()).then(task, task);
+  const tail = next.catch(() => undefined);
+  queues.set(tabId, tail);
+  void tail.then(() => {
+    if (queues.get(tabId) === tail) queues.delete(tabId);
+  });
   return next;
 }
+async function update(tabId: number, fn: (s: ApplySession) => ApplySession | void): Promise<ApplySession | undefined> {
+  return serial(tabId, async () => {
+    const s = await loadSession(tabId);
+    if (!s) return undefined;
+    const before = s.stage;
+    const next = fn(s) ?? s;
+    next.updatedAt = Date.now();
+    if (next.stage !== before || !next.stageSince) next.stageSince = next.updatedAt; // for the panel's elapsed time
+    await write(sessionKey(tabId), next);
+    return next;
+  });
+}
+/** Replaces a tab's record, in the same queue as every change to it. */
+const saveSession = (tabId: number, s: ApplySession): Promise<void> => serial(tabId, () => write(sessionKey(tabId), s));
+const dropSession = (tabId: number): Promise<void> => serial(tabId, () => remove('meta', sessionKey(tabId)));
 export type SessionView = Omit<ApplySession, 'form' | 'jobText'> & {
   /** Fields of the step on screen that can still be changed from the panel, and which of them are written answers. */
   editable: string[];
@@ -354,7 +378,7 @@ async function nextJob(tabId: number): Promise<void> {
     if (cur && cur !== before) break;
   }
   await new Promise(res => setTimeout(res, 1200));
-  await remove('meta', sessionKey(tabId));
+  await dropSession(tabId);
   await start(tabId);
 }
 function startOfToday(): number {
@@ -382,31 +406,6 @@ async function externalFor(tabId: number | undefined, url: string): Promise<Dete
   if (!dest) return null;
   const u = new URL(dest);
   return { url: dest, host: u.host.replace(/^www\./, ''), origin: u.origin, permission: await allowed(u.origin) };
-}
-const formCheck = new Map<string, boolean>();
-/** A page outside known job sites counts as an application when it has a form of several fields or a CV upload. */
-async function looksLikeApplication(tabId: number | undefined, url: string, origin: string): Promise<boolean> {
-  if (tabId === undefined || !origin || !(await allowed(origin))) return false; // nothing is read without permission
-  const key = url.split('#')[0]!;
-  const known = formCheck.get(key);
-  if (known !== undefined) return known;
-  const [r] = await chrome.scripting
-    .executeScript({
-      target: { tabId },
-      func: () => {
-        const shown = (e: Element) => (e as HTMLElement).getClientRects().length > 0;
-        const fields = [
-          ...document.querySelectorAll('form input:not([type="hidden"]):not([type="search"]), form select, form textarea'),
-        ].filter(shown);
-        const upload = !!document.querySelector('input[type="file"]');
-        return fields.length >= 4 || (upload && fields.length >= 2);
-      },
-    })
-    .catch(() => []);
-  const yes = r?.result === true;
-  formCheck.set(key, yes);
-  if (formCheck.size > 200) formCheck.delete(formCheck.keys().next().value!);
-  return yes;
 }
 async function detect(tabId?: number, withPhoto = false): Promise<Detect> {
   const tab =
@@ -439,7 +438,7 @@ async function detect(tabId?: number, withPhoto = false): Promise<Detect> {
   const keep = session && !/linkedin\.com/.test(url) && (isRunning(session.tabId) || session.waitSignIn || session.from !== undefined);
   if (session && url && !keep && !sameApplication(session.url, url)) {
     runs.get(session.tabId)?.abort();
-    await remove('meta', sessionKey(session.tabId));
+    await dropSession(session.tabId);
     session = undefined;
   }
   return {
@@ -447,8 +446,9 @@ async function detect(tabId?: number, withPhoto = false): Promise<Detect> {
     url,
     origin,
     kind,
-    // Any other website: offer the fill only where the page really holds an application form, never on every site.
-    canFill: kind === 'other' ? await looksLikeApplication(tab?.id, url, origin) : canFill(kind),
+    // Any other website: the panel only offers a quiet "fill this page" button. The page itself is never read to decide
+    // that (even with every site allowed): it is read only once the person presses the button.
+    canFill: canFill(kind),
     permission: canFill(kind) ? await allowed(origin) : false,
     onboarded: !!s.profile,
     cv: cv ? { name: cv.name, size: cv.size } : null,
@@ -527,6 +527,16 @@ export async function checkSubmitted(tabId: number): Promise<boolean> {
     })
     .catch(() => []);
   if (!said.some(r => r.result === true)) return false;
+  await markSent(tabId);
+  return true;
+}
+/**
+ * Records a sent application: the history, then (unless the person turned it off) the referral search. Used when the
+ * site confirms it, and when the person says so with "I've sent it" (some confirmations use words no rule knows).
+ */
+async function markSent(tabId: number): Promise<void> {
+  const s = await loadSession(tabId);
+  if (!s || s.sent) return;
   runs.get(tabId)?.abort();
   const now = Date.now();
   const job = s.job;
@@ -553,7 +563,6 @@ export async function checkSubmitted(tabId: number): Promise<boolean> {
       ...(job ? { job } : {}),
       message: job?.company ? `Application sent to ${job.company} on its own site.` : 'Application sent on the company’s site.',
     }));
-  return true;
 }
 async function startReferral(job: ApplySession['job'], appliedAt: number): Promise<NonNullable<ApplySession['sent']>> {
   if (!job?.company || !job.title || job.title.length < 2) return { at: appliedAt, referral: 'needs-company', message: '' };
@@ -626,7 +635,7 @@ const pause = (ms: number, signal: AbortSignal) =>
  * "Apply", then "Apply manually" where a site asks how to apply), and stops at a sign-in or account page, which only
  * the person may complete. Only at the first step of a fill, so a button on a later step is never mistaken for it.
  */
-async function openCompanyApplication(tabId: number, signal: AbortSignal): Promise<'form' | 'signin' | 'none'> {
+async function openCompanyApplication(tabId: number, signal: AbortSignal): Promise<'form' | 'signin' | 'none' | 'moved'> {
   const s0 = await loadSession(tabId);
   const firstStep = !!s0 && s0.stepCount <= 1 && !s0.filled.length && !s0.files.length;
   for (let i = 0; i < 4; i++) {
@@ -665,9 +674,24 @@ async function openCompanyApplication(tabId: number, signal: AbortSignal): Promi
     const target = looks.find(r => r.result === 'opened');
     if (!target) return 'none';
     await update(tabId, x => ({ ...x, stage: 'opening', message: 'Opening the application form…' }));
-    await inFrame(tabId, target.frameId, () =>
-      (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.openApplication(true),
-    );
+    // Some sites open the form in yet another tab: follow it there, with the job carried along.
+    let spawned: number | undefined;
+    const onCreated = (t: chrome.tabs.Tab) => {
+      if (t.openerTabId === tabId && t.id !== undefined && spawned === undefined) spawned = t.id;
+    };
+    chrome.tabs.onCreated.addListener(onCreated);
+    try {
+      await inFrame(tabId, target.frameId, () =>
+        (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.openApplication(true),
+      );
+      for (let w = 0; w < 6 && spawned === undefined; w++) await pause(500, signal);
+    } finally {
+      chrome.tabs.onCreated.removeListener(onCreated);
+    }
+    if (spawned !== undefined) {
+      await followTo(tabId, spawned, signal);
+      return 'moved';
+    }
     // The form opens on the same page, on a new page, or (on some sites) in a new tab: wait for the page to settle.
     await pause(1500, signal);
     for (let w = 0; w < 20; w++) {
@@ -678,6 +702,63 @@ async function openCompanyApplication(tabId: number, signal: AbortSignal): Promi
     await pause(800, signal);
   }
   return 'form';
+}
+/**
+ * Moves a fill to a tab the application opened (the form in a new tab): waits for it to load, gives it this fill's job
+ * and description, shows the hand-over on this tab, and fills there. Nothing is read there without permission.
+ */
+async function followTo(fromTab: number, target: number, signal: AbortSignal): Promise<void> {
+  let page = '';
+  for (let i = 0; i < 40; i++) {
+    const t = await chrome.tabs.get(target).catch(() => undefined);
+    if (!t) return;
+    page = t.url || t.pendingUrl || '';
+    if (page && !/^(about|chrome):/.test(page) && t.status === 'complete') break;
+    await pause(500, signal);
+  }
+  if (!page || /^(about|chrome):/.test(page)) return;
+  const host = new URL(page).host;
+  const old = await loadSession(fromTab);
+  await saveSession(target, {
+    tabId: target,
+    url: page,
+    stage: 'reading',
+    message: `Opening the application on ${host}…`,
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+    stageSince: Date.now(),
+    step: '',
+    stepCount: 1,
+    summary: old?.summary ?? '',
+    filled: [],
+    files: [],
+    ask: [],
+    leftForYou: [],
+    hasNext: false,
+    hasSubmit: false,
+    captcha: false,
+    // Whoever started this fill (a LinkedIn tab, or this tab itself) is where the result is shown too.
+    from: old?.from ?? fromTab,
+    ...(old?.job ? { job: old.job } : {}),
+    ...(old?.jobText ? { jobText: old.jobText } : {}),
+  });
+  await update(fromTab, x => ({
+    ...x,
+    stage: 'done',
+    handoff: { tabId: target, host },
+    message: `The application opened in a new tab on ${host}. Referral Scout is filling it there.`,
+  }));
+  if (old?.from !== undefined && old.from !== fromTab) await update(old.from, x => ({ ...x, handoff: { tabId: target, host } })); // the LinkedIn card points at the new tab
+  if (!(await allowed(originOf(page)))) {
+    await update(target, x => ({
+      ...x,
+      stage: 'permission',
+      needOrigins: [originOf(page)],
+      message: `To fill this application, allow Referral Scout on ${host}. It reads the form only while it fills it.`,
+    }));
+    return;
+  }
+  void run(target, sig => autoRun(target, sig, 1));
 }
 /**
  * A LinkedIn job applied for on the company's site. Presses LinkedIn's own Apply (so LinkedIn records it), follows the
@@ -732,7 +813,7 @@ async function handOff(tabId: number, url: string, jobText: string, signal: Abor
     throw new Error('The company’s application page did not finish opening. Press Fill on that page when it loads.');
   const host = new URL(page).host;
   const linkedinSession = await loadSession(tabId);
-  await write(sessionKey(target), {
+  await saveSession(target, {
     tabId: target,
     url: page,
     stage: 'reading',
@@ -775,7 +856,7 @@ async function handOff(tabId: number, url: string, jobText: string, signal: Abor
   // The new tab gets its own run; this one (the LinkedIn tab) is finished.
   void run(target, sig => autoRun(target, sig, 1));
 }
-async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Promise<{ advance: boolean } | void> {
+async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Promise<{ advance: boolean; again?: boolean } | void> {
   const tab = await chrome.tabs.get(tabId);
   const url = tab.url ?? '';
   const kind = pageKindFromUrl(url);
@@ -793,7 +874,7 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
   if (linkedin) await passInterstitials(tabId);
   if (!linkedin) {
     const opened = await openCompanyApplication(tabId, signal);
-    if (opened === 'signin') return;
+    if (opened === 'signin' || opened === 'moved') return;
   }
   let frames = await scanAll(tabId, linkedin);
   let page = merge(frames, url, tab.title ?? '');
@@ -998,12 +1079,49 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
   signal.throwIfAborted();
   if (plan.fill.length || plan.files.length) await update(tabId, s => ({ ...s, stage: 'filling', message: 'Filling the form…' }));
   const results = plan.fill.length || plan.files.length ? await applyPlan(tabId, plan, page.form, cv, photo) : [];
+  // The CV is required for every application. With no ordinary upload field on this step (a site that adds it when
+  // "Attach" is pressed, or a drag-and-drop area), it is attached that way.
+  if (!linkedin && !page.form.some(f => f.kind === 'file') && !(await loadSession(tabId))?.files.some(f => f.file === 'cv' && f.ok)) {
+    const tries = await inFrames(tabId, () => undefined).catch(() => []);
+    for (const { frameId } of tries) {
+      const r = await inFrame(
+        tabId,
+        frameId,
+        (f: unknown) =>
+          (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.attachFallback(f as never) ??
+          Promise.resolve({ ok: false, how: 'none' as const }),
+        [{ name: cv.name, type: cv.type, data: cv.data }],
+      ).catch(() => undefined);
+      if (!r || r.how === 'none') continue;
+      plan.files.push({ id: 'cv-attach', frame: frameId, label: 'CV', file: 'cv' });
+      results.push({ id: 'cv-attach', ok: r.ok, ...(r.note ? { note: r.note } : {}) });
+      break;
+    }
+  }
   const byId = new Map(results.map(r => [r.id, r]));
   await mark(tabId, page.form, plan, byId);
+  // Answers can reveal more questions ("Do you need sponsorship? Yes" brings "Which visa?"). Read the step again: any
+  // new empty question is filled in another pass before moving on, instead of pressing Next into the site's error.
+  let revealed = 0;
+  if (plan.fill.length) {
+    await new Promise(r => setTimeout(r, 700));
+    const again = merge(await scanAll(tabId, linkedin).catch(() => [] as Frame[]), url, tab.title ?? '');
+    const known = new Set(page.form.map(f => f.id));
+    revealed = needsWork(again.form, linkedin).filter(f => !known.has(f.id) && (f.required || !linkedin)).length;
+  }
   const failedRequired = results.filter(r => !r.ok && page.form.find(f => f.id === r.id)?.required).length;
   const failed = results.filter(r => !r.ok).length;
   const stillEmptyRequired = rest.filter(f => f.required && !plan.fill.some(x => x.id === f.id) && !plan.files.some(x => x.id === f.id));
-  const advance = !!page.hasNext && !page.captcha && !plan.ask.length && !failedRequired && !stillEmptyRequired.length;
+  const blocked = !!plan.ask.length || !!failedRequired || !!stillEmptyRequired.length || page.captcha;
+  if (revealed && !blocked) {
+    await update(tabId, s => ({
+      ...s,
+      stage: 'reading',
+      message: `Your answers opened ${revealed} more question${revealed === 1 ? '' : 's'}. Filling ${revealed === 1 ? 'it' : 'them'}…`,
+    }));
+    return { advance: false, again: true };
+  }
+  const advance = !!page.hasNext && !blocked;
   await update(tabId, s => ({
     ...s,
     stage: advance ? 'moving' : 'review',
@@ -1146,7 +1264,7 @@ async function start(tabId: number, attempt = 1): Promise<void> {
   const tab = await chrome.tabs.get(tabId);
   const old = await loadSession(tabId);
   const same = old && old.tabId === tabId;
-  await write(sessionKey(tabId), {
+  await saveSession(tabId, {
     tabId,
     url: tab.url ?? '',
     stage: 'reading',
@@ -1171,6 +1289,19 @@ async function start(tabId: number, attempt = 1): Promise<void> {
   void run(tabId, signal => autoRun(tabId, signal, attempt));
 }
 /** Presses the site's Next / Continue / Review and waits for the next step. False when the site stayed put. */
+/** True when the page shows the site's own validation errors (fields marked invalid, an alert with text). */
+async function siteRefused(tabId: number): Promise<boolean> {
+  const r = await chrome.scripting
+    .executeScript({
+      target: { tabId, allFrames: true },
+      func: () =>
+        [...document.querySelectorAll('[aria-invalid="true"], [role="alert"]')].some(
+          e => e.getClientRects().length > 0 && (e.getAttribute('aria-invalid') === 'true' || (e.textContent ?? '').trim().length > 3),
+        ),
+    })
+    .catch(() => []);
+  return r.some(x => x.result === true);
+}
 async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
   const s = await loadSession(tabId);
   if (!s) return false;
@@ -1179,8 +1310,12 @@ async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
   await update(tabId, x => ({ ...x, stage: 'moving' }));
   const clicked = await inFrame(tabId, frame, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.next());
   if (!clicked?.clicked) throw new Error(clicked?.error ?? 'The page changed; press Fill again.');
-  for (let i = 0; i < 16; i++) {
-    await new Promise(r => setTimeout(r, i < 4 ? 400 : 750));
+  // Slow sites (Workday, company job sites) can take 20 seconds or more to show the next step: wait up to 25 seconds
+  // for the step to change, and stop early only when the site has plainly refused (an error shown on the fields).
+  const began = Date.now();
+  let emptyReads = 0;
+  for (let i = 0; Date.now() - began < 25000; i++) {
+    await new Promise(r => setTimeout(r, i < 4 ? 400 : 800));
     signal.throwIfAborted();
     const tab = await chrome.tabs.get(tabId);
     if (tab.status === 'loading') continue;
@@ -1191,7 +1326,8 @@ async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
       await update(tabId, x => ({ ...x, stepCount: x.stepCount + 1 }));
       return true;
     }
-    if (!page.form.length && !page.hasNext && !page.hasSubmit && i > 5) {
+    emptyReads = !page.form.length && !page.hasNext && !page.hasSubmit ? emptyReads + 1 : 0;
+    if (emptyReads >= 3 && Date.now() - began > 8000) {
       await update(tabId, x => ({
         ...x,
         stage: 'done',
@@ -1199,6 +1335,7 @@ async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
       }));
       return false;
     }
+    if (Date.now() - began > 5000 && (await siteRefused(tabId))) break;
   }
   await update(tabId, x => ({
     ...x,
@@ -1210,8 +1347,23 @@ async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
 /** Fills each step and moves on by itself; stops for the person's answers, a site error, or the final Submit. */
 async function autoRun(tabId: number, signal: AbortSignal, attempt: number, moveFirst = false): Promise<void> {
   if (moveFirst && !(await pressNext(tabId, signal))) return;
-  for (let i = 0; i < 25; i++) {
+  for (let i = 0, passes = 0; i < 25; i++) {
     const r = await fillStep(tabId, signal, i === 0 ? attempt : 1);
+    // New questions appeared on the same step: fill them (at most twice per step) before moving on.
+    if (r?.again && passes < 2) {
+      passes++;
+      i--;
+      continue;
+    }
+    if (r?.again) {
+      await update(tabId, x => ({
+        ...x,
+        stage: 'review',
+        message: 'New questions kept appearing as answers were filled. Check this step on the page, then press Next step.',
+      }));
+      return;
+    }
+    passes = 0;
     if (!r?.advance) return;
     if (!(await pressNext(tabId, signal))) return;
   }
@@ -1236,7 +1388,8 @@ async function answer(tabId: number, answers: { id: string; value: string; remem
   // Questions the person chose to answer on the page themselves.
   const skipped = (s.ask ?? []).filter(q => skip.includes(q.id));
   if (!items.length && !skipped.length) throw new Error('Type an answer first.');
-  const remember = items.filter(x => x.a.remember);
+  // Only short facts are kept for later applications; an answer tied to this job or company is used here only.
+  const remember = items.filter(x => x.a.remember && rememberable(x.f, x.a.value, s.job));
   if (remember.length) {
     const profile = await applyProfile();
     for (const { a, f } of remember) profile.answers[questionKey(f.label)] = a.value.trim().slice(0, 2000);
@@ -1317,6 +1470,7 @@ export const applyRequest = z.discriminatedUnion('action', [
   z.object({ kind: z.literal('apply'), action: z.literal('next') }),
   z.object({ kind: z.literal('apply'), action: z.literal('nextJob') }),
   z.object({ kind: z.literal('apply'), action: z.literal('testAi') }),
+  z.object({ kind: z.literal('apply'), action: z.literal('sent') }),
   z.object({ kind: z.literal('apply'), action: z.literal('topChoice') }),
   z.object({ kind: z.literal('apply'), action: z.literal('edit'), id: z.string().max(60), value: z.string().max(4000) }),
   z.object({ kind: z.literal('apply'), action: z.literal('rewrite'), id: z.string().max(60), style: z.enum(['rewrite', 'shorter']) }),
@@ -1356,8 +1510,22 @@ export function registerApplyMessages(): void {
   // when the side panel is closed.
   chrome.tabs.onRemoved?.addListener(tabId => {
     runs.get(tabId)?.abort();
-    void remove('meta', sessionKey(tabId)).catch(() => undefined);
+    void (async () => {
+      const s = await loadSession(tabId);
+      await dropSession(tabId);
+      // The company's tab of a LinkedIn application was closed: the LinkedIn card stops saying it is filled there.
+      if (s?.from !== undefined && (await loadSession(s.from))?.handoff?.tabId === tabId && !s.sent)
+        await update(s.from, x => ({
+          ...x,
+          stage: 'review',
+          handoff: undefined,
+          message: 'The company’s application tab was closed before the application was sent. Press Fill again to reopen it.',
+        }));
+    })().catch(() => undefined);
   });
+  // Tab ids start again after the browser restarts, so a record left from an earlier run could attach itself to an
+  // unrelated tab: every application record is cleared at startup (history and saved answers stay).
+  chrome.runtime.onStartup?.addListener(() => void clearSessions().catch(() => undefined));
   chrome.tabs.onUpdated.addListener((tabId, info) => {
     if (info.status !== 'complete' && !info.url) return;
     void loadSession(tabId).then(s => {
@@ -1396,6 +1564,13 @@ export function registerApplyMessages(): void {
         if (isRunning(tabId)) throw new Error('This tab is still being filled.');
         // Awaited (about ten seconds at most) so a missing job shows as a message; the fill itself runs on its own.
         await nextJob(tabId);
+      }
+      if (req.action === 'sent') {
+        const s = await loadSession(tabId);
+        if (!s) throw new Error('Nothing is being filled in this tab.');
+        if (!s.hasSubmit) throw new Error('Fill the application up to its last step first.');
+        await captureJob(tabId, s.url);
+        await markSent(tabId);
       }
       if (req.action === 'testAi') {
         // A tiny real task, so the check covers sign-in, the composer, sending and reading the answer.
@@ -1501,7 +1676,7 @@ export function registerApplyMessages(): void {
         const s = await loadSession(tabId);
         runs.get(tabId)?.abort();
         if (s) await everyFrame(s.tabId, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.clear());
-        await remove('meta', sessionKey(tabId));
+        await dropSession(tabId);
       }
       if (req.action === 'saveProfile') {
         const profile = await applyProfile();

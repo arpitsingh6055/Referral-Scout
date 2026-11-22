@@ -6,7 +6,7 @@ import { node, button, notify, flags, accordion, field, choice, rerender, reques
 import { errorText } from './render';
 import { completeCvText } from './cv-text';
 import type { ApplyRequest, Detect, ApplySession } from '../background/apply';
-import { DAILY_SOFT_CAP, questionKey, type ApplyProfile } from '../shared/apply';
+import { DAILY_SOFT_CAP, looksLikeRedirect, questionKey, type ApplyProfile } from '../shared/apply';
 
 export async function applyRequest(data: ApplyRequest): Promise<Detect> {
   // Each tab has its own fill: every request says which tab it is about (the one this card shows).
@@ -295,6 +295,17 @@ function draw(d: Detect): void {
     if (first) card.append(first);
     return;
   }
+  if (d.kind === 'other' && !s && d.cv) {
+    // An ordinary website: one quiet line. Nothing on the page is read until the person presses the button.
+    card.className = 'card apply-card quiet';
+    const row = node('div', '', 'row');
+    row.append(
+      node('p', 'Is this page a job application?', 'card-sub'),
+      button(d.permission ? 'Fill this page' : `Allow on ${host(d.origin)} and fill`, () => startFill(d), 'btn sm'),
+    );
+    card.append(row);
+    return;
+  }
   card.className = `card apply-card${d.kind === 'other' && !s ? ' quiet' : ''}`;
   const head = node('div', '', 'apply-head');
   head.append(node('span', 'Application', 'eyebrow'), node('h3', s?.summary || 'Fill this application', 'card-title'));
@@ -342,7 +353,8 @@ function draw(d: Detect): void {
             async () => {
               // Asked now, while the button press allows it: the company's site cannot be read without it. If the person
               // declines, the company's tab still opens and asks again there.
-              if (!ext.permission) await chrome.permissions.request({ origins: [`${ext.origin}/*`] }).catch(() => false);
+              if (!ext.permission && !looksLikeRedirect(ext.url))
+                await chrome.permissions.request({ origins: [`${ext.origin}/*`] }).catch(() => false);
               await startFill(d);
             },
             'btn primary',
@@ -357,9 +369,15 @@ function draw(d: Detect): void {
     card.append(row);
     if (ext && !ext.permission)
       card.append(
-        node('p', `Chrome asks once to allow ${ext.host}. Referral Scout reads that site only while it fills your application.`, 'fine'),
+        node(
+          'p',
+          looksLikeRedirect(ext.url)
+            ? `The link passes through ${ext.host} first. Once the company’s site opens, allow it with one press there (or allow all job sites in Settings).`
+            : `Chrome asks once to allow ${ext.host}. Referral Scout reads that site only while it fills your application.`,
+          'fine',
+        ),
       );
-    if (!d.permission)
+    if (!d.permission && !ext)
       card.append(
         node(
           'p',
@@ -528,6 +546,11 @@ function draw(d: Detect): void {
         'btn sm ghost',
         'Put back what was there.',
       ),
+    );
+  // Most sites confirm in words Referral Scout recognises; for the rest the person says so in one press.
+  if (s.hasSubmit && !s.hasNext)
+    actions.append(
+      button("I've sent it", async () => draw(await applyRequest({ kind: 'apply', action: 'sent' })), 'btn sm', 'Marked as sent.'),
     );
   actions.append(button('Close', async () => draw(await applyRequest({ kind: 'apply', action: 'stop' })), 'btn sm ghost', 'Closed.'));
   card.append(actions);
@@ -768,7 +791,7 @@ function askBox(s: ApplySession): HTMLElement {
   remember.type = 'checkbox';
   remember.checked = true;
   const rl = node('label', '', 'fine inline');
-  rl.append(remember, document.createTextNode(' Remember these answers for future applications'));
+  rl.append(remember, document.createTextNode(' Remember short facts (notice period, salary, years) for future applications'));
   box.append(
     rl,
     button(

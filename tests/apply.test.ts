@@ -17,6 +17,8 @@ import {
   applyError,
   rewritePrompt,
   outboundUrl,
+  rememberable,
+  looksLikeRedirect,
   type FormField,
 } from '../src/shared/apply';
 import type { ApplyApi } from '../src/content/apply';
@@ -816,5 +818,176 @@ describe('applying on the company’s own site', () => {
       `<form>${['First name', 'Last name', 'Email', 'Phone', 'City', 'LinkedIn'].map(l => `<input aria-label="${l}">`).join('')}<input type="password" aria-label="Create a password (optional)"></form>`,
     );
     expect(form.signIn()).toBe(false); // a long application with an optional account box is still the application
+  });
+});
+
+describe('production review fixes', () => {
+  const load = async (html: string) => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    Element.prototype.scrollIntoView = function () {};
+    document.body.innerHTML = html;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    return (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+  };
+  const f = (id: string, label: string, kind: FormField['kind'] = 'text', options?: string[]): FormField =>
+    ({ id, frame: 0, kind, label, required: true, ...(options ? { options } : {}) }) as FormField;
+
+  it('never puts the applicant’s details into a question about someone else, a non-home location, or a Yes / No', () => {
+    const profile = {
+      ...emptyApplyProfile(),
+      details: {
+        email: 'arpit@x.com',
+        phone: '+91 98765 43210',
+        city: 'Ghaziabad',
+        workAuthorization: 'Indian citizen; needs sponsorship for the US',
+        noticePeriod: '30 days',
+      },
+    };
+    const plan = localPlan(
+      [
+        f('e', 'Email'),
+        f('re', 'Referrer’s email'),
+        f('mp', 'Manager phone number'),
+        f('c', 'Current city'),
+        f('pl', 'Preferred location'),
+        f('cl', 'College location'),
+        f('sp', 'Will you now or in the future require sponsorship?', 'radio', ['Yes', 'No']),
+        f('np', 'Notice period', 'select', ['Immediate', '30 days', '60 days']),
+        f('rl', 'LinkedIn profile of your referrer', 'url'),
+      ],
+      profile,
+      { linkedinUrl: 'https://www.linkedin.com/in/arpit/', photo: false },
+    );
+    expect(plan.fill.map(x => [x.id, x.value])).toEqual([
+      ['e', 'arpit@x.com'],
+      ['c', 'Ghaziabad'],
+      ['np', '30 days'],
+    ]);
+  });
+  it('remembers only short facts, never an answer tied to one job or company', () => {
+    const job = { company: 'Acme', location: 'Pune, India' };
+    expect(rememberable(f('n', 'Notice period'), '30 days', job)).toBe(true);
+    expect(rememberable(f('y', 'Years of experience with SQL', 'number'), '3', job)).toBe(true);
+    expect(rememberable(f('w', 'Why do you want to join Acme?', 'textarea'), 'Because…', job)).toBe(false);
+    expect(rememberable(f('o', 'Can you work from our Pune office?', 'radio'), 'Yes', job)).toBe(false);
+    expect(rememberable(f('l', 'Anything else?'), 'x'.repeat(120), job)).toBe(false);
+  });
+  it('turns "2+ years" into a number for a number field and flags answers below the minimum length', () => {
+    const form = [f('y', 'Years with SQL', 'number'), { ...f('m', 'Message to the hiring team', 'textarea'), minLength: 50 } as FormField];
+    const plan = planFromReply(
+      {
+        summary: 's',
+        fill: [
+          { id: 'y', value: '2+ years', confidence: 'high', why: 'CV' },
+          { id: 'm', value: 'Keen to help.', confidence: 'high', why: 'Fit' },
+        ],
+        files: [],
+        ask: [],
+      },
+      form,
+      emptyApplyProfile(),
+      false,
+    );
+    expect(plan.fill.find(x => x.id === 'y')!.value).toBe('2');
+    expect(plan.fill.find(x => x.id === 'm')).toMatchObject({ confidence: 'low' });
+  });
+  it('recognises redirect links, so permission is asked on the real site', () => {
+    expect(looksLikeRedirect('https://click.appcast.io/track/abc?url=https%3A%2F%2Fjobs.acme.com')).toBe(true);
+    expect(looksLikeRedirect('https://www.rubrik.com/company/careers/departments/job.8345283?gh_jid=8345283')).toBe(false);
+    expect(looksLikeRedirect('https://jobs.lever.co/acme/123')).toBe(false);
+  });
+  it('skips honeypot fields people cannot see or reach', async () => {
+    const api = await load(`<form>
+      <label for="n">Full name</label><input id="n" name="name">
+      <input name="honeypot" aria-label="Leave this empty">
+      <input name="website" tabindex="-1" autocomplete="off" aria-label="Website">
+      <div style="opacity:0"><input name="extra" aria-label="Extra"></div>
+    </form>`);
+    expect(api.scan().form.map(x => x.label)).toEqual(['Full name']);
+  });
+  it('counts a field as filled only if the site kept it, accepts a mask’s reformat, and needs a chosen dropdown option', async () => {
+    const api = await load(`<form>
+      <label for="a">First name</label><input id="a">
+      <label for="p">Phone</label><input id="p" type="tel">
+      <label for="c">Location</label><input id="c" role="combobox" aria-controls="none">
+      <label for="y">Years of experience</label><input id="y" type="number">
+    </form>`);
+    const a = document.getElementById('a') as HTMLInputElement;
+    a.addEventListener('change', () => setTimeout(() => (a.value = ''), 50)); // a controlled input that reverts
+    const p = document.getElementById('p') as HTMLInputElement;
+    p.addEventListener('change', () => (p.value = p.value.replace(/^(\d{5})(\d{5})$/, '$1 $2'))); // a mask
+    const snap = api.scan();
+    const id = (l: string) => snap.form.find(x => x.label === l)!.id;
+    const r = await api.fill(
+      [
+        { id: id('First name'), kind: 'text', value: 'Arpit' },
+        { id: id('Phone'), kind: 'tel', value: '9876543210' },
+        { id: id('Location'), kind: 'combobox', value: 'Pune' },
+        { id: id('Years of experience'), kind: 'number', value: '2+ years' },
+      ],
+      [],
+    );
+    const by = Object.fromEntries(r.map(x => [x.id, x]));
+    expect(by[id('First name')]).toMatchObject({ ok: false });
+    expect(by[id('Phone')]).toMatchObject({ ok: true });
+    expect(by[id('Phone')]!.note).toBeUndefined();
+    expect(by[id('Location')]).toMatchObject({ ok: false });
+    expect((document.getElementById('y') as HTMLInputElement).value).toBe('2');
+  }, 20000);
+  it('puts the country code in the phone’s own country picker and types only the national number', async () => {
+    const api = await load(`<form><div class="phone">
+      <select aria-label="Country code"><option value="us">United States (+1)</option><option value="in">India (+91)</option></select>
+      <label for="p">Phone number</label><input id="p" type="tel"></div>
+      <input aria-label="First name"><input aria-label="Last name"></form>`);
+    const snap = api.scan();
+    const pid = snap.form.find(x => x.label === 'Phone number')!.id;
+    await api.fill([{ id: pid, kind: 'tel', value: '+91 98765 43210' }], []);
+    expect((document.querySelector('select') as HTMLSelectElement).value).toBe('in');
+    expect((document.getElementById('p') as HTMLInputElement).value).toBe('9876543210');
+  }, 15000);
+  it('never presses Next on a review page outside LinkedIn', async () => {
+    const api = await load(
+      `<h2>Review your application</h2><form><input aria-label="Name" value="A"><button type="button">Continue</button></form>`,
+    );
+    let pressed = false;
+    document.querySelector('button')!.addEventListener('click', () => (pressed = true));
+    api.scan();
+    expect(api.next().error).toMatch(/final review/);
+    expect(pressed).toBe(false);
+  });
+  it('drops the CV onto a drag-and-drop area when the form has no upload field', async () => {
+    // jsdom has no drag-and-drop: a minimal DataTransfer and DragEvent, as Chrome provides.
+    class FakeTransfer {
+      list: File[] = [];
+      items = { add: (file: File) => this.list.push(file) };
+      get files() {
+        return this.list as unknown as FileList;
+      }
+    }
+    class FakeDrag extends Event {
+      dataTransfer: FakeTransfer | null;
+      constructor(type: string, init: EventInit & { dataTransfer?: FakeTransfer }) {
+        super(type, init);
+        this.dataTransfer = init.dataTransfer ?? null;
+      }
+    }
+    vi.stubGlobal('DataTransfer', FakeTransfer);
+    vi.stubGlobal('DragEvent', FakeDrag);
+    const api = await load(`<form><p>Resume / CV</p><div class="zone">Drag and drop your resume here</div></form>`);
+    const zone = document.querySelector('.zone')!;
+    zone.addEventListener('drop', e => {
+      const name = (e as DragEvent).dataTransfer?.files[0]?.name ?? '';
+      zone.insertAdjacentHTML('afterend', `<span>${name} uploaded</span>`);
+    });
+    const r = await api.attachFallback({ name: 'Arpit_Singh_CV.pdf', type: 'application/pdf', data: btoa('pdf') });
+    expect(r).toMatchObject({ ok: true, how: 'drop' });
+  }, 15000);
+  it('recognises more confirmation wordings as sent', async () => {
+    const api = await load(`<main><h1>You're all set!</h1><p>We will review your application and get back to you.</p></main>`);
+    expect(api.submitted()).toBe(true);
   });
 });
