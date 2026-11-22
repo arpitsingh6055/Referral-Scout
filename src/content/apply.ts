@@ -27,7 +27,10 @@ export interface FillResult {
 }
 export interface ApplyApi {
   version: number;
-  scan(): Omit<PageSnapshot, 'url' | 'title'> & { url: string; title: string; frames: string[]; empty: boolean };
+  /** linkedin: read only LinkedIn's Easy Apply window, never the rest of the page (search box, messaging, filters). */
+  scan(opts?: {
+    linkedin?: boolean;
+  }): Omit<PageSnapshot, 'url' | 'title'> & { url: string; title: string; frames: string[]; empty: boolean; easyApplyOpen?: boolean };
   fill(
     items: { id: string; kind: FieldKind; value: string | string[] }[],
     files: { id: string; name: string; type: string; data: string }[],
@@ -36,9 +39,10 @@ export interface ApplyApi {
   undo(): number;
   clear(): void;
   next(): { clicked?: string; error?: string };
-  openEasyApply(): 'opened' | 'external' | 'open' | 'none';
+  /** click=false only reports what it would do, so the background can click in exactly one frame. */
+  openEasyApply(click?: boolean): 'opened' | 'external' | 'open' | 'none';
 }
-const VERSION = 3;
+const VERSION = 4;
 const scope = globalThis as typeof globalThis & { __referralScoutApply?: ApplyApi };
 
 /* ---------- reading the page ---------- */
@@ -124,13 +128,34 @@ function sectionOf(el: Element): string {
   return clean(heading?.textContent).slice(0, 120);
 }
 /** Where the application lives: LinkedIn's Easy Apply window, any open dialog with fields, the largest form, or the page. */
+const MESSAGING = '.msg-overlay-conversation-bubble, .msg-overlay-list-bubble, [class*="msg-overlay" i], [aria-label*="messag" i]';
+/** LinkedIn's Easy Apply window, when it is open: a dialog about applying, never the messaging pop-up. */
+function easyApplyDialog(doc: Document): Element | null {
+  const known = [
+    ...doc.querySelectorAll('.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"], [class*="easy-apply" i][role="dialog"]'),
+  ].find(visible);
+  if (known) return known;
+  return (
+    [...doc.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"]')]
+      .filter(d => visible(d) && !d.matches(MESSAGING) && !d.closest(MESSAGING))
+      .find(d =>
+        /\b(apply to|easy apply|submit application|contact info|additional questions|work authori[sz]ation|resume|review your application)\b/i.test(
+          clean(d.textContent).slice(0, 4000),
+        ),
+      ) ?? null
+  );
+}
 function formRoot(doc: Document): Element {
   const has = (e: Element) => [...e.querySelectorAll('input, select, textarea, [contenteditable="true"]')].some(visible);
-  const easy = doc.querySelector('.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"], .artdeco-modal.jobs-easy-apply-modal');
+  const easy = easyApplyDialog(doc);
   if (easy && has(easy)) return easy;
-  const dialogs = [...doc.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"]')].filter(d => visible(d) && has(d));
+  const dialogs = [...doc.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"]')].filter(
+    d => visible(d) && has(d) && !d.matches(MESSAGING) && !d.closest(MESSAGING),
+  );
   if (dialogs.length) return dialogs.at(-1)!;
-  const forms = [...doc.querySelectorAll('form')].filter(has);
+  const forms = [...doc.querySelectorAll('form')].filter(
+    f => has(f) && !f.matches('[role="search"]') && !f.closest('header, nav, [role="search"]'),
+  );
   if (forms.length) {
     const count = (f: Element) => [...f.querySelectorAll('input, select, textarea')].filter(visible).length;
     return forms.sort((a, b) => count(b) - count(a))[0]!;
@@ -163,7 +188,9 @@ function jobText(doc: Document, form: Element): string {
     }
   }
   if (!parts.some(p => p.startsWith('DESCRIPTION'))) {
-    const linkedin = doc.querySelector('.jobs-description__content, .jobs-box__html-content, #job-details, .jobs-description');
+    const linkedin = doc.querySelector(
+      '[componentkey^="JobDetails_AboutTheJob_"], .jobs-description__content, .jobs-box__html-content, #job-details, .jobs-description',
+    );
     const title = clean(
       doc.querySelector('.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title, h1')?.textContent,
     );
@@ -370,6 +397,8 @@ function create(): ApplyApi {
   const entries = new Map<string, Entry>();
   const undo: Previous[] = [];
   const marked = new Set<HTMLElement>();
+  // The form area the last scan read; Next is only ever looked for inside it.
+  let lastRoot: Element | null = null;
   const idFor = (el: Element): string => {
     const old = el.getAttribute('data-rs-id');
     if (old) return old;
@@ -386,10 +415,29 @@ function create(): ApplyApi {
   const MARK = { done: '#16a34a', check: '#d97706', you: '#2563eb' } as const;
   return {
     version: VERSION,
-    scan() {
+    scan(opts) {
       const doc = document;
       entries.clear();
-      const root = formRoot(doc);
+      const easy = opts?.linkedin ? easyApplyDialog(doc) : null;
+      if (opts?.linkedin && !easy) {
+        lastRoot = null;
+        return {
+          url: location.href,
+          title: doc.title,
+          job: window === window.top ? jobText(doc, doc.body) : '',
+          html: '',
+          form: [],
+          step: '',
+          hasNext: false,
+          hasSubmit: false,
+          captcha: false,
+          frames: [],
+          empty: true,
+          easyApplyOpen: false,
+        };
+      }
+      const root = easy ?? formRoot(doc);
+      lastRoot = root;
       const form: FormField[] = [];
       const seenGroups = new Set<string>();
       const controls = [
@@ -404,7 +452,8 @@ function create(): ApplyApi {
           // Custom radios and checkboxes hide the real input behind a styled label.
           if (!(input && (type === 'radio' || type === 'checkbox') && el.closest('label') && visible(el.closest('label')!))) continue;
         }
-        if (el.closest('[data-rs-ignore]') || el.closest('header, nav, footer')) continue;
+        if (el.closest('[data-rs-ignore]') || el.closest('header, nav, footer, [role="search"], [role="banner"]') || el.closest(MESSAGING))
+          continue;
         let kind: FieldKind;
         let els: Control[] = [el];
         let label: string;
@@ -527,6 +576,7 @@ function create(): ApplyApi {
         captcha,
         frames,
         empty: !form.length,
+        ...(opts?.linkedin ? { easyApplyOpen: true } : {}),
       };
     },
     async fill(items, files) {
@@ -627,8 +677,9 @@ function create(): ApplyApi {
       marked.clear();
     },
     next() {
-      const root = formRoot(document);
-      const all = buttons(root === document.body ? document.body : root);
+      const root = lastRoot?.isConnected ? lastRoot : formRoot(document);
+      if (root === document.body && !document.querySelector('form')) return { error: 'No application form is open on this page.' };
+      const all = buttons(root);
       const next = all.find(b => b.role === 'next');
       if (!next)
         return {
@@ -643,15 +694,41 @@ function create(): ApplyApi {
       next.el.click();
       return { clicked: next.label };
     },
-    openEasyApply() {
-      if (document.querySelector('.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"]')) return 'open';
-      const btn = [
-        ...document.querySelectorAll('button.jobs-apply-button, .jobs-apply-button--top-card button, button[aria-label*="Apply" i]'),
-      ].find(visible) as HTMLButtonElement | undefined;
-      if (!btn) return 'none';
-      if (!/easy apply/i.test(buttonText(btn))) return 'external';
-      btn.click();
-      return 'opened';
+    openEasyApply(click = true) {
+      if (easyApplyDialog(document)) return 'open';
+      const controls = (scopeEl: ParentNode) =>
+        [...scopeEl.querySelectorAll<HTMLElement>('button, a, [role="button"]')].filter(
+          b =>
+            visible(b) &&
+            // The "Easy Apply" filter on job search is a toggle, not the job's button.
+            !b.hasAttribute('aria-pressed') &&
+            !b.closest('[role="radiogroup"], [aria-label*="filter" i], .search-reusables__filter-list, [class*="filter" i]'),
+        );
+      const isEasy = (b: HTMLElement) => /easy apply/i.test(buttonText(b));
+      const isApply = (b: HTMLElement) => /^apply\b|apply on company|apply now/i.test(buttonText(b));
+      // The job's own button sits near the job's title in the detail pane.
+      const titles = [
+        ...document.querySelectorAll('.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title, main h1, main h2'),
+      ].filter(visible);
+      for (const title of titles) {
+        let box: Element | null = title;
+        for (let depth = 0; box && depth < 8; depth++, box = box.parentElement) {
+          const found = controls(box);
+          const easy = found.find(isEasy);
+          if (easy) {
+            if (click) easy.click();
+            return 'opened';
+          }
+          if (found.some(isApply)) return 'external';
+        }
+      }
+      const any =
+        controls(document).find(b => /^easy apply to\b/i.test(b.getAttribute('aria-label') ?? '')) ?? controls(document).find(isEasy);
+      if (any) {
+        if (click) any.click();
+        return 'opened';
+      }
+      return controls(document).some(isApply) ? 'external' : 'none';
     },
   };
 }

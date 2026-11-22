@@ -271,3 +271,57 @@ describe('reading the application on job boards that open it in a window', () =>
     expect(snap.hasSubmit).toBe(true);
   });
 });
+
+describe('LinkedIn Easy Apply', () => {
+  const load = async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    return (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+  };
+  it('reads nothing from the job page itself and presses the job’s Easy Apply, not the search filter', async () => {
+    document.body.innerHTML = `
+      <header><input placeholder="Search" value="general management intern"></header>
+      <main>
+        <div class="filters"><button aria-pressed="false">Easy Apply</button><button>Date posted</button></div>
+        <section><div><h2>Founder’s Office Intern</h2><p>Weekday (YC W21)</p></div>
+          <div><button id="ea" aria-label="Easy Apply to Founder’s Office Intern at Weekday (YC W21)">Easy Apply</button><button>Save</button></div>
+          <div componentkey="JobDetails_AboutTheJob_4467186176">Help the founders run operations and growth.</div>
+          <button>Next</button>
+        </section>
+      </main>
+      <div class="msg-overlay-conversation-bubble" role="dialog" aria-label="Messaging"><div contenteditable="true"></div></div>`;
+    const api = await load();
+    let pressed = '';
+    document.getElementById('ea')!.addEventListener('click', () => (pressed = 'job'));
+    document.querySelector('[aria-pressed]')!.addEventListener('click', () => (pressed = 'filter'));
+    const snap = api.scan({ linkedin: true });
+    expect(snap.form).toEqual([]);
+    expect(snap.easyApplyOpen).toBe(false);
+    expect(snap.job).toMatch(/run operations and growth/);
+    expect(api.openEasyApply(false)).toBe('opened');
+    expect(pressed).toBe('');
+    expect(api.openEasyApply()).toBe('opened');
+    expect(pressed).toBe('job');
+    expect(api.next().error).toBeTruthy();
+  });
+  it('reads only the Easy Apply window once it is open', async () => {
+    document.body.innerHTML = `
+      <header><input placeholder="Search"></header>
+      <main><h2>Founder’s Office Intern</h2><button>Next</button></main>
+      <div role="dialog" aria-label="Apply to Weekday (YC W21)"><h3>Contact info</h3>
+        <label for="ph">Mobile phone number</label><input id="ph" required>
+        <button aria-label="Continue to next step">Next</button></div>`;
+    const api = await load();
+    const snap = api.scan({ linkedin: true });
+    expect(snap.form.map(f => f.label)).toEqual(['Mobile phone number']);
+    expect(snap.hasNext).toBe(true);
+    let clicked = '';
+    document.querySelector('[role="dialog"] button')!.addEventListener('click', () => (clicked = 'dialog'));
+    expect(api.next()).toEqual({ clicked: 'Continue to next step' });
+    expect(clicked).toBe('dialog');
+  });
+});

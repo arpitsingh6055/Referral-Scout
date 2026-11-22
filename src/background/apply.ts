@@ -131,11 +131,12 @@ type Frame = { frameId: number; result: ReturnType<ApplyApi['scan']> };
 async function inject(tabId: number): Promise<void> {
   await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['apply.js'] });
 }
-async function scanAll(tabId: number): Promise<Frame[]> {
+async function scanAll(tabId: number, linkedin = false): Promise<Frame[]> {
   await inject(tabId);
   const results = await chrome.scripting.executeScript({
     target: { tabId, allFrames: true },
-    func: () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.scan() ?? null,
+    func: (li: boolean) => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.scan({ linkedin: li }) ?? null,
+    args: [linkedin],
   });
   return results.filter(r => r.result).map(r => ({ frameId: r.frameId, result: r.result as Frame['result'] }));
 }
@@ -293,10 +294,32 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
       message: 'Allow Referral Scout on this site first.',
     })));
   await update(s => ({ ...s, stage: 'reading', message: 'Reading the application form…', url }));
-  let frames = await scanAll(tabId);
+  const linkedin = kind === 'linkedin-job';
+  let frames = await scanAll(tabId, linkedin);
   let page = merge(frames, url, tab.title ?? '');
   if (!page.form.length && kind === 'linkedin-job') {
-    const opened = await inFrame(tabId, 0, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.openEasyApply());
+    // LinkedIn may show the job inside its in-app frame: find which frame has the button, then press it in that one only.
+    const looks = await chrome.scripting
+      .executeScript({
+        target: { tabId, allFrames: true },
+        func: () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.openEasyApply(false) ?? 'none',
+      })
+      .catch(() => []);
+    const already = looks.some(r => r.result === 'open');
+    const target = looks.find(r => r.result === 'opened');
+    let opened: 'opened' | 'external' | 'none' = already
+      ? 'opened'
+      : looks.some(r => r.result === 'external') && !target
+        ? 'external'
+        : 'none';
+    if (!already && target) {
+      await inFrame(tabId, target.frameId, () =>
+        (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.openEasyApply(true),
+      );
+      opened = 'opened';
+    }
+    if (opened === 'none')
+      throw new Error('The Easy Apply button was not found on this job. Open the job so its details show, then press Fill again.');
     if (opened === 'external')
       throw new Error(
         'This job is applied for on the company’s own site. Press Apply on LinkedIn, then press "Fill this application" on the page that opens.',
@@ -306,7 +329,7 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
       for (let i = 0; i < 10 && !page.form.length; i++) {
         await new Promise(r => setTimeout(r, 700));
         signal.throwIfAborted();
-        frames = await scanAll(tabId);
+        frames = await scanAll(tabId, linkedin);
         page = merge(frames, url, tab.title ?? '');
       }
     }
@@ -519,7 +542,7 @@ async function nextStep(): Promise<void> {
       signal.throwIfAborted();
       const tab = await chrome.tabs.get(s.tabId);
       if (tab.status === 'loading') continue;
-      const frames = await scanAll(s.tabId).catch(() => [] as Frame[]);
+      const frames = await scanAll(s.tabId, pageKindFromUrl(tab.url ?? '') === 'linkedin-job').catch(() => [] as Frame[]);
       const page = merge(frames, tab.url ?? '', tab.title ?? '');
       if (page.form.length && signature(page) !== before) {
         await update(x => ({ ...x, stepCount: x.stepCount + 1 }));
