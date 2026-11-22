@@ -50,8 +50,12 @@ export interface ApplyApi {
   markTopChoice(): 'checked' | 'already' | 'none';
   /** Passes LinkedIn's "Job search safety reminder" by pressing its Continue applying. True when it did. */
   passInterstitial(): boolean;
+  /** True once the page says the application went through (LinkedIn's "Application sent", a site's thank-you page). */
+  submitted(): boolean;
+  /** The job's title and company as the page states them, for the referral step after applying. */
+  jobMeta(): { title: string; company: string; location: string; companyUrl: string };
 }
-const VERSION = 7;
+const VERSION = 8;
 const scope = globalThis as typeof globalThis & { __referralScoutApply?: ApplyApi };
 
 /* ---------- reading the page ---------- */
@@ -763,6 +767,61 @@ function create(): ApplyApi {
       this.clear();
       next.el.click();
       return { clicked: next.label };
+    },
+    submitted() {
+      const SENT =
+        /\b(your application was sent|application sent|application (has been |was )?(submitted|received)|thank(s| you) for (your )?appl(ying|ication)|we('ve| have) received your application|successfully (applied|submitted)|you applied\b)/i;
+      // LinkedIn: the Easy Apply window is replaced by a short "Application sent" window, and the job shows "Applied".
+      for (const d of document.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"]'))
+        if (visible(d) && SENT.test(clean(d.textContent).slice(0, 600))) return true;
+      if (easyApplyDialog(document)) return false; // still filling
+      // Any site: a thank-you page or message in the main part of the page (not a whole page of other jobs).
+      const main = document.querySelector('main, [role="main"], #content, article') ?? document.body;
+      const text = clean((main as HTMLElement).innerText || main.textContent).slice(0, 4000);
+      return SENT.test(text) && !buttons(main).some(b => b.role === 'submit' && !/^apply/i.test(b.label));
+    },
+    jobMeta() {
+      const doc = document;
+      let title = '',
+        company = '',
+        location = '',
+        companyUrl = '';
+      for (const sc of doc.querySelectorAll('script[type="application/ld+json"]')) {
+        try {
+          const data = JSON.parse(sc.textContent ?? '') as unknown;
+          const list = (Array.isArray(data) ? data : [data]) as Record<string, unknown>[];
+          for (const d of list.flatMap(x => (Array.isArray(x?.['@graph']) ? (x['@graph'] as Record<string, unknown>[]) : [x])))
+            if (d?.['@type'] === 'JobPosting') {
+              title ||= clean(String(d['title'] ?? ''));
+              company ||= clean(String((d['hiringOrganization'] as { name?: string } | undefined)?.name ?? ''));
+              const place = (d['jobLocation'] as { address?: { addressLocality?: string } } | undefined)?.address?.addressLocality;
+              location ||= clean(place ?? '');
+            }
+        } catch {
+          /* not JSON */
+        }
+      }
+      if (/(^|\.)linkedin\.com$/.test(window.location.hostname) || / \| LinkedIn$/.test(doc.title)) {
+        // "Management Intern | QuickFlo | LinkedIn" and the Easy Apply window's "Apply to QuickFlo".
+        const parts = doc.title
+          .replace(/^\(\d+\)\s*/, '')
+          .split(' | ')
+          .map(clean);
+        if (parts.length >= 3 && parts.at(-1) === 'LinkedIn') {
+          title ||= parts[0]!;
+          company ||= parts[1]!;
+        }
+        const apply = clean(easyApplyDialog(doc)?.querySelector('h2, h1')?.textContent).match(/^apply to (.+)$/i);
+        company ||= apply?.[1] ?? '';
+        const link = [...doc.querySelectorAll<HTMLAnchorElement>('main a[href*="/company/"]')].find(a => /\/company\/[^/?#]+/.test(a.href));
+        const slug = link && /\/company\/([^/?#]+)/.exec(link.href)?.[1];
+        if (slug) companyUrl = `https://www.linkedin.com/company/${slug}/`;
+      }
+      if (!company) company = clean(doc.querySelector<HTMLMetaElement>('meta[property="og:site_name"]')?.content);
+      if (!title)
+        title =
+          clean(doc.querySelector<HTMLMetaElement>('meta[property="og:title"]')?.content) || clean(doc.querySelector('h1')?.textContent);
+      return { title: title.slice(0, 200), company: company.slice(0, 200), location: location.slice(0, 200), companyUrl };
     },
     passInterstitial() {
       // Only a notice about the application itself, never a form: it has a "Continue applying" button and no fields.

@@ -1,6 +1,6 @@
 {
   "name": "referral-scout",
-  "version": "0.48.1",
+  "version": "0.49.0",
   "private": true,
   "type": "module",
   "description": "Referral Scout: LinkedIn job search and referral outreach as a browser side panel",

@@ -1954,3 +1954,14 @@ details.person-row > .person .person-head {
   border-color: var(--primary);
   color: var(--on-primary);
 }
+
+.apply-sent {
+  display: grid;
+  gap: 8px;
+}
+.apply-sent-title {
+  margin: 0;
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--ok);
+}

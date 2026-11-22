@@ -15,7 +15,8 @@ import type { CompanySize, CompanyStrategy } from './jobsearch';
  * employees, and within each group people the person already knows come first.
  */
 export const referralJobInput = z.object({
-  url: z.string().regex(/^https:\/\/www\.linkedin\.com\/jobs\/view\/\d+\/$/),
+  /** The LinkedIn job, or the job's own page on the company's site when it was applied for there. */
+  url: z.union([z.string().regex(/^https:\/\/www\.linkedin\.com\/jobs\/view\/\d+\/$/), z.string().url().max(500).startsWith('https://')]),
   title: z.string().trim().min(2).max(200),
   company: z.string().trim().min(1).max(200),
   location: z.string().max(200).default(''),
@@ -225,18 +226,20 @@ export function rankReferral(
 
 const first = (name: string): string => name.split(/\s+/)[0] || name;
 const role = (job: Pick<ReferralJob, 'title' | 'company'>): string => `the ${job.title} role at ${job.company}`;
+/** "I’ve applied for" once the application is in (a referral then attaches to a real application), else "I’m applying for". */
+const applying = (job: { applied?: number | undefined }): string => (job.applied ? 'I’ve applied for' : 'I’m applying for');
 /** Connection note for someone not yet connected. Within LinkedIn's 200 characters; shortened by the caller if a title is very long. */
 export function referralNote(
-  job: Pick<ReferralJob, 'title' | 'company'>,
+  job: Pick<ReferralJob, 'title' | 'company'> & { applied?: number | undefined },
   person: { name: string; category?: string | undefined },
   me: string,
 ): string {
   const ask = person.category === 'recruiter' ? 'Would love to connect about it.' : 'Would love to connect and hear your view of the team.';
-  return `Hi ${first(person.name)}, I’m ${first(me)}. I’m applying for ${role(job)}. ${ask}`;
+  return `Hi ${first(person.name)}, I’m ${first(me)}. ${applying(job)} ${role(job)}. ${ask}`;
 }
 /** Message to someone who is, or has just become, a connection. `accepted` adds the thank-you. */
 export function referralAsk(
-  job: Pick<ReferralJob, 'title' | 'company' | 'url'>,
+  job: Pick<ReferralJob, 'title' | 'company' | 'url'> & { applied?: number | undefined },
   person: { name: string; category?: string | undefined },
   me: string,
   accepted: boolean,
@@ -246,7 +249,7 @@ export function referralAsk(
     person.category === 'recruiter'
       ? 'Could you tell me the best way to be considered, or who is hiring for it?'
       : 'Would you be open to referring me, or pointing me to the right person?';
-  return `${open} I’m ${first(me)}, and I’m applying for ${role(job)}: ${job.url} ${ask} Happy to share my CV.`;
+  return `${open} I’m ${first(me)}, and ${applying(job)} ${role(job)}: ${job.url} ${ask} Happy to share my CV.`;
 }
 
 /**

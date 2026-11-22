@@ -29,7 +29,7 @@ import {
 import { trustedExtension, trustedSite } from '../validators/security';
 import { referralMessage, referralAsk, referralNote } from '../shared/referral';
 import { fitNote } from '../shared/network';
-import { getNetwork, updateNetwork, pauseNetwork, networkTick, queueBest } from './network';
+import { getNetwork, updateNetwork, pauseNetwork, networkTick, queueBest, queueReferral } from './network';
 import { networkCommand, networkTab } from './network-browser';
 import { acquire, release, renew } from './lease';
 import { all, remove } from '../storage/database';
@@ -162,47 +162,7 @@ export function registerNetworkMessages(): void {
       }
       if (sender.tab?.id !== undefined) void chrome.sidePanel?.open?.({ tabId: sender.tab.id }).catch(() => undefined); // show progress where the person can see it
       const { mode, job } = referral.data;
-      void (async () => {
-        if (!(await getNetwork()).profile) return { ok: false, message: 'Open Referral Scout and read your LinkedIn profile first.' };
-        let message = '';
-        await updateNetwork(s => {
-          const list = s.referralJobs ?? (s.referralJobs = []),
-            old = list.find(j => j.url === job.url);
-          if (!old) {
-            list.unshift({ ...job, mode, addedAt: Date.now(), cursor: 0, found: 0 });
-            s.referralJobs = list.slice(0, 100);
-            message = 'Searching. See the Referrals tab.';
-          } else if (old.mode === 'connections' && mode === 'referral') {
-            // Already listed the connections; now also look wider and reach out.
-            old.mode = 'referral';
-            old.cursor = 0;
-            delete old.finishedAt;
-            message = 'Reaching out. See the Referrals tab.';
-          } else if (old.finishedAt) {
-            // Asked again: search again from the start (new people join, and the search itself may have improved).
-            old.cursor = 0;
-            old.found = s.contacts.filter(p => p.referralJob === job.url).length;
-            delete old.finishedAt;
-            delete old.idTried;
-            message = 'Searching again. See the Referrals tab.';
-          } else message = 'Already searching. See the Referrals tab.';
-          if (old && job.companyUrl && !old.companyUrl) old.companyUrl = job.companyUrl;
-          if (old && job.suggested) old.suggested = job.suggested;
-          s.status = `${job.company}: ${mode === 'referral' ? 'looking for people who can refer you for' : 'listing your connections for'} ${job.title}.`;
-          // "Ask for referrals" means act now. If outreach is paused, switch on referral outreach only; general outreach stays off.
-          if (mode === 'referral' && !s.active) {
-            s.active = true;
-            s.revision++;
-            s.scope = 'referrals';
-          }
-          return s;
-        });
-        void updateNetwork(s => {
-          delete s.paused;
-          return s;
-        }).then(() => networkTick());
-        return { ok: true, message };
-      })()
+      void (async () => queueReferral(job, mode))()
         .then(respond)
         .catch(() => respond({ ok: false, message: 'Something went wrong. Open Referral Scout for details.' }));
       return true;

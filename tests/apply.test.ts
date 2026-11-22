@@ -571,3 +571,60 @@ describe('LinkedIn yes/no questions, November 2026 markup', () => {
     expect(snap.hasNext).toBe(true);
   });
 });
+
+describe('after the application is sent', () => {
+  const load = async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    return (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+  };
+  it('knows the review page is not sent, and LinkedIn’s "Application sent" or a thank-you page is', async () => {
+    document.body.innerHTML = `<dialog open><h2>Apply to QuickFlo</h2><p>5/5 pages</p><p>Review your application</p><button>Submit application</button></dialog>`;
+    const api = await load();
+    expect(api.submitted()).toBe(false);
+    document.body.innerHTML = `<div role="dialog"><h2>Application sent</h2><p>Your application was sent to QuickFlo!</p><button>Done</button></div>`;
+    expect(api.submitted()).toBe(true);
+    document.body.innerHTML = `<main><h1>Thank you for applying to Acme!</h1><p>We have received your application.</p></main>`;
+    expect(api.submitted()).toBe(true);
+  });
+  it('reads the role and company for the referral step', async () => {
+    document.title = 'Management Intern | QuickFlo | LinkedIn';
+    document.body.innerHTML = `<main><a href="https://www.linkedin.com/company/quickflo/life/">QuickFlo</a></main>`;
+    const api = await load();
+    const meta = api.jobMeta();
+    expect(meta.title).toBe('Management Intern');
+    expect(meta.company).toBe('QuickFlo');
+    document.title = 'Careers';
+    document.body.innerHTML = `<script type="application/ld+json">{"@type":"JobPosting","title":"Product Analyst","hiringOrganization":{"name":"Acme"},"jobLocation":{"address":{"addressLocality":"Pune"}}}</script>`;
+    expect(api.jobMeta()).toMatchObject({ title: 'Product Analyst', company: 'Acme', location: 'Pune' });
+  });
+  it('takes the employer ChatGPT read from the page', () => {
+    const plan = planFromReply(
+      { fill: [], files: [], ask: [], summary: 'x', job: { title: 'Analyst', company: 'Acme' } },
+      [],
+      emptyApplyProfile(),
+      false,
+    );
+    expect(plan.job).toEqual({ title: 'Analyst', company: 'Acme' });
+  });
+});
+
+describe('referral messages after applying', () => {
+  it('say "I’ve applied" once the application is in, and accept a company-site job', async () => {
+    const { referralNote, referralAsk, referralJobInput } = await import('../src/shared/referral');
+    const job = { title: 'Product Analyst', company: 'Acme', url: 'https://jobs.lever.co/acme/123' };
+    expect(referralNote(job, { name: 'Priya Shah' }, 'Arpit Singh')).toMatch(/I’m applying for the Product Analyst role at Acme/);
+    expect(referralNote({ ...job, applied: 1 }, { name: 'Priya Shah' }, 'Arpit Singh')).toMatch(
+      /I’ve applied for the Product Analyst role at Acme/,
+    );
+    expect(referralAsk({ ...job, applied: 1 }, { name: 'Priya Shah', category: 'recruiter' }, 'Arpit Singh', true)).toMatch(
+      /I’ve applied for the Product Analyst role at Acme: https:\/\/jobs\.lever\.co\/acme\/123/,
+    );
+    expect(referralJobInput.safeParse({ ...job, location: '' }).success).toBe(true);
+    expect(referralJobInput.safeParse({ ...job, url: 'http://insecure.example/job' }).success).toBe(false);
+  });
+});

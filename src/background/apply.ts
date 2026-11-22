@@ -31,7 +31,8 @@ import { read, write } from '../storage/state';
 import { remove } from '../storage/database';
 import { trustedExtension } from '../validators/security';
 import { askChatGpt } from './network-ai';
-import { getNetwork } from './network';
+import { getNetwork, queueReferral } from './network';
+import { referralJobInput } from '../shared/referral';
 import type { ApplyApi, FillResult } from '../content/apply';
 
 export const SESSION_KEY = 'apply-session';
@@ -49,7 +50,8 @@ export interface StoredFile {
   size: number;
   savedAt: number;
 }
-export type ApplyStage = 'reading' | 'opening' | 'thinking' | 'filling' | 'review' | 'moving' | 'permission' | 'error' | 'done';
+export type ApplyStage =
+  'reading' | 'opening' | 'thinking' | 'filling' | 'review' | 'moving' | 'permission' | 'error' | 'done' | 'submitted';
 export interface ApplySession {
   tabId: number;
   url: string;
@@ -71,6 +73,10 @@ export interface ApplySession {
   needOrigins?: string[];
   /** LinkedIn's "Mark this job as a top choice" on this step, and how many the person has left this month. */
   topChoice?: { checked: boolean; remaining?: number } | undefined;
+  /** The job being applied for, for the referral step after sending: LinkedIn's job page, or the company's own page. */
+  job?: { title: string; company: string; location: string; url: string; companyUrl?: string } | undefined;
+  /** Set once the site confirms the application was sent. */
+  sent?: { at: number; referral: 'queued' | 'off' | 'needs-company' | 'failed'; message: string } | undefined;
   /** Kept in the background only: the fields of the current step, to fill answers the person gives. */
   form?: FormField[];
 }
@@ -289,6 +295,10 @@ async function detect(tabId?: number, withPhoto = false): Promise<Detect> {
   const origin = originOf(url);
   const [s, cv, photo, stored, profile] = await Promise.all([getNetwork(), cvFile(), photoFile(), loadSession(), applyProfile()]);
   let session = stored;
+  // The last step was reached: see whether the site has confirmed the application (polled while the panel is open).
+  if (session && session.tabId === tab?.id && !session.sent && session.hasSubmit && !session.hasNext && !running) {
+    if (await checkSubmitted(session.tabId).catch(() => false)) session = await loadSession();
+  }
   // The tab moved to another job (LinkedIn changes the job in the same tab): the old fill no longer applies.
   if (session && session.tabId === tab?.id && url && !sameApplication(session.url, url)) {
     running?.abort();
@@ -315,6 +325,99 @@ async function detect(tabId?: number, withPhoto = false): Promise<Detect> {
   };
 }
 
+/** The address a referral should point to: LinkedIn's own job page when it is a LinkedIn job, else the page applied on. */
+function jobUrlFor(url: string): string {
+  try {
+    const u = new URL(url);
+    if (/(^|\.)linkedin\.com$/.test(u.hostname)) {
+      const id = /^\/jobs\/view\/(\d+)/.exec(u.pathname)?.[1] ?? u.searchParams.get('currentJobId');
+      if (id && /^\d+$/.test(id)) return `https://www.linkedin.com/jobs/view/${id}/`;
+    }
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return url;
+  }
+}
+/** Reads the job's title and company from the page once per application (ChatGPT's reading fills any gap later). */
+async function captureJob(tabId: number, url: string): Promise<void> {
+  const s = await loadSession();
+  if (!s || (s.job?.company && s.job.title)) return;
+  const metas = await chrome.scripting
+    .executeScript({
+      target: { tabId, allFrames: true },
+      func: () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.jobMeta() ?? null,
+    })
+    .catch(() => []);
+  const found = metas.map(m => m.result).filter((m): m is NonNullable<typeof m> => !!m);
+  const meta = found.find(m => m.company && m.title) ?? found.find(m => m.company) ?? found[0];
+  if (!meta) return;
+  await update(x => ({
+    ...x,
+    job: {
+      title: x.job?.title || meta.title,
+      company: x.job?.company || meta.company,
+      location: x.job?.location || meta.location,
+      url: x.job?.url || jobUrlFor(url),
+      ...(meta.companyUrl ? { companyUrl: meta.companyUrl } : x.job?.companyUrl ? { companyUrl: x.job.companyUrl } : {}),
+    },
+  }));
+}
+const HISTORY_KEY = 'apply-history';
+/**
+ * Checks, once the last step was reached, whether the site confirmed the application (LinkedIn's "Application sent",
+ * a thank-you page). Then the application is recorded and, unless the person turned it off, the referral search for
+ * that company starts: the same pipeline as "Ask for referrals", with every invitation waiting for approval by default.
+ */
+export async function checkSubmitted(tabId: number): Promise<boolean> {
+  const s = await loadSession();
+  if (!s || s.tabId !== tabId || s.sent || !s.hasSubmit || s.hasNext) return false;
+  await inject(tabId).catch(() => undefined);
+  const said = await chrome.scripting
+    .executeScript({
+      target: { tabId, allFrames: true },
+      func: () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.submitted() ?? false,
+    })
+    .catch(() => []);
+  if (!said.some(r => r.result === true)) return false;
+  running?.abort();
+  const now = Date.now();
+  const job = s.job;
+  const history = (await read<{ title: string; company: string; url: string; at: number }[]>(HISTORY_KEY)) ?? [];
+  if (job) await write(HISTORY_KEY, [{ title: job.title, company: job.company, url: job.url, at: now }, ...history].slice(0, 200));
+  const profile = await applyProfile();
+  let sent: NonNullable<ApplySession['sent']>;
+  if ((profile.afterApply ?? 'referrals') === 'nothing') sent = { at: now, referral: 'off', message: '' };
+  else sent = await startReferral(job, now);
+  await update(x => ({
+    ...x,
+    stage: 'submitted',
+    aiStage: undefined,
+    ask: [],
+    sent,
+    message: job?.company ? `Application sent to ${job.company}.` : 'Application sent.',
+  }));
+  return true;
+}
+async function startReferral(job: ApplySession['job'], appliedAt: number): Promise<NonNullable<ApplySession['sent']>> {
+  if (!job?.company || !job.title || job.title.length < 2) return { at: appliedAt, referral: 'needs-company', message: '' };
+  const input = referralJobInput.safeParse({
+    url: job.url,
+    title: job.title,
+    company: job.company,
+    location: job.location ?? '',
+    ...(job.companyUrl ? { companyUrl: job.companyUrl } : {}),
+  });
+  if (!input.success) return { at: appliedAt, referral: 'needs-company', message: '' };
+  try {
+    const linkedin = /^https:\/\/www\.linkedin\.com\/jobs\/view\//.test(job.url);
+    const r = await queueReferral({ ...input.data, applied: appliedAt, ...(linkedin ? {} : { infoTried: true }) }, 'referral');
+    return r.ok
+      ? { at: appliedAt, referral: 'queued', message: `Finding people at ${job.company} who can refer you.` }
+      : { at: appliedAt, referral: 'failed', message: r.message };
+  } catch (e) {
+    return { at: appliedAt, referral: 'failed', message: e instanceof Error ? e.message : String(e) };
+  }
+}
 /** Fills the step on screen. advance: true when nothing is left for the person and the site has a Next button. */
 async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Promise<{ advance: boolean } | void> {
   const tab = await chrome.tabs.get(tabId);
@@ -410,6 +513,7 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
         : 'No form fields were found on this page. Open the application form itself (often behind an "Apply" button), then try again.',
     );
   }
+  await captureJob(tabId, url);
   const [bg, profile, photo, cv] = await Promise.all([background(), applyProfile(), photoFile(), cvFile()]);
   // "Mark this job as a top choice": ticked on every application while LinkedIn offers it, unless the person chose
   // to decide themselves. Ticking reveals a required message, which is written below with the rest of the step.
@@ -479,6 +583,18 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
     } catch {
       throw new Error('ChatGPT’s answer could not be read. Press Fill again.');
     }
+    if (ai.job?.company)
+      await update(x => ({
+        ...x,
+        // The page's own structured data wins; ChatGPT's reading fills what the page did not say.
+        job: {
+          title: x.job?.title || ai.job!.title,
+          company: x.job?.company || ai.job!.company,
+          location: x.job?.location ?? '',
+          url: x.job?.url || jobUrlFor(url),
+          ...(x.job?.companyUrl ? { companyUrl: x.job.companyUrl } : {}),
+        },
+      }));
     // Saved answers win over ChatGPT's; ChatGPT fills the rest.
     // On LinkedIn ChatGPT may only answer what was empty, never change what LinkedIn or the person already set
     // (such as "Mark this job as a top choice", which uses a monthly allowance, or "Follow the company").
@@ -799,6 +915,12 @@ export const applyRequest = z.discriminatedUnion('action', [
   z.object({ kind: z.literal('apply'), action: z.literal('start'), tabId: z.number().int(), again: z.boolean().optional() }),
   z.object({ kind: z.literal('apply'), action: z.literal('next') }),
   z.object({ kind: z.literal('apply'), action: z.literal('topChoice') }),
+  z.object({
+    kind: z.literal('apply'),
+    action: z.literal('referral'),
+    company: z.string().trim().min(1).max(200).optional(),
+    title: z.string().trim().min(2).max(200).optional(),
+  }),
   z.object({ kind: z.literal('apply'), action: z.literal('undo') }),
   z.object({ kind: z.literal('apply'), action: z.literal('stop') }),
   z.object({
@@ -812,6 +934,7 @@ export const applyRequest = z.discriminatedUnion('action', [
     details: detailsSchema,
     eeo: z.enum(['leave', 'decline']),
     topChoice: z.enum(['auto', 'ask']).optional(),
+    afterApply: z.enum(['referrals', 'nothing']).optional(),
     forget: z.array(z.string().max(200)).max(200).optional(),
   }),
   z.object({ kind: z.literal('apply'), action: z.literal('capturePhoto') }),
@@ -820,6 +943,15 @@ export const applyRequest = z.discriminatedUnion('action', [
 ]);
 export type ApplyRequest = z.infer<typeof applyRequest>;
 export function registerApplyMessages(): void {
+  // After the last step, a page load in that tab (a thank-you page) or LinkedIn's "Application sent" is caught even
+  // when the side panel is closed.
+  chrome.tabs.onUpdated.addListener((tabId, info) => {
+    if (info.status !== 'complete' && !info.url) return;
+    void loadSession().then(s => {
+      if (s && s.tabId === tabId && !s.sent && s.hasSubmit && !s.hasNext && !running)
+        setTimeout(() => void checkSubmitted(tabId).catch(() => undefined), 1500);
+    });
+  });
   chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
     if (!input || typeof input !== 'object' || (input as { kind?: unknown }).kind !== 'apply') return false;
     if (!trustedExtension(sender, chrome.runtime.id)) return false;
@@ -838,6 +970,21 @@ export function registerApplyMessages(): void {
         await start(req.tabId, req.again && old?.tabId === req.tabId ? 2 + Math.floor(Math.random() * 1000) : 1);
       }
       if (req.action === 'next') await nextStep();
+      if (req.action === 'referral') {
+        // The person asked (or confirmed the company): start the referral search for this application.
+        const s = await loadSession();
+        if (!s) throw new Error('Nothing was applied for in this tab.');
+        const job = {
+          title: req.title ?? s.job?.title ?? '',
+          company: req.company ?? s.job?.company ?? '',
+          location: s.job?.location ?? '',
+          url: s.job?.url ?? jobUrlFor(s.url),
+          ...(s.job?.companyUrl && !req.company ? { companyUrl: s.job.companyUrl } : {}),
+        };
+        const sent = await startReferral(job, s.sent?.at ?? Date.now());
+        if (sent.referral !== 'queued') throw new Error(sent.message || 'Type the company and the role first.');
+        await update(x => ({ ...x, job, sent }));
+      }
       if (req.action === 'topChoice') {
         // The person asked for it: tick the box, then ChatGPT (thinking) writes the message it reveals.
         const s = await loadSession();
@@ -879,6 +1026,7 @@ export function registerApplyMessages(): void {
         );
         profile.eeo = req.eeo;
         if (req.topChoice) profile.topChoice = req.topChoice;
+        if (req.afterApply) profile.afterApply = req.afterApply;
         for (const k of req.forget ?? []) delete profile.answers[k];
         await write(PROFILE_KEY, profile);
       }

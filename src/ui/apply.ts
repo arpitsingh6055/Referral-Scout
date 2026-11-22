@@ -2,7 +2,7 @@
  * Side panel: the "Fill this application" card on Home (shown when the active tab has one job or its application
  * open) and the "Application details" section in Settings.
  */
-import { node, button, notify, flags, accordion, field, choice, rerender, request } from './core';
+import { node, button, notify, flags, accordion, field, choice, rerender, request, ui } from './core';
 import { errorText } from './render';
 import { completeCvText } from './cv-text';
 import type { ApplyRequest, Detect, ApplySession } from '../background/apply';
@@ -213,6 +213,10 @@ function draw(d: Detect): void {
     );
     return;
   }
+  if (s.stage === 'submitted') {
+    card.append(sentBox(s, d));
+    return;
+  }
   if (s.step) card.append(node('p', `Step ${s.stepCount}${s.step ? ` · ${s.step}` : ''}`, 'fine'));
   card.append(node('p', s.message, s.stage === 'error' ? 'apply-msg bad' : 'apply-msg'));
   if (s.ask.length) card.append(askBox(s));
@@ -288,7 +292,80 @@ function draw(d: Detect): void {
   actions.append(button('Close', async () => draw(await applyRequest({ kind: 'apply', action: 'stop' })), 'btn sm ghost', 'Closed.'));
   card.append(actions);
   if (s.hasSubmit && !s.hasNext)
-    card.append(node('p', 'Referral Scout never submits. When everything looks right, press Submit on the page yourself.', 'fine'));
+    card.append(
+      node(
+        'p',
+        (d.profile.afterApply ?? 'referrals') === 'referrals'
+          ? `Referral Scout never submits. Press Submit on the page when it looks right${s.job?.company ? `, and it then finds people at ${s.job.company} who can refer you` : ''}.`
+          : 'Referral Scout never submits. When everything looks right, press Submit on the page yourself.',
+        'fine',
+      ),
+    );
+}
+const openReferrals = (): void => {
+  ui.tab = 'referrals';
+  if (flags.last) rerender(flags.last);
+  document.scrollingElement?.scrollTo({ top: 0 });
+};
+/** After the site confirms the application: what happened, and the referral step that follows. */
+function sentBox(s: ApplySession, d: Detect): HTMLElement {
+  const box = node('div', '', 'apply-sent');
+  const company = s.job?.company || 'the company';
+  box.append(node('p', `\u2713 ${s.message}`, 'apply-sent-title'));
+  if (s.job?.title) box.append(node('p', `${s.job.title}${s.job.company ? ` \u00b7 ${s.job.company}` : ''}`, 'fine'));
+  const ref = s.sent?.referral;
+  if (ref === 'queued') {
+    box.append(
+      node(
+        'p',
+        `${s.sent!.message} Recruiters and the hiring team come first, then people you already know there. ${
+          flags.last?.settings?.outreachMode === 'automatic'
+            ? 'Invitations go out at your safe daily pace.'
+            : 'Each invitation waits for your approval in Referrals.'
+        }`,
+        'card-sub',
+      ),
+    );
+    const row = node('div', '', 'row');
+    row.append(button('See who it finds', async () => openReferrals(), 'btn primary', 'Opening Referrals…'));
+    row.append(button('Done', async () => draw(await applyRequest({ kind: 'apply', action: 'stop' })), 'btn sm ghost', 'Closed.'));
+    box.append(row);
+    return box;
+  }
+  // Not started: the person turned it off, or the company could not be read from the page.
+  box.append(
+    node(
+      'p',
+      ref === 'needs-company'
+        ? 'A referral makes this application far more likely to be read. Check the company and role, and Referral Scout finds people there who can refer you.'
+        : ref === 'failed'
+          ? `The referral search could not start: ${s.sent?.message || 'try again'}.`
+          : `Want a referral at ${company}? Referral Scout finds the recruiters and hiring team there and drafts each message for your approval.`,
+      'card-sub',
+    ),
+  );
+  const companyIn = field({ label: 'Company', value: s.job?.company ?? '' });
+  const titleIn = field({ label: 'Role', value: s.job?.title ?? '' });
+  if (ref === 'needs-company' || !s.job?.company || !s.job?.title) box.append(companyIn.wrap, titleIn.wrap);
+  const row = node('div', '', 'row');
+  row.append(
+    button(
+      `Find people at ${companyIn.input.value || company} who can refer me`,
+      async () => {
+        const company = companyIn.input.value.trim(),
+          title = titleIn.input.value.trim();
+        if (!company || title.length < 2) throw new Error('Type the company and the role first.');
+        draw(await applyRequest({ kind: 'apply', action: 'referral', company, title }));
+        flags.dirty = false;
+      },
+      'btn primary',
+      'Looking for people who can refer you…',
+    ),
+    button('Done', async () => draw(await applyRequest({ kind: 'apply', action: 'stop' })), 'btn sm ghost', 'Closed.'),
+  );
+  box.append(row);
+  void d;
+  return box;
 }
 function item(label: string, value: string, note: string, tone: 'done' | 'check' | 'you'): HTMLElement {
   const row = node('div', '', `apply-item ${tone}`);
@@ -437,6 +514,16 @@ export function buildApplySettings(): HTMLElement {
       'LinkedIn allows a few top choices a month. Each one comes with a short message ChatGPT writes for that job.',
     );
     slot.append(top.wrap);
+    const after = choice(
+      'After an application is sent',
+      d.profile.afterApply ?? 'referrals',
+      [
+        ['referrals', 'Find people at that company who can refer me'],
+        ['nothing', 'Do nothing'],
+      ],
+      'Uses the same referral search as "Ask for referrals". Invitations wait for your approval unless you chose automatic sending.',
+    );
+    slot.append(after.wrap);
     // CV
     const cvRow = node('div', '', 'field');
     cvRow.append(
@@ -529,6 +616,7 @@ export function buildApplySettings(): HTMLElement {
             details: Object.fromEntries(inputs.map(([k, i]) => [k, i.value.trim()])),
             eeo: eeo.input.value as 'leave' | 'decline',
             topChoice: top.input.value as 'auto' | 'ask',
+            afterApply: after.input.value as 'referrals' | 'nothing',
             forget: [...forget],
           });
           flags.dirty = false;

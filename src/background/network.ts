@@ -33,6 +33,7 @@ import {
   rankReferral,
   type ReferralJob,
   pickCompany,
+  type referralJobInput,
 } from '../shared/referral';
 import {
   reviewFromReply,
@@ -696,7 +697,8 @@ async function planCompanies(s: NetworkState, jobs: ReferralJob[], signal: Abort
 /** One search of a job's referral plan per turn; the next follows a few seconds later. */
 async function referralScan(s: NetworkState, job: ReferralJob, signal: AbortSignal): Promise<void> {
   // A job taken from a search list: open the job itself once for its company page and LinkedIn's own suggested people.
-  if (!job.companyUrl && !job.infoTried) {
+  // (Only a LinkedIn job page can be opened here; a job applied for on a company's site goes straight to the company lookup.)
+  if (!job.companyUrl && !job.infoTried && /^https:\/\/www\.linkedin\.com\/jobs\/view\//.test(job.url)) {
     await note(s, `${job.company}: opening the ${job.title} job…`);
     const infoSchema = z.object({
       companyUrl: z.string().nullable(),
@@ -1658,4 +1660,55 @@ export async function networkTick(): Promise<void> {
       },
       5000 + Math.floor(Math.random() * 7000),
     );
+}
+
+/**
+ * Adds a job to the referral pipeline: find the people at that company who can refer the person, and reach out to them
+ * (each invitation still waits for approval unless the person chose automatic sending). Used by the "Ask for referrals"
+ * buttons on LinkedIn and after an application is sent from the panel. Asking again for a finished job searches again.
+ */
+export async function queueReferral(
+  job: z.infer<typeof referralJobInput> & { infoTried?: boolean; applied?: number },
+  mode: 'referral' | 'connections',
+): Promise<{ ok: boolean; message: string }> {
+  if (!(await getNetwork()).profile) return { ok: false, message: 'Open Referral Scout and read your LinkedIn profile first.' };
+  let message = '';
+  await updateNetwork(s => {
+    const list = s.referralJobs ?? (s.referralJobs = []),
+      old = list.find(j => j.url === job.url);
+    if (!old) {
+      list.unshift({ ...job, mode, addedAt: Date.now(), cursor: 0, found: 0 });
+      s.referralJobs = list.slice(0, 100);
+      message = 'Searching. See the Referrals tab.';
+    } else if (old.mode === 'connections' && mode === 'referral') {
+      // Already listed the connections; now also look wider and reach out.
+      old.mode = 'referral';
+      old.cursor = 0;
+      delete old.finishedAt;
+      message = 'Reaching out. See the Referrals tab.';
+    } else if (old.finishedAt) {
+      // Asked again: search again from the start (new people join, and the search itself may have improved).
+      old.cursor = 0;
+      old.found = s.contacts.filter(p => p.referralJob === job.url).length;
+      delete old.finishedAt;
+      delete old.idTried;
+      message = 'Searching again. See the Referrals tab.';
+    } else message = 'Already searching. See the Referrals tab.';
+    if (old && job.companyUrl && !old.companyUrl) old.companyUrl = job.companyUrl;
+    if (old && job.suggested) old.suggested = job.suggested;
+    if (old && job.applied && !old.applied) old.applied = job.applied;
+    s.status = `${job.company}: ${mode === 'referral' ? 'looking for people who can refer you for' : 'listing your connections for'} ${job.title}.`;
+    // "Ask for referrals" means act now. If outreach is paused, switch on referral outreach only; general outreach stays off.
+    if (mode === 'referral' && !s.active) {
+      s.active = true;
+      s.revision++;
+      s.scope = 'referrals';
+    }
+    return s;
+  });
+  void updateNetwork(s => {
+    delete s.paused;
+    return s;
+  }).then(() => networkTick());
+  return { ok: true, message };
 }

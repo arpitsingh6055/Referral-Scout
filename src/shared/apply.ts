@@ -179,8 +179,16 @@ export interface ApplyProfile {
    * offers it (default), or only when the person presses the panel's button.
    */
   topChoice?: 'auto' | 'ask';
+  /** After an application is sent: find the people at that company who can refer the person (default), or nothing. */
+  afterApply?: 'referrals' | 'nothing';
 }
-export const emptyApplyProfile = (): ApplyProfile => ({ details: {}, answers: {}, eeo: 'leave', topChoice: 'auto' });
+export const emptyApplyProfile = (): ApplyProfile => ({
+  details: {},
+  answers: {},
+  eeo: 'leave',
+  topChoice: 'auto',
+  afterApply: 'referrals',
+});
 export const questionKey = (label: string): string =>
   label
     .toLowerCase()
@@ -277,7 +285,7 @@ export function fillPrompt(input: {
     'Confidence: "high" for facts copied from the source data and for answers built on direct, strong evidence; "medium" for computed or composed answers; "low" when the evidence is thin or the question is ambiguous, so the applicant checks it.',
     '',
     'Reply with ONLY one JSON object, no prose:',
-    '{"fill":[{"id": field id, "value": string or array of strings, "confidence": "high"|"medium"|"low", "why": at most 10 words}], "files":[{"id": field id, "file": "cv"|"photo"}], "ask":[{"id": field id, "question": short question for the applicant, "options": [optional list]}], "summary": one short line naming the role and company}',
+    '{"fill":[{"id": field id, "value": string or array of strings, "confidence": "high"|"medium"|"low", "why": at most 10 words}], "files":[{"id": field id, "file": "cv"|"photo"}], "ask":[{"id": field id, "question": short question for the applicant, "options": [optional list]}], "summary": one short line naming the role and company, "job": {"title": the role as the employer names it, "company": the hiring company (not the job board or recruiting agency, when the page says who the employer is)}}',
   ].join('\n');
 }
 
@@ -303,6 +311,10 @@ const reply = z.object({
     .max(60)
     .default([]),
   summary: z.string().max(300).catch(''),
+  job: z
+    .object({ title: z.string().max(200).catch(''), company: z.string().max(200).catch('') })
+    .optional()
+    .catch(undefined),
 });
 export interface FillItem {
   id: string;
@@ -320,6 +332,8 @@ export interface FillPlan {
   /** Fields left to the person on purpose (sensitive), with the reason in plain words. */
   leftForYou: { id: string; label: string; reason: string }[];
   summary: string;
+  /** The role and hiring company as ChatGPT read them from the page. */
+  job?: { title: string; company: string };
 }
 /** Shortens text to a limit at the end of a sentence, or else a word, never mid-word. */
 export function fitTo(text: string, max: number): string {
@@ -359,7 +373,14 @@ export function planFromReply(json: unknown, form: FormField[], profile: ApplyPr
   const parsed = reply.parse(json);
   const byId = new Map(form.map(f => [f.id, f]));
   const used = new Set<string>();
-  const plan: FillPlan = { fill: [], files: [], ask: [], leftForYou: [], summary: parsed.summary.trim() };
+  const plan: FillPlan = {
+    fill: [],
+    files: [],
+    ask: [],
+    leftForYou: [],
+    summary: parsed.summary.trim(),
+    ...(parsed.job?.company.trim() ? { job: { title: parsed.job.title.trim(), company: parsed.job.company.trim() } } : {}),
+  };
   for (const f of form)
     if (f.sensitive && !(f.sensitive === 'eeo' && profile.eeo === 'decline'))
       plan.leftForYou.push({ id: f.id, label: f.label, reason: reasonFor[f.sensitive] });
