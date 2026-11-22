@@ -12,7 +12,7 @@ import {
   MAX_SEARCH_PAGES,
   suggestTarget,
 } from '../src/shared/targeting';
-import { rankReferral, referralAsk, referralNote, referralPlan, referralSearchUrl } from '../src/shared/referral';
+import { rankReferral, referralAsk, referralNote, referralPlan, referralSearchUrl, schoolsOf } from '../src/shared/referral';
 import {
   DAY,
   defaultNoteTemplate,
@@ -458,5 +458,45 @@ describe('referral audit: people who hire under other titles, and people who can
     expect(plan[2]).toMatchObject({ page: 2 });
     const vague = referralPlan({ ...job, title: 'Associate' });
     expect(new Set(vague.map(step => `${step.keywords}|${step.page ?? 1}|${step.network.join()}`)).size).toBe(vague.length);
+  });
+});
+
+describe('school alumni and LinkedIn’s own suggestions', () => {
+  const gp = {
+    url: 'https://www.linkedin.com/jobs/view/4491315252/',
+    title: 'Product Management Intern – AI & Analytics',
+    company: 'G-P',
+    location: '',
+    mode: 'referral' as const,
+    companyId: '1',
+    size: 'large' as const,
+  };
+  it('keeps the school alum LinkedIn suggests on the job page and ranks her above HR strangers', () => {
+    // Live case, 22 Nov 2026: "Hema Vanapalli • 3rd / Product Leader / School alum from IMT Ghaziabad", no company in the headline.
+    const hema = rankReferral({ headline: 'Product Leader', degree: 3, alum: true }, gp, true);
+    const hrbp = rankReferral({ headline: 'HR Business Partner | HR Operations | HRIS', degree: 2 }, gp, true);
+    expect(hema).not.toBeNull();
+    expect(hema!.reason).toMatch(/from your school/);
+    expect(hema!.score).toBeGreaterThan(hrbp!.score);
+    // Without the school tie she is still on the product team's leadership, but no longer ahead of the HR partner.
+    expect(rankReferral({ headline: 'Product Leader', degree: 3 }, gp, true)!.score).toBeLessThan(hrbp!.score);
+  });
+  it('does not count HR operations, payroll or HR analytics as people who hire', () => {
+    expect(rankReferral({ headline: 'Data Analyst | SQL · Power BI | HR & Operations Analytics', degree: 2 }, gp, true)).toBeNull();
+    expect(rankReferral({ headline: 'HR Operations Professional | Onboarding', degree: 2 }, gp, true)).toBeNull();
+    expect(rankReferral({ headline: 'Global HR Operations Lead | EMEA', degree: 2 }, gp, true)).toMatchObject({ kind: 'senior' });
+    expect(rankReferral({ headline: 'Senior Human Resource Operations | HR Business Partner', degree: 2 }, gp, true)).toMatchObject({
+      kind: 'recruiter',
+    });
+  });
+  it('reads the schools from the Education section and searches alumni at the company right after people already known', () => {
+    const schools = schoolsOf(
+      'Education Institute of Management Technology, Ghaziabad Post Graduate Diploma in Management - PGDM 2024 - 2026 Delhi University Bachelor of Commerce 2019 - 2022',
+    );
+    expect(schools).toEqual(['Institute of Management Technology', 'Delhi University']);
+    const plan = referralPlan(gp, ['recruiter', 'talent acquisition'], schools);
+    expect(plan[2]).toMatchObject({ keywords: '"Institute of Management Technology"', network: ['S', 'O'], alum: true });
+    expect(plan[3]).toMatchObject({ keywords: '"Delhi University"', alum: true });
+    expect(plan.at(-1)!.label).toMatch(/product team/i);
   });
 });

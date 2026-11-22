@@ -31,6 +31,7 @@ import {
   referralPlan,
   referralSearchUrl,
   rankReferral,
+  schoolsOf,
   type ReferralJob,
   pickCompany,
   type referralJobInput,
@@ -698,7 +699,14 @@ async function planCompanies(s: NetworkState, jobs: ReferralJob[], signal: Abort
 async function referralScan(s: NetworkState, job: ReferralJob, signal: AbortSignal): Promise<void> {
   // A job taken from a search list: open the job itself once for its company page and LinkedIn's own suggested people.
   // (Only a LinkedIn job page can be opened here; a job applied for on a company's site goes straight to the company lookup.)
-  if (!job.companyUrl && !job.infoTried && /^https:\/\/www\.linkedin\.com\/jobs\/view\//.test(job.url)) {
+  // This also runs when the company page is already known (a job sent from the application panel brings it): the job
+  // page is the only place LinkedIn lists its own "People you can reach out to", often a school alum.
+  if (
+    !job.infoTried &&
+    !job.suggested?.length &&
+    (!job.companyUrl || job.mode === 'referral') &&
+    /^https:\/\/www\.linkedin\.com\/jobs\/view\//.test(job.url)
+  ) {
     await note(s, `${job.company}: opening the ${job.title} job…`);
     const infoSchema = z.object({
       companyUrl: z.string().nullable(),
@@ -720,7 +728,7 @@ async function referralScan(s: NetworkState, job: ReferralJob, signal: AbortSign
         info = got.info;
       if (saved) {
         saved.infoTried = true;
-        if (info?.companyUrl && /^https:\/\/www\.linkedin\.com\/company\/[^/?#]+\/$/.test(info.companyUrl))
+        if (!saved.companyUrl && info?.companyUrl && /^https:\/\/www\.linkedin\.com\/company\/[^/?#]+\/$/.test(info.companyUrl))
           saved.companyUrl = info.companyUrl;
         if (info?.suggested.length)
           saved.suggested = info.suggested.slice(0, 10).map(p => ({
@@ -809,7 +817,7 @@ async function referralScan(s: NetworkState, job: ReferralJob, signal: AbortSign
     job.companyId && (job.strategy || size)
       ? withRecruiters(job.strategy?.titles ?? (s.plan?.titles ?? fallbackTitles([job.title]))[size!])
       : undefined;
-  const plan = referralPlan(job, titles),
+  const plan = referralPlan(job, titles, schoolsOf(s.profile?.sections?.education)),
     step = plan[job.cursor],
     verified = !!job.companyId;
   let people: z.infer<typeof networkProfileSchema>[] = [],
@@ -829,8 +837,9 @@ async function referralScan(s: NetworkState, job: ReferralJob, signal: AbortSign
     if (!saved) return current; // removed while searching
     const queue = saved.mode === 'referral';
     let added = 0;
-    // LinkedIn's own suggestions from the job page are ranked by the same rules, once. They are not known to work
-    // at the company, so the company must be visible in their headline; the school flag is carried over.
+    // LinkedIn's own suggestions from the job page are ranked by the same rules, once. LinkedIn lists them because
+    // they work at the hiring company (checked live: "Product Leader", no company in the headline, school alum), so
+    // they count as verified like a Current company search; the school flag is carried over.
     const offered = (saved.suggested ?? []).flatMap(o => {
       const url = profileUrl(o.url);
       return url
@@ -849,9 +858,10 @@ async function referralScan(s: NetworkState, job: ReferralJob, signal: AbortSign
         : [];
     });
     delete saved.suggested;
+    saved.infoTried = true; // the job page's people are in; no need to open it again
     const alumni = new Set(offered.filter(o => o.alum).map(o => o.url));
     for (const row of [
-      ...people.map(p => ({ ...p, alum: alumni.has(p.url), offered: false })),
+      ...people.map(p => ({ ...p, alum: !!step?.alum || alumni.has(p.url), offered: false })),
       ...offered.filter(o => !people.some(p => p.url === o.url)),
     ]) {
       const { alum, offered: fromLinkedIn, ...person } = row;
@@ -859,7 +869,7 @@ async function referralScan(s: NetworkState, job: ReferralJob, signal: AbortSign
       const verdict = rankReferral(
         { ...person, alum },
         { ...saved, ...(size ? { size } : {}) },
-        verified && !fromLinkedIn,
+        verified || fromLinkedIn,
         titles ?? [],
         avoid,
       );

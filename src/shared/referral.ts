@@ -84,6 +84,39 @@ export interface ReferralSearch {
   keywords: string;
   network: ('F' | 'S' | 'O')[];
   page?: number;
+  /** A search for people from the person's own school: everyone it returns counts as an alum. */
+  alum?: boolean;
+}
+/**
+ * The person's schools, read from their profile's Education section (stored as one line of text), for the alumni
+ * search. A school is a run of capitalised words around Institute, University, College, School or Academy, cut at the
+ * first comma: "Institute of Management Technology, Ghaziabad" becomes the name LinkedIn's keyword search matches
+ * best. At most two.
+ */
+const DEGREE =
+  /^(?:[A-Z]{2,6}|B\.\S*|M\.\S*|Bachelor'?s?|Master'?s?|Post|Postgraduate|Graduate|Diploma|Doctor|PhD|Ph\.D\.?|Executive|Class|Grade)$/;
+export function schoolsOf(education: string | undefined): string[] {
+  const text = (education ?? '').replace(/\s+/g, ' ');
+  const word = "[A-Z][A-Za-z&.'-]*";
+  const re = new RegExp(
+    `((?:${word} ){0,4}(?:Institute|University|College|School|Academy|Vidyapeeth|Vishwavidyalaya)(?: (?:of|for|and|&|${word}))*)`,
+    'g',
+  );
+  const out: string[] = [];
+  for (const m of text.matchAll(re)) {
+    const words = m[1]!.trim().split(' ');
+    // Drop a section heading or a degree written in capitals in front of the name ("Education", "PGDM", "MBA").
+    while (words.length > 1 && (/^education$/i.test(words[0]!) || DEGREE.test(words[0]!)) && !/^(?:IIT|IIM|NIT|IIIT|BITS)$/.test(words[0]!))
+      words.shift();
+    // ...and the degree written after it ("Delhi University Bachelor of Commerce", "IIT Delhi B.Tech").
+    const cut = words.findIndex((w, i) => i > 0 && DEGREE.test(w));
+    if (cut > 0) words.splice(cut);
+    while (words.length > 1 && /^(?:of|for|and|&)$/i.test(words[words.length - 1]!)) words.pop();
+    const name = words.join(' ');
+    if (name.length >= 6 && !out.some(o => o.toLowerCase() === name.toLowerCase())) out.push(name);
+    if (out.length >= 2) break;
+  }
+  return out;
 }
 
 /**
@@ -96,6 +129,7 @@ export interface ReferralSearch {
 export function referralPlan(
   job: Pick<ReferralJob, 'company' | 'title' | 'mode' | 'companyId' | 'size'>,
   titles?: string[],
+  schools: string[] = [],
 ): ReferralSearch[] {
   const fn = functionWords([job.title])[0] ?? '',
     at = job.company;
@@ -105,20 +139,34 @@ export function referralPlan(
       { label: `more people you know at ${at}`, keywords: '', network: ['F'], page: 2 },
     ];
     if (job.mode === 'connections') return known;
+    // Alumni of the person's own school are among the most willing referrers, whatever their team: searched right
+    // after the people already known, with the school name as the keyword inside LinkedIn's Current company filter.
+    const alumni: ReferralSearch[] = schools.map(school => ({
+      label: `people from ${school} at ${at}`,
+      keywords: `"${school.replace(/"/g, '')}"`,
+      network: ['S', 'O'],
+      alum: true,
+    }));
+    // The team the job sits in (product, engineering, ...) is always searched: a planned list of titles for a company
+    // of this size is mostly recruiters and general managers, and would miss the people the person would work with.
+    const team: ReferralSearch[] = fn ? [{ label: `the ${fn} team at ${at}`, keywords: fn, network: ['S', 'O'] }] : [];
     if (titles?.length) {
       // Planned titles for a company of this size, searched in two groups so each query stays short enough for LinkedIn.
       const groups = [titles.slice(0, 5), titles.slice(5, 10)].filter(g => g.length);
       return [
         ...known,
+        ...alumni,
         ...groups.map((g, i) => ({
           label: i ? `more likely referrers at ${at}` : `likely referrers at ${at}`,
           keywords: `(${g.map(t => (/\s/.test(t) ? `"${t}"` : t)).join(' OR ')})`,
           network: ['S', 'O'] as ('S' | 'O')[],
         })),
+        ...team,
       ];
     }
     return [
       known[0]!,
+      ...alumni,
       { label: `recruiters and HR at ${at}`, keywords: COMPANY_KINDS[0]!, network: ['S', 'O'] },
       { label: `more recruiters and HR at ${at}`, keywords: COMPANY_KINDS[0]!, network: ['S', 'O'], page: 2 },
       // Without a recognisable function in the job title this would repeat the managers search below.
@@ -166,7 +214,13 @@ const WHY: Record<ReferralKind, string> = {
 // at the company, can put a name forward even when their own function differs from the job's.
 const HIRING =
   /recruit|talent|sourc(?:er|ing)|\bh\.?r\.?\b|\bhrbp\b|\bhr\s*bp\b|human\s+(?:resources?|capital)|people\s*(?:&|and|ops|operations|partner|business|team|success|experience|\bculture)|\bta\b|hiring|staffing|campus|university\s+(?:relations|recruit)|early\s+careers?|employer\s+brand/i;
-const SENIOR = /\b(?:head|director|vp|vice president|president|chief|c[tfoepm]o|manager|lead|principal|partner|avp|svp|evp)\b/i;
+const SENIOR = /\b(?:head|director|vp|vice president|president|chief|c[tfoepm]o|manager|lead|leader|principal|partner|avp|svp|evp)\b/i;
+// "HR" alone is not hiring: HR operations, payroll, HRIS and HR analytics people rarely have a say in who is hired.
+// They count as recruiters only when the headline also says they recruit or partner with the business.
+const RECRUITING =
+  /recruit|talent|sourc(?:er|ing)|campus|university\s+(?:relations|hiring)|early\s+careers?|hiring|staffing|employer\s+brand|\bhr\s*bp\b|\bhrbp\b|business\s+partner|people\s+partner|\bta\b|\bhr\s+(?:manager|head|director|generalist|leader)|head\s+of\s+(?:hr|people)|(?:chief|vp)\s+(?:people|hr)/i;
+const HR_SUPPORT =
+  /\b(?:hr|human\s+resources?)\b[^|]{0,30}\b(?:operations|ops|analytics|payroll|hris|benefits|compensation|shared\s+services|systems|technology)\b|payroll|\bhris\b|data\s+analyst/i;
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
@@ -193,34 +247,39 @@ export function rankReferral(
   )
     return null;
   const fn = functionWords([job.title])[0];
-  const kind: ReferralKind =
+  let kind: ReferralKind =
     classify({ headline }, { roles: [job.title] })?.category ??
     (HIRING.test(headline)
       ? 'recruiter'
       : SENIOR.test(headline)
-        ? 'senior'
+        ? fn && new RegExp(`\\b${escape(fn)}`, 'i').test(headline)
+          ? 'leader' // a senior person in the job's own team ("Product Leader" for a product role)
+          : 'senior'
         : fn && new RegExp(`\\b${escape(fn)}`, 'i').test(headline)
           ? 'peer'
           : 'employee');
+  if (kind === 'recruiter' && !RECRUITING.test(headline) && HR_SUPPORT.test(headline)) kind = SENIOR.test(headline) ? 'senior' : 'employee';
   const degree = person.degree ?? 3;
+  // A school alum is treated like someone with a mutual connection: likelier to answer and to help.
+  const alum = person.alum === true,
+    reach = alum ? Math.min(degree, 2) : degree;
   // At a large company a founder, director or VP will not answer a stranger about a referral. Keep them only if already known.
   const tooSenior =
     job.size === 'large' &&
     (kind === 'founder' || /\b(?:director|vp|vice president|president|chief|c[tfoepm]o|founder|ceo|managing director)\b/i.test(headline)) &&
     !HIRING.test(headline);
-  if (tooSenior && degree !== 1) return null;
+  if (tooSenior && degree !== 1 && !alum) return null;
   // Titles the plan says not to approach at this company as a stranger. People who hire are never ruled out this way.
   if (degree !== 1 && !HIRING.test(headline) && avoid.some(t => new RegExp(`\\b${escape(t)}\\b`, 'i').test(headline))) return null;
   const planned = titles.some(t => new RegExp(`\\b${escape(t)}`, 'i').test(headline));
-  if (kind === 'employee' && degree !== 1 && !planned) return null;
-  if (kind === 'peer' && degree > 2) return null; // same-team peers only when there is at least a mutual connection
+  if (kind === 'employee' && degree !== 1 && !planned && !alum) return null;
+  if (kind === 'peer' && reach > 2) return null; // same-team peers only when there is at least a mutual connection, or a shared school
   // Someone from the same school is noticeably more willing to help; LinkedIn flags them on the job page.
-  const score =
-    WEIGHT[kind] + (degree === 1 ? 60 : degree === 2 ? 20 : 0) + (person.alum ? 25 : 0) + (planned ? 40 : 0) - (tooSenior ? 80 : 0);
+  const score = WEIGHT[kind] + (degree === 1 ? 60 : degree === 2 ? 20 : 0) + (alum ? 110 : 0) + (planned ? 40 : 0) - (tooSenior ? 80 : 0);
   return {
     kind,
     score,
-    reason: `${WHY[kind]} at ${job.company}${degree === 1 ? ', already your connection' : ''}${person.alum ? ', from your school' : ''}. For: ${job.title}`,
+    reason: `${WHY[kind]} at ${job.company}${degree === 1 ? ', already your connection' : ''}${alum ? ', from your school' : ''}. For: ${job.title}`,
   };
 }
 

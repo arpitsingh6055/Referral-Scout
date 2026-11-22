@@ -178,7 +178,8 @@ describe('who to ask depends on the size of the company', () => {
   });
   it('searches the planned titles with the company filter, in short queries', () => {
     const plan = referralPlan(big, ['recruiter', 'talent acquisition', 'HR', 'HRBP', 'campus recruiter', 'team lead', 'senior consultant']);
-    expect(plan.map(s => s.network.join())).toEqual(['F', 'F', 'S,O', 'S,O']);
+    expect(plan.map(s => s.network.join())).toEqual(['F', 'F', 'S,O', 'S,O', 'S,O']);
+    expect(plan[4]!.label).toMatch(/team at/); // the job's own team is always searched as well
     expect(plan[2]!.keywords).toBe('(recruiter OR "talent acquisition" OR HR OR HRBP OR "campus recruiter")');
     expect(plan[3]!.keywords).toBe('("team lead" OR "senior consultant")');
   });
