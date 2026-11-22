@@ -836,12 +836,9 @@ export function registerNetworkMessages(): void {
             const p = s.contacts.find(x => x.url === req.url);
             if (p) {
               p.followed = Date.now();
+              p.state = 'skipped';
               delete p.followOnly;
-              // Following often brings Connect back to the profile (seen live on 23 Nov 2026), so they go back in the
-              // queue and the next visit checks again; if Connect is still missing they return here.
-              p.state = p.acceptedAt ? 'connected' : 'shortlisted';
-              p.failures = 0;
-              p.reason = 'Followed on LinkedIn. Checking whether LinkedIn now offers Connect.';
+              p.reason = 'Followed on LinkedIn. Connecting is not available for this person; message them there if their profile is open.';
             }
             s.status = `Followed ${target.name}.`;
             return s;

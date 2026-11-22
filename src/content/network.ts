@@ -100,6 +100,10 @@ async function inspectRelationship(url: string, signal: AbortSignal): Promise<Re
     signal,
     8000,
   ).catch(() => undefined);
+  // Follow often paints before Connect (both sit in the header on most profiles). Seeing Follow alone is not yet an
+  // answer: give Connect or Pending a few more seconds to appear before looking anywhere else.
+  const decided = (t: HTMLElement) => !!(control(t, CONNECT) || control(t, PENDING) || topCardFacts(t, visible).degree === 1);
+  if (!decided(topCard(url))) await wait(() => (decided(topCard(url)) ? true : null), signal, 3500).catch(() => undefined);
   const top = topCard(url),
     state = relationship(top);
   if (state !== 'unknown') return state;
@@ -114,6 +118,9 @@ async function inspectRelationship(url: string, signal: AbortSignal): Promise<Re
   }
   close();
   if (inMenu) return inMenu;
+  // One last look at the header: Connect may have finished painting while the menu was open.
+  const late = relationship(topCard(url));
+  if (late !== 'unknown') return late;
   // Follow-only is concluded only from evidence: the More menu opened, painted its items, and none of them is Connect
   // or Pending. A menu that did not open (a slow or background tab) proves nothing, so that reads as unknown and is
   // checked again, instead of telling the person LinkedIn forbids connecting (seen on 23 Nov 2026: Connect was under

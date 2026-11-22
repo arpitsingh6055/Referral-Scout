@@ -1155,7 +1155,7 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
     p.state = 'attention';
     p.followOnly = true;
     const first = p.name.split(/\s+/)[0] || 'this person';
-    p.reason = `LinkedIn showed only Follow for ${first} when checked (no Connect, even under More). Following often makes Connect appear: press Follow, then Try again.`;
+    p.reason = `LinkedIn showed only Follow for ${first} when checked: no Connect in the header or under More. If you see Connect on their profile, press Try again.`;
     await saveContact(p);
     return;
   }

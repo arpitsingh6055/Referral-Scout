@@ -267,3 +267,16 @@ it('reads the menu this More button opened, not another menu already open on the
   const reply = await askRelationship();
   expect(reply).toMatchObject({ ok: true, data: { state: 'not-connected' } });
 }, 15000);
+
+it('does not decide on Follow alone when Connect paints a moment later in the header', async () => {
+  bareProfile('<button aria-label="Follow Alex Example">Follow</button><button id="more">More</button>');
+  setTimeout(
+    () =>
+      document
+        .getElementById('actions')!
+        .insertAdjacentHTML('afterbegin', `<a href="${URL_}" aria-label="Invite Alex Example to connect">Connect</a>`),
+    1200,
+  );
+  const reply = await askRelationship();
+  expect(reply).toMatchObject({ ok: true, data: { state: 'not-connected' } });
+}, 15000);
