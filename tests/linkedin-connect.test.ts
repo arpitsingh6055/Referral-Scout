@@ -245,3 +245,25 @@ it('reports follow-only only when LinkedIn truly offers no Connect, just Follow'
   const reply = await askRelationship();
   expect(reply).toMatchObject({ ok: true, data: { state: 'follow-only' } });
 }, 12000);
+
+it('never calls a profile follow-only when the More menu did not open (a slow or background tab): it is unknown and checked again', async () => {
+  // Live case, 23 Nov 2026: Follow showed first, Connect was under More, and the person sent the invitation by hand,
+  // while the panel said LinkedIn only allows following.
+  bareProfile(
+    '<button aria-label="Follow Alex Example">Follow</button><a href="/messaging/compose/">Message</a><button id="more">More</button>',
+  );
+  const reply = await askRelationship(); // More is pressed, but no menu ever paints
+  expect(reply).toMatchObject({ ok: true, data: { state: 'unknown' } });
+}, 15000);
+
+it('reads the menu this More button opened, not another menu already open on the page', async () => {
+  bareProfile('<button aria-label="Follow Alex Example">Follow</button><button id="more" aria-controls="m2">More</button>');
+  document.body.insertAdjacentHTML(
+    'beforeend',
+    '<div role="menu" id="m1"><a role="menuitem">Settings</a><a role="menuitem">Sign out</a></div><div role="menu" id="m2" hidden><a role="menuitem">Save to PDF</a><div role="menuitem" aria-label="Invite Alex Example to connect">Connect</div></div>',
+  );
+  const menu = document.getElementById('m2')!;
+  document.getElementById('more')!.addEventListener('click', () => menu.toggleAttribute('hidden'));
+  const reply = await askRelationship();
+  expect(reply).toMatchObject({ ok: true, data: { state: 'not-connected' } });
+}, 15000);

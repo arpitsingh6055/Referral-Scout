@@ -213,7 +213,8 @@ export function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
   if (p.state === 'attention') {
     actions.append(link('Open on LinkedIn ↗', p.url, 'btn sm'));
     if (p.followOnly) actions.append(button('Follow', () => act({ kind: 'network', action: 'followNow', url: p.url }), 'btn sm primary'));
-    else if (!p.emailRequired)
+    // A follow-only reading can be wrong or change (following someone often brings Connect back), so it can be re-checked.
+    if (!p.emailRequired)
       actions.append(button('Try again', () => act({ kind: 'network', action: 'retry', url: p.url }), 'btn sm primary'));
     // emailRequired: only Open on LinkedIn + Skip, because retrying can never clear LinkedIn's email prompt.
   }

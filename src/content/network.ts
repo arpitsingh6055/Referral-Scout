@@ -61,16 +61,31 @@ export function relationship(top: ParentNode): 'connected' | 'pending' | 'not-co
   return topCardFacts(top, visible).degree === 1 ? 'connected' : 'unknown';
 }
 const openMenus = () => queryAll('[role="menu"]').filter(visible);
-/** Some profiles show Follow first and keep Connect under More. Opens that menu and returns it. */
+const menuItems = (menu: HTMLElement) => [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')].filter(e => visible(e) && label(e));
+/**
+ * Some profiles show Follow first and keep Connect under More. Opens that menu and returns it once its items have
+ * painted. The menu taken is the one this More button opened (named by aria-controls, or new since the click), never
+ * another menu that happened to be open. `menu` stays undefined when it did not open or showed no items, which says
+ * nothing about Connect: the caller must not read that as "follow only".
+ */
 async function moreMenu(top: HTMLElement, signal: AbortSignal): Promise<{ menu: HTMLElement | undefined; close: () => void }> {
   const more = control(top, MORE);
   if (!more) return { menu: undefined, close: () => undefined };
+  const before = new Set(openMenus());
   more.click();
-  const menu = await wait(() => openMenus()[0], signal, 3000).catch(() => undefined);
+  const mine = (): HTMLElement | undefined => {
+    const id = more.getAttribute('aria-controls');
+    const named = id ? document.getElementById(id) : null;
+    if (named && visible(named))
+      return named.matches('[role="menu"]') ? named : (named.querySelector<HTMLElement>('[role="menu"]') ?? named);
+    return openMenus().find(m => !before.has(m));
+  };
+  // Items paint a moment after the menu itself; a menu in a background window can take several seconds.
+  const menu = await wait(() => (mine() && menuItems(mine()!).length ? mine() : null), signal, 6000).catch(() => undefined);
   return {
-    menu,
+    menu: menu ?? undefined,
     close: () => {
-      if (openMenus().length) more.click();
+      if (mine()) more.click();
     },
   };
 }
@@ -99,9 +114,11 @@ async function inspectRelationship(url: string, signal: AbortSignal): Promise<Re
   }
   close();
   if (inMenu) return inMenu;
-  // No Connect or Pending anywhere. A Follow control means LinkedIn does not permit connecting here (a creator /
-  // follow-first profile), which is different from a page that simply failed to load.
-  if (control(top, FOLLOW) || control(top, FOLLOWING)) return 'follow-only';
+  // Follow-only is concluded only from evidence: the More menu opened, painted its items, and none of them is Connect
+  // or Pending. A menu that did not open (a slow or background tab) proves nothing, so that reads as unknown and is
+  // checked again, instead of telling the person LinkedIn forbids connecting (seen on 23 Nov 2026: Connect was under
+  // More all along, and the person sent the invitation by hand).
+  if (menu && (control(top, FOLLOW) || control(top, FOLLOWING))) return 'follow-only';
   return 'unknown';
 }
 /** Follows a profile LinkedIn will not let you connect with. User-initiated, so no send-authorization handshake. */

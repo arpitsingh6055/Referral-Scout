@@ -1154,7 +1154,8 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
     // this is not a failure to retry. Surface it with the real options instead of a vague error.
     p.state = 'attention';
     p.followOnly = true;
-    p.reason = `LinkedIn only lets you follow ${p.name.split(/\s+/)[0] || 'this person'}, not send a connection request. Follow them, or open their profile to message if it is open.`;
+    const first = p.name.split(/\s+/)[0] || 'this person';
+    p.reason = `LinkedIn showed only Follow for ${first} when checked (no Connect, even under More). Following often makes Connect appear: press Follow, then Try again.`;
     await saveContact(p);
     return;
   }
