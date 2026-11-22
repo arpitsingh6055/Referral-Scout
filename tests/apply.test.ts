@@ -540,3 +540,34 @@ describe('LinkedIn safety reminder', () => {
     expect(api.passInterstitial()).toBe(false);
   });
 });
+
+describe('LinkedIn yes/no questions, November 2026 markup', () => {
+  it('reads Yes and No as the choices (not the question LinkedIn puts in every radio) and picks the right one', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    const radio = (group: string, id: string, q: string, text: string, checked = false) =>
+      `<div><div componentkey="auto"><div><input id="${id}" aria-label="${q}" type="radio" name="${group}" ${checked ? 'checked' : ''}><label for="${id}"></label></div><div><p>${text}</p></div></div></div>`;
+    document.body.innerHTML = `
+      <dialog open data-testid="dialog"><h2>Apply to Beacon AI</h2><p>4/5 pages</p><h3>Additional Questions</h3>
+        <div componentkey="easyApplyFieldFocus_1"><p>Are you comfortable working in a remote setting?*</p>
+          <fieldset role="radiogroup"><div>${radio('g1', 'a', 'Are you comfortable working in a remote setting?', 'Yes', true)}${radio('g1', 'b', 'Are you comfortable working in a remote setting?', 'No')}</div></fieldset></div>
+        <div componentkey="easyApplyFieldFocus_2"><p>Do you have marketing experience? *</p>
+          <fieldset role="radiogroup"><div>${radio('g2', 'c', 'Do you have marketing experience? ', 'Yes')}${radio('g2', 'd', 'Do you have marketing experience? ', 'No')}</div></fieldset></div>
+        <button>Back</button><button>Review</button>
+      </dialog>`;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+    const snap = api.scan({ linkedin: true });
+    expect(snap.form.map(f => [f.label, f.options, f.value ?? '', f.required])).toEqual([
+      ['Are you comfortable working in a remote setting?', ['Yes', 'No'], 'Yes', true],
+      ['Do you have marketing experience?', ['Yes', 'No'], '', true],
+    ]);
+    const id = snap.form[1]!.id;
+    expect(await api.fill([{ id, kind: 'radio', value: 'No' }], [])).toEqual([{ id, ok: true }]);
+    expect((document.getElementById('d') as HTMLInputElement).checked).toBe(true);
+    expect(snap.hasNext).toBe(true);
+  });
+});

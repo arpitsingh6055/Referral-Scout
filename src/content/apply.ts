@@ -51,7 +51,7 @@ export interface ApplyApi {
   /** Passes LinkedIn's "Job search safety reminder" by pressing its Continue applying. True when it did. */
   passInterstitial(): boolean;
 }
-const VERSION = 6;
+const VERSION = 7;
 const scope = globalThis as typeof globalThis & { __referralScoutApply?: ApplyApi };
 
 /* ---------- reading the page ---------- */
@@ -149,9 +149,29 @@ function limitsNear(el: Element): { max?: number; min?: number; note: string } {
   }
   return { note: '' };
 }
+/**
+ * The words of one choice ("Yes", "No", "3-5 years"). Not labelOf: LinkedIn gives every radio of a group the QUESTION
+ * as its aria-label, leaves its <label> empty and writes the choice in a sibling element, so the choice is read from
+ * the text around this one input first, and the aria-label is only the last resort.
+ */
 const optionLabel = (input: HTMLInputElement): string => {
-  const own = labelOf(input);
-  return own || clean(input.value);
+  const doc = input.ownerDocument;
+  const byFor = input.id ? clean(doc.querySelector(`label[for="${esc(input.id)}"]`)?.textContent) : '';
+  if (byFor) return byFor;
+  const wrap = clean(input.closest('label')?.textContent);
+  if (wrap) return wrap;
+  const by = textOfIds(input.getAttribute('aria-labelledby'), doc);
+  if (by) return by;
+  // The largest box around this input that holds no other choice: its text is this choice's words.
+  let best = '';
+  for (let box = input.parentElement, depth = 0; box && depth < 6; box = box.parentElement, depth++) {
+    if (box.matches('fieldset, [role="radiogroup"], [role="group"], form')) break;
+    if (box.querySelectorAll('input[type="radio"], input[type="checkbox"]').length > 1) break;
+    const t = clean(box.textContent);
+    if (t) best = t;
+  }
+  if (best && best.length <= 200) return best;
+  return clean(input.getAttribute('aria-label')) || clean(input.value);
 };
 const isRequired = (el: Element, label: string): boolean =>
   (el as HTMLInputElement).required || el.getAttribute('aria-required') === 'true' || /\*\s*$|\(required\)|\brequired\b/i.test(label);

@@ -265,7 +265,7 @@ function draw(d: Detect): void {
     card.append(box);
   }
   const actions = node('div', '', 'row apply-actions');
-  if (s.hasNext && s.stage !== 'error' && s.stage !== 'done')
+  if (s.hasNext && !s.ask.length && s.stage !== 'error' && s.stage !== 'done')
     actions.append(
       button(
         'Next step',
@@ -299,53 +299,78 @@ function item(label: string, value: string, note: string, tone: 'done' | 'check'
 }
 function askBox(s: ApplySession): HTMLElement {
   const box = node('div', '', 'apply-ask');
-  box.append(node('h4', 'Needs your answer', 'group-title'));
-  const inputs: { id: string; input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement; remember: HTMLInputElement }[] = [];
+  box.append(
+    node('h4', s.ask.length === 1 ? 'One question only you can answer' : `${s.ask.length} questions only you can answer`, 'group-title'),
+    node('p', 'Answer here and the rest of the application carries on by itself.', 'fine'),
+  );
+  // Each answer is read through a getter, so short choices can be buttons and long ones a list.
+  const answers: { id: string; value: () => string }[] = [];
   for (const q of s.ask) {
     const wrap = node('div', '', 'field');
     const id = `ask-${q.id}`;
-    const label = node('label', q.question, 'field-label');
-    label.htmlFor = id;
-    let input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
-    if (q.options?.length) {
-      input = node('select', '', 'input');
-      input.append(node('option', 'Choose…'));
-      (input.firstChild as HTMLOptionElement).value = '';
+    const question = node('label', q.question || q.label, 'field-label');
+    question.htmlFor = id;
+    wrap.append(question);
+    if (q.options?.length && q.options.length <= 6 && q.options.every(o => o.length <= 40)) {
+      // Yes / No and other short choices: one press each.
+      const group = node('div', '', 'choice-pills');
+      group.setAttribute('role', 'radiogroup');
+      group.setAttribute('aria-label', q.question || q.label);
+      let chosen = '';
       for (const o of q.options) {
-        const opt = node('option', o);
-        opt.value = o;
-        input.append(opt);
+        const pill = node('button', o, 'pill-choice');
+        pill.type = 'button';
+        pill.setAttribute('role', 'radio');
+        pill.setAttribute('aria-checked', 'false');
+        pill.addEventListener('click', () => {
+          chosen = o;
+          for (const p of group.querySelectorAll('button')) p.setAttribute('aria-checked', String(p === pill));
+        });
+        group.append(pill);
       }
-    } else if (q.kind === 'textarea' || q.kind === 'richtext') {
-      input = node('textarea', '', 'input');
-      input.rows = 3;
+      wrap.append(group);
+      answers.push({ id: q.id, value: () => chosen });
     } else {
-      input = node('input', '', 'input');
-      input.type = q.kind === 'date' ? 'date' : q.kind === 'number' ? 'number' : 'text';
+      let input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+      if (q.options?.length) {
+        input = node('select', '', 'input');
+        const none = node('option', 'Choose an answer');
+        none.value = '';
+        input.append(none);
+        for (const o of q.options) {
+          const opt = node('option', o);
+          opt.value = o;
+          input.append(opt);
+        }
+      } else if (q.kind === 'textarea' || q.kind === 'richtext') {
+        input = node('textarea', '', 'input');
+        input.rows = 3;
+      } else {
+        input = node('input', '', 'input');
+        input.type = q.kind === 'date' ? 'date' : q.kind === 'number' ? 'number' : 'text';
+      }
+      input.id = id;
+      wrap.append(input);
+      answers.push({ id: q.id, value: () => input.value });
     }
-    input.id = id;
-    const remember = node('input');
-    remember.type = 'checkbox';
-    remember.checked = true;
-    const rl = node('label', '', 'fine inline');
-    rl.append(remember, document.createTextNode(' Remember for future applications'));
-    wrap.append(label, input, rl);
-    if (q.label && q.label !== q.question) wrap.prepend(node('span', q.label, 'fine'));
-    inputs.push({ id: q.id, input, remember });
     box.append(wrap);
   }
+  const remember = node('input');
+  remember.type = 'checkbox';
+  remember.checked = true;
+  const rl = node('label', '', 'fine inline');
+  rl.append(remember, document.createTextNode(' Remember these answers for future applications'));
   box.append(
+    rl,
     button(
-      'Add to the form',
+      'Use these answers and continue',
       async () => {
-        const answers = inputs
-          .filter(i => i.input.value.trim())
-          .map(i => ({ id: i.id, value: i.input.value, remember: i.remember.checked }));
-        if (!answers.length) throw new Error('Type an answer first.');
-        draw(await applyRequest({ kind: 'apply', action: 'answer', answers }));
+        const given = answers.map(a => ({ id: a.id, value: a.value().trim(), remember: remember.checked })).filter(a => a.value);
+        if (!given.length) throw new Error('Choose or type an answer first.');
+        draw(await applyRequest({ kind: 'apply', action: 'answer', answers: given }));
       },
-      'btn sm',
-      'Added to the form.',
+      'btn primary',
+      'Answers added. Continuing…',
     ),
   );
   return box;

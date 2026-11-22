@@ -1931,3 +1931,26 @@ details.person-row > .person .person-head {
   border-radius: 50%;
   object-fit: cover;
 }
+
+.choice-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.pill-choice {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 7px 16px;
+  font: inherit;
+  cursor: pointer;
+}
+.pill-choice:hover {
+  border-color: var(--primary);
+}
+.pill-choice[aria-checked='true'] {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
