@@ -466,3 +466,42 @@ describe('LinkedIn final page with a top-choice message', () => {
     expect(fitTo('one two three four five six', 15)).toBe('one two three');
   });
 });
+
+describe('LinkedIn top choice', () => {
+  it('reports the top-choice box on the final page and ticks it only when asked', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    document.body.innerHTML = `
+      <dialog open data-testid="dialog"><h2>Apply to Weekday (YC W21)</h2><p>5/5 pages</p>
+        <h3>Mark this job as a top choice</h3>
+        <input type="checkbox" id="tc" aria-label="Mark job as a top choice"><span>Mark job as a top choice</span>
+        <p>You can mark 3 more jobs as top choice this month.</p>
+        <input type="checkbox" id="fo" aria-label="Follow Weekday (YC W21) to stay up to date with their page" checked>
+        <button>Submit application</button>
+      </dialog>`;
+    const tc = document.getElementById('tc') as HTMLInputElement;
+    tc.addEventListener('change', () => {
+      if (tc.checked && !document.querySelector('textarea'))
+        tc.insertAdjacentHTML(
+          'afterend',
+          '<div><textarea id="msg" required aria-label="Include a message with your application" aria-describedby="msg-info"></textarea><div id="msg-info"><span>Minimum 20 characters</span><span>0/400</span></div></div>',
+        );
+    });
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+    let snap = api.scan({ linkedin: true });
+    expect(snap.topChoice).toEqual({ checked: false, remaining: 3 });
+    expect(snap.hasSubmit).toBe(true);
+    expect(snap.hasNext).toBe(false);
+    expect(tc.checked).toBe(false); // reading never ticks it
+    expect(api.markTopChoice()).toBe('checked');
+    expect(api.markTopChoice()).toBe('already');
+    snap = api.scan({ linkedin: true });
+    const msg = snap.form.find(f => f.kind === 'textarea')!;
+    expect(msg).toMatchObject({ required: true, maxLength: 400, minLength: 20 });
+    expect(snap.topChoice?.checked).toBe(true);
+  });
+});

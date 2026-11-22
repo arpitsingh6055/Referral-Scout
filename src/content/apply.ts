@@ -28,9 +28,14 @@ export interface FillResult {
 export interface ApplyApi {
   version: number;
   /** linkedin: read only LinkedIn's Easy Apply window, never the rest of the page (search box, messaging, filters). */
-  scan(opts?: {
-    linkedin?: boolean;
-  }): Omit<PageSnapshot, 'url' | 'title'> & { url: string; title: string; frames: string[]; empty: boolean; easyApplyOpen?: boolean };
+  scan(opts?: { linkedin?: boolean }): Omit<PageSnapshot, 'url' | 'title'> & {
+    url: string;
+    title: string;
+    frames: string[];
+    empty: boolean;
+    easyApplyOpen?: boolean;
+    topChoice?: { checked: boolean; remaining?: number };
+  };
   fill(
     items: { id: string; kind: FieldKind; value: string | string[] }[],
     files: { id: string; name: string; type: string; data: string }[],
@@ -41,8 +46,10 @@ export interface ApplyApi {
   next(): { clicked?: string; error?: string };
   /** click=false only reports what it would do, so the background can click in exactly one frame. */
   openEasyApply(click?: boolean): 'opened' | 'external' | 'open' | 'none';
+  /** Ticks LinkedIn's "Mark job as a top choice" (only when the person asks; it uses a monthly allowance). */
+  markTopChoice(): 'checked' | 'already' | 'none';
 }
-const VERSION = 4;
+const VERSION = 5;
 const scope = globalThis as typeof globalThis & { __referralScoutApply?: ApplyApi };
 
 /* ---------- reading the page ---------- */
@@ -153,7 +160,9 @@ function sectionOf(el: Element): string {
   return clean(heading?.textContent).slice(0, 120);
 }
 /** Where the application lives: LinkedIn's Easy Apply window, any open dialog with fields, the largest form, or the page. */
-const MESSAGING = '.msg-overlay-conversation-bubble, .msg-overlay-list-bubble, [class*="msg-overlay" i], [aria-label*="messag" i]';
+// LinkedIn's messaging pop-up. Not any "message" field: LinkedIn's top-choice box is labelled "Include a message...".
+const MESSAGING =
+  '.msg-overlay-conversation-bubble, .msg-overlay-list-bubble, [class*="msg-overlay" i], [role="dialog"][aria-label^="Messaging" i]';
 /** LinkedIn's Easy Apply window, when it is open: a dialog about applying, never the messaging pop-up. */
 function easyApplyDialog(doc: Document): Element | null {
   const known = [
@@ -168,6 +177,11 @@ function easyApplyDialog(doc: Document): Element | null {
           clean(d.textContent).slice(0, 4000),
         ),
       ) ?? null
+  );
+}
+function topChoiceBox(root: ParentNode): HTMLInputElement | undefined {
+  return [...root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(c =>
+    /top choice/i.test(c.getAttribute('aria-label') ?? labelOf(c)),
   );
 }
 function formRoot(doc: Document): Element {
@@ -605,6 +619,12 @@ function create(): ApplyApi {
         frames,
         empty: !form.length,
         ...(opts?.linkedin ? { easyApplyOpen: true } : {}),
+        ...(() => {
+          const box = topChoiceBox(root);
+          if (!box) return {};
+          const left = clean(root.textContent).match(/mark (\d+) more jobs? as (a )?top choice/i);
+          return { topChoice: { checked: box.checked, ...(left ? { remaining: Number(left[1]) } : {}) } };
+        })(),
       };
     },
     async fill(items, files) {
@@ -721,6 +741,14 @@ function create(): ApplyApi {
       this.clear();
       next.el.click();
       return { clicked: next.label };
+    },
+    markTopChoice() {
+      const root = easyApplyDialog(document) ?? document;
+      const box = topChoiceBox(root);
+      if (!box) return 'none';
+      if (box.checked) return 'already';
+      box.click();
+      return box.checked ? 'checked' : 'none';
     },
     openEasyApply(click = true) {
       if (easyApplyDialog(document)) return 'open';

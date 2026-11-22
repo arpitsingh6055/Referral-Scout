@@ -68,6 +68,8 @@ export interface ApplySession {
   hasSubmit: boolean;
   captcha: boolean;
   needOrigins?: string[];
+  /** LinkedIn's "Mark this job as a top choice" on this step, and how many the person has left this month. */
+  topChoice?: { checked: boolean; remaining?: number } | undefined;
   /** Kept in the background only: the fields of the current step, to fill answers the person gives. */
   form?: FormField[];
 }
@@ -161,7 +163,11 @@ async function everyFrame(tabId: number, func: () => unknown): Promise<unknown[]
   return results.map(r => r.result);
 }
 /** The application as one snapshot: every frame's fields (tagged with their frame) and the best job text. */
-function merge(frames: Frame[], tabUrl: string, title: string): PageSnapshot & { frames: string[] } {
+function merge(
+  frames: Frame[],
+  tabUrl: string,
+  title: string,
+): PageSnapshot & { frames: string[]; topChoice?: { checked: boolean; remaining?: number } | undefined } {
   const withForm = frames.filter(f => f.result.form.length);
   const main = frames.find(f => f.frameId === 0)?.result;
   const job = [main?.job, ...frames.map(f => f.result.job)].filter(Boolean).sort((a, b) => b!.length - a!.length)[0] ?? '';
@@ -181,6 +187,7 @@ function merge(frames: Frame[], tabUrl: string, title: string): PageSnapshot & {
     hasNext: active.some(f => f.result.hasNext),
     hasSubmit: active.some(f => f.result.hasSubmit),
     captcha: frames.some(f => f.result.captcha),
+    topChoice: frames.find(f => f.result.topChoice)?.result.topChoice,
     frames: main?.frames ?? [],
   };
 }
@@ -312,6 +319,7 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
       hasNext: page.hasNext,
       hasSubmit: page.hasSubmit,
       captcha: page.captcha,
+      topChoice: page.topChoice,
       form: [],
       ask: [],
       stage: page.hasNext ? 'moving' : 'review',
@@ -380,7 +388,15 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
   }
   const [bg, profile, photo, cv] = await Promise.all([background(), applyProfile(), photoFile(), cvFile()]);
   if (!cv) throw new Error('Upload your CV (PDF or Word) in Settings first: applications need the file.');
-  await update(s => ({ ...s, step: page.step, hasNext: page.hasNext, hasSubmit: page.hasSubmit, captcha: page.captcha, form: page.form }));
+  await update(s => ({
+    ...s,
+    step: page.step,
+    hasNext: page.hasNext,
+    hasSubmit: page.hasSubmit,
+    captcha: page.captcha,
+    topChoice: page.topChoice,
+    form: page.form,
+  }));
   // Fast path. LinkedIn already fills most Easy Apply steps from the person's account, and many questions were
   // answered before: only what is still empty, and cannot be answered from saved answers and details, goes to ChatGPT.
   const todo = needsWork(page.form, linkedin);
@@ -489,8 +505,13 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
   return { advance };
 }
 function reviewMessage(plan: FillPlan, failed: number, page: PageSnapshot): string {
+  const n = plan.fill.length + plan.files.length;
   const parts = [
-    `Filled ${plan.fill.length + plan.files.filter(f => f).length} field${plan.fill.length + plan.files.length === 1 ? '' : 's'}.`,
+    n
+      ? `Filled ${n} field${n === 1 ? '' : 's'}.`
+      : page.hasSubmit && !page.hasNext
+        ? 'All steps are filled.'
+        : 'Nothing needed filling here.',
   ];
   if (plan.ask.length) parts.push(`${plan.ask.length} need${plan.ask.length === 1 ? 's' : ''} your answer below.`);
   if (failed) parts.push(`${failed} could not be typed; fill ${failed === 1 ? 'it' : 'them'} on the page.`);
@@ -724,6 +745,7 @@ export const applyRequest = z.discriminatedUnion('action', [
   }),
   z.object({ kind: z.literal('apply'), action: z.literal('start'), tabId: z.number().int(), again: z.boolean().optional() }),
   z.object({ kind: z.literal('apply'), action: z.literal('next') }),
+  z.object({ kind: z.literal('apply'), action: z.literal('topChoice') }),
   z.object({ kind: z.literal('apply'), action: z.literal('undo') }),
   z.object({ kind: z.literal('apply'), action: z.literal('stop') }),
   z.object({
@@ -762,6 +784,23 @@ export function registerApplyMessages(): void {
         await start(req.tabId, req.again && old?.tabId === req.tabId ? 2 + Math.floor(Math.random() * 1000) : 1);
       }
       if (req.action === 'next') await nextStep();
+      if (req.action === 'topChoice') {
+        // The person asked for it: tick the box, then ChatGPT (thinking) writes the message it reveals.
+        const s = await loadSession();
+        if (!s) throw new Error('Nothing is being filled.');
+        await inject(s.tabId);
+        const ticks = await chrome.scripting
+          .executeScript({
+            target: { tabId: s.tabId, allFrames: true },
+            func: () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.markTopChoice() ?? 'none',
+          })
+          .catch(() => []);
+        if (!ticks.some(t => t.result === 'checked' || t.result === 'already'))
+          throw new Error('The "Mark this job as a top choice" box is not on this page.');
+        await update(x => ({ ...x, stage: 'reading', message: 'Marked as top choice. Writing your message…' }));
+        await new Promise(r => setTimeout(r, 1200));
+        void run(signal => autoRun(s.tabId, signal, 1));
+      }
       if (req.action === 'answer') await answer(req.answers);
       if (req.action === 'undo') {
         const s = await loadSession();

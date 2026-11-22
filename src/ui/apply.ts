@@ -245,6 +245,25 @@ function draw(d: Detect): void {
     for (const f of s.leftForYou) box.append(item(f.label, '', f.reason, 'you'));
     card.append(box);
   }
+  // LinkedIn's final page can mark the job as a top choice (a few per month) with a short message to the hirer.
+  if (s.topChoice && !s.topChoice.checked && s.hasSubmit && !s.hasNext && s.stage === 'review') {
+    const box = node('div', '', 'apply-ask');
+    box.append(
+      node('h4', 'Mark this job as a top choice?', 'group-title'),
+      node(
+        'p',
+        `LinkedIn says top-choice applicants are more likely to hear back.${s.topChoice.remaining !== undefined ? ` You have ${s.topChoice.remaining} left this month.` : ''} ChatGPT (thinking) writes the message from your CV, profile and this job, within LinkedIn\u2019s 400 characters.`,
+        'fine',
+      ),
+      button(
+        'Mark as top choice and write the message',
+        async () => draw(await applyRequest({ kind: 'apply', action: 'topChoice' })),
+        'btn sm',
+        'Writing your message…',
+      ),
+    );
+    card.append(box);
+  }
   const actions = node('div', '', 'row apply-actions');
   if (s.hasNext && s.stage !== 'error' && s.stage !== 'done')
     actions.append(
