@@ -1670,9 +1670,10 @@ export async function networkTick(): Promise<void> {
 export async function queueReferral(
   job: z.infer<typeof referralJobInput> & { infoTried?: boolean; applied?: number },
   mode: 'referral' | 'connections',
-): Promise<{ ok: boolean; message: string }> {
+): Promise<{ ok: boolean; message: string; resumed?: boolean }> {
   if (!(await getNetwork()).profile) return { ok: false, message: 'Open Referral Scout and read your LinkedIn profile first.' };
   let message = '';
+  let resumed = false;
   await updateNetwork(s => {
     const list = s.referralJobs ?? (s.referralJobs = []),
       old = list.find(j => j.url === job.url);
@@ -1700,6 +1701,7 @@ export async function queueReferral(
     s.status = `${job.company}: ${mode === 'referral' ? 'looking for people who can refer you for' : 'listing your connections for'} ${job.title}.`;
     // "Ask for referrals" means act now. If outreach is paused, switch on referral outreach only; general outreach stays off.
     if (mode === 'referral' && !s.active) {
+      resumed = !!s.paused;
       s.active = true;
       s.revision++;
       s.scope = 'referrals';
@@ -1710,5 +1712,5 @@ export async function queueReferral(
     delete s.paused;
     return s;
   }).then(() => networkTick());
-  return { ok: true, message };
+  return { ok: true, message, resumed };
 }

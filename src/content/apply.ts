@@ -35,6 +35,7 @@ export interface ApplyApi {
     empty: boolean;
     easyApplyOpen?: boolean;
     topChoice?: { checked: boolean; remaining?: number };
+    jobMatch?: 'low' | 'medium' | 'high';
   };
   fill(
     items: { id: string; kind: FieldKind; value: string | string[] }[],
@@ -45,7 +46,7 @@ export interface ApplyApi {
   clear(): void;
   next(): { clicked?: string; error?: string };
   /** click=false only reports what it would do, so the background can click in exactly one frame. */
-  openEasyApply(click?: boolean): 'opened' | 'external' | 'open' | 'none';
+  openEasyApply(click?: boolean): 'opened' | 'external' | 'open' | 'applied' | 'none';
   /** Ticks LinkedIn's "Mark job as a top choice" (only when the person asks; it uses a monthly allowance). */
   markTopChoice(): 'checked' | 'already' | 'none';
   /** Passes LinkedIn's "Job search safety reminder" by pressing its Continue applying. True when it did. */
@@ -54,8 +55,10 @@ export interface ApplyApi {
   submitted(): boolean;
   /** The job's title and company as the page states them, for the referral step after applying. */
   jobMeta(): { title: string; company: string; location: string; companyUrl: string };
+  /** On a LinkedIn job list: opens the next Easy Apply job not yet applied to. Returns its job id, or '' when none. */
+  openNextJob(): string;
 }
-const VERSION = 8;
+const VERSION = 10;
 const scope = globalThis as typeof globalThis & { __referralScoutApply?: ApplyApi };
 
 /* ---------- reading the page ---------- */
@@ -479,6 +482,13 @@ function create(): ApplyApi {
         ? { el, value: el.value }
         : { el, value: el.textContent ?? '' };
   const MARK = { done: '#16a34a', check: '#d97706', you: '#2563eb' } as const;
+  // Colour is not the only signal: each tone also has its own line style and a hover note.
+  const LINE = { done: 'solid', check: 'dashed', you: 'dotted' } as const;
+  const NOTE = {
+    done: 'Filled by Referral Scout',
+    check: 'Filled by Referral Scout: please check this one',
+    you: 'Referral Scout left this for you',
+  } as const;
   return {
     version: VERSION,
     scan(opts) {
@@ -649,7 +659,14 @@ function create(): ApplyApi {
           const box = topChoiceBox(root);
           if (!box) return {};
           const left = clean(root.textContent).match(/mark (\d+) more jobs? as (a )?top choice/i);
-          return { topChoice: { checked: box.checked, ...(left ? { remaining: Number(left[1]) } : {}) } };
+          // LinkedIn's own "Job match is low / medium / high" on the job, so a top choice is not spent on a poor fit.
+          const match = clean(doc.body.textContent)
+            .match(/job match is (low|medium|high)/i)?.[1]
+            ?.toLowerCase() as 'low' | 'medium' | 'high' | undefined;
+          return {
+            topChoice: { checked: box.checked, ...(left ? { remaining: Number(left[1]) } : {}) },
+            ...(match ? { jobMatch: match } : {}),
+          };
         })(),
       };
     },
@@ -694,6 +711,7 @@ function create(): ApplyApi {
       return results;
     },
     mark(ids) {
+      let first: HTMLElement | null = null;
       for (const { id, tone } of ids) {
         const entry = entries.get(id);
         const el = entry?.els[0];
@@ -703,10 +721,22 @@ function create(): ApplyApi {
             ? (el.closest('fieldset, [role="radiogroup"], [role="group"]') ?? el.parentElement ?? el)
             : el
         ) as HTMLElement;
-        target.style.setProperty('outline', `2px solid ${MARK[tone]}`, 'important');
+        target.style.setProperty('outline', `${tone === 'done' ? 2 : 3}px ${LINE[tone]} ${MARK[tone]}`, 'important');
+        if (!target.hasAttribute('data-rs-title')) target.setAttribute('data-rs-title', target.getAttribute('title') ?? '');
+        target.setAttribute('title', NOTE[tone]);
+        if (tone === 'you' && !first && el instanceof HTMLElement) first = el;
         target.style.setProperty('outline-offset', '2px', 'important');
         target.setAttribute('data-rs-marked', tone);
         marked.add(target);
+      }
+      // Take the person straight to the first question left for them, without scrolling the page under them twice.
+      if (first) {
+        try {
+          (first as HTMLElement).scrollIntoView({ block: 'center' });
+          (first as HTMLElement).focus({ preventScroll: true });
+        } catch {
+          /* a page can block focus; the outline still shows the way */
+        }
       }
     },
     undo() {
@@ -747,6 +777,12 @@ function create(): ApplyApi {
         el.style.removeProperty('outline');
         el.style.removeProperty('outline-offset');
         el.removeAttribute('data-rs-marked');
+        if (el.hasAttribute('data-rs-title')) {
+          const old = el.getAttribute('data-rs-title') ?? '';
+          if (old) el.setAttribute('title', old);
+          else el.removeAttribute('title');
+          el.removeAttribute('data-rs-title');
+        }
       }
       marked.clear();
     },
@@ -845,6 +881,15 @@ function create(): ApplyApi {
       box.click();
       return box.checked ? 'checked' : 'none';
     },
+    openNextJob() {
+      const current = new URL(location.href).searchParams.get('currentJobId') ?? /\/jobs\/view\/(\d+)/.exec(location.pathname)?.[1] ?? '';
+      const card = nextJobCard(document, current);
+      if (!card) return '';
+      const link = card.el.querySelector<HTMLElement>('a[href*="/jobs/view/"], a[href*="currentJobId="]') ?? card.el;
+      link.scrollIntoView({ block: 'center' });
+      link.click();
+      return card.id;
+    },
     openEasyApply(click = true) {
       if (easyApplyDialog(document)) return 'open';
       // Only real buttons and links count. LinkedIn's job cards in the results list are clickable boxes that also say
@@ -864,8 +909,46 @@ function create(): ApplyApi {
         if (click) easy.click();
         return 'opened';
       }
-      return controls.some(b => /^apply( now)?$|^apply (on|to) (company|this)/i.test(label(b) || own(b))) ? 'external' : 'none';
+      if (controls.some(b => /^apply( now)?$|^apply (on|to) (company|this)/i.test(label(b) || own(b)))) return 'external';
+      // Already applied: LinkedIn replaces the button with "Applied 2 hours ago" / "Application submitted".
+      // Only the job's own details count, not the results list (whose cards can say "Applied" for other jobs).
+      const main = (document.querySelector('main') ?? document.body).cloneNode(true) as Element;
+      main
+        .querySelectorAll('[componentkey^="job-card-component-ref-"], [data-job-id], .jobs-search-results-list, script, style')
+        .forEach(e => e.remove());
+      // No word boundaries: textContent runs lines together ("Product ManagerApplied 2 days ago").
+      return /applied \d+\s*\w+ ago|applied on \w+|application submitted|\byou applied/i.test(clean(main.textContent).slice(0, 6000))
+        ? 'applied'
+        : 'none';
     },
   };
+}
+/** The job cards of a LinkedIn results list with their job ids, in page order. */
+function jobCards(doc: Document): { el: HTMLElement; id: string; text: string }[] {
+  const cards = [...doc.querySelectorAll<HTMLElement>('[componentkey^="job-card-component-ref-"], [data-job-id]')];
+  const seen = new Set<string>();
+  const out: { el: HTMLElement; id: string; text: string }[] = [];
+  for (const el of cards) {
+    const id =
+      /(\d{5,})/.exec(el.getAttribute('componentkey') ?? '')?.[1] ??
+      /^\d+$/.exec(el.getAttribute('data-job-id') ?? '')?.[0] ??
+      /currentJobId=(\d+)|\/jobs\/view\/(\d+)/
+        .exec(el.querySelector('a[href]')?.getAttribute('href') ?? '')
+        ?.slice(1)
+        .find(Boolean) ??
+      '';
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ el, id, text: clean(el.textContent) });
+  }
+  return out;
+}
+/** Picks the next card to open: Easy Apply, not marked Applied, and after the job now shown when there is one. */
+function nextJobCard(doc: Document, currentId: string): { el: HTMLElement; id: string } | null {
+  const cards = jobCards(doc);
+  const at = cards.findIndex(c => c.id === currentId);
+  const open = (c: { text: string; id: string }) =>
+    c.id !== currentId && /easy apply/i.test(c.text) && !/applied/i.test(c.text.replace(/easy apply/gi, '')); // card text runs words together
+  return [...cards.slice(at + 1), ...cards.slice(0, Math.max(at, 0))].find(open) ?? null;
 }
 if (!scope.__referralScoutApply || scope.__referralScoutApply.version !== VERSION) scope.__referralScoutApply = create();

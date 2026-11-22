@@ -1965,3 +1965,39 @@ details.person-row > .person .person-head {
   font-size: 16px;
   color: var(--ok);
 }
+
+.apply-tools {
+  gap: 12px;
+  margin-top: 4px;
+}
+.apply-edit {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.field.skipped > :not(.linkish):not(.field-label) {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Assisted applying and ChatGPT health */
+.apply-next {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line, rgba(0, 0, 0, 0.08));
+  display: grid;
+  gap: 6px;
+}
+.apply-health {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(217, 119, 6, 0.08);
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+.fine.warn {
+  color: #b45309;
+}

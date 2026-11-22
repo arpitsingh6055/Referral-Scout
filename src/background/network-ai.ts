@@ -298,7 +298,38 @@ async function closeTaskTab(id: string): Promise<void> {
   await put('meta', { id: key(job.id), value: job }).catch(() => undefined);
   await closeWorkTab(tab);
 }
+/** Whether the last ChatGPT task could be sent and read back, so the panel can warn before the next one fails. */
+export const AI_HEALTH_KEY = 'ai-health';
+export interface AiHealth {
+  ok: boolean;
+  at: number;
+  error?: string;
+}
+const PAGE_TROUBLE =
+  /cannot be verified|composer|send button|hydration|handshake|content script|prompt part|not visible|did not start the DOM task/i;
 export async function askChatGpt(
+  prompt: string,
+  signal: AbortSignal,
+  kind: AiJob['kind'] = 'LEGACY',
+  owner = '',
+  parentId = '',
+  limits?: { startMs: number; totalMs: number; onStage?: (stage: string) => void; thinking?: boolean },
+): Promise<string> {
+  try {
+    const text = await askChatGptOnce(prompt, signal, kind, owner, parentId, limits);
+    await writeState(AI_HEALTH_KEY, { ok: true, at: Date.now() } satisfies AiHealth).catch(() => undefined);
+    return text;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    // Only failures that point at ChatGPT's page itself, not a slow answer or a sign-in.
+    if (PAGE_TROUBLE.test(message))
+      await writeState(AI_HEALTH_KEY, { ok: false, at: Date.now(), error: message.slice(0, 300) } satisfies AiHealth).catch(
+        () => undefined,
+      );
+    throw e;
+  }
+}
+async function askChatGptOnce(
   prompt: string,
   signal: AbortSignal,
   kind: AiJob['kind'] = 'LEGACY',

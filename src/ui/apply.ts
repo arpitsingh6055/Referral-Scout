@@ -6,10 +6,16 @@ import { node, button, notify, flags, accordion, field, choice, rerender, reques
 import { errorText } from './render';
 import { completeCvText } from './cv-text';
 import type { ApplyRequest, Detect, ApplySession } from '../background/apply';
-import { questionKey, type ApplyProfile } from '../shared/apply';
+import { DAILY_SOFT_CAP, questionKey, type ApplyProfile } from '../shared/apply';
 
 export async function applyRequest(data: ApplyRequest): Promise<Detect> {
-  const reply = (await chrome.runtime.sendMessage(data)) as { ok: boolean; data?: Detect; error?: string };
+  // Each tab has its own fill: every request says which tab it is about (the one this card shows).
+  const tabId = 'tabId' in data && data.tabId !== undefined ? data.tabId : (last?.tabId ?? undefined);
+  const reply = (await chrome.runtime.sendMessage({ ...data, ...(tabId !== undefined && tabId !== null ? { tabId } : {}) })) as {
+    ok: boolean;
+    data?: Detect;
+    error?: string;
+  };
   if (!reply?.ok || !reply.data) throw new Error(reply?.error || 'The extension did not respond. Reload it and retry.');
   return reply.data;
 }
@@ -70,6 +76,10 @@ function cvPicker(label = 'Upload CV'): HTMLElement {
 /* ---------- the Home card ---------- */
 const card = node('section', '', 'card apply-card');
 card.hidden = true;
+/** Applications sent from the panel, with where each referral search stands. Kept next to the card on Home. */
+const historyBox = node('div');
+const homeBox = node('div');
+homeBox.append(card, historyBox);
 let last: Detect | null = null;
 let signature = '';
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -119,13 +129,160 @@ async function startFill(d: Detect, again = false): Promise<void> {
   flags.spoke = true;
   void refreshCard(true);
 }
+const SETUP_SKIP = 'rs-apply-setup-skipped';
+const setupSkipped = (): boolean => {
+  try {
+    return localStorage.getItem(SETUP_SKIP) === '1';
+  } catch {
+    return false;
+  }
+};
+/** The details most forms ask for, asked once before the first fill. Skippable; editable later in Settings. */
+function setupBox(d: Detect): HTMLElement {
+  const box = node('div', '', 'apply-ask');
+  box.append(
+    node('h4', 'Before your first application', 'group-title'),
+    node('p', 'Most forms ask these. Answer once and they are filled for you every time (change them later in Settings).', 'fine'),
+  );
+  const det = d.profile.details;
+  const f = {
+    noticePeriod: field({ label: 'Notice period', value: det.noticePeriod ?? '', help: 'For example "Immediate" or "30 days".' }),
+    expectedCtc: field({
+      label: 'Expected salary / stipend',
+      value: det.expectedCtc ?? '',
+      help: 'As you would write it, for example "6 LPA" or "₹25,000/month".',
+    }),
+    workAuthorization: field({ label: 'Work authorization', value: det.workAuthorization ?? '', help: 'For example "Indian citizen".' }),
+    city: field({ label: 'Current city', value: det.city ?? '' }),
+  };
+  for (const x of Object.values(f)) box.append(x.wrap);
+  const row = node('div', '', 'row');
+  row.append(
+    button(
+      'Save and fill this application',
+      async () => {
+        await applyRequest({
+          kind: 'apply',
+          action: 'saveProfile',
+          details: { ...det, ...Object.fromEntries(Object.entries(f).map(([k, x]) => [k, x.input.value.trim()])) },
+          eeo: d.profile.eeo,
+        });
+        flags.dirty = false;
+        await startFill(d);
+      },
+      'btn primary',
+      'Saved. Filling…',
+    ),
+    button(
+      'Skip',
+      async () => {
+        try {
+          localStorage.setItem(SETUP_SKIP, '1');
+        } catch {
+          /* storage unavailable: the box simply shows again next time */
+        }
+        flags.dirty = false;
+        await startFill(d);
+      },
+      'btn sm ghost',
+      'Filling…',
+    ),
+  );
+  box.append(row);
+  return box;
+}
 function stepsLine(s: ApplySession): HTMLElement {
   const box = node('div', '', 'apply-progress');
   box.append(node('span', '', 'spinner'), node('span', s.message || 'Working…'));
+  if (s.stage === 'thinking' && s.stageSince) {
+    // A live clock and what to expect, so a long wait does not look like a hang.
+    const clock = node('span', '', 'fine apply-clock');
+    clock.dataset.since = String(s.stageSince);
+    clock.dataset.expect = /writing/i.test(s.message) ? 'written answers usually take 1–2 min' : 'usually under 30 s';
+    box.append(clock);
+  }
   return box;
+}
+const tickClocks = (): void => {
+  for (const el of card.querySelectorAll<HTMLElement>('[data-since]')) {
+    const secs = Math.max(0, Math.round((Date.now() - Number(el.dataset.since)) / 1000));
+    el.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')} · ${el.dataset.expect ?? ''}`;
+  }
+};
+setInterval(tickClocks, 1000);
+function drawHistory(d: Detect): void {
+  historyBox.replaceChildren();
+  if (!d.history.length) return;
+  const jobs = flags.last?.referralJobs ?? [];
+  const { box, body } = accordion('apply-history', 'Your applications', String(d.history.length));
+  for (const h of d.history.slice(0, 10)) {
+    const job = jobs.find(j => j.url === h.url);
+    const people = flags.last?.contacts.filter(p => p.referralJob === h.url).length ?? 0;
+    const row = node('div', '', 'apply-item done');
+    row.append(
+      node('span', `${h.company || 'Company not known'} · ${h.title || 'Role not known'}`, 'apply-label'),
+      node(
+        'span',
+        `Applied ${new Date(h.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · ${
+          !job
+            ? 'no referral search yet'
+            : job.finishedAt === undefined
+              ? `finding people who can refer you${people ? ` (${people} so far)` : '…'}`
+              : `${people} ${people === 1 ? 'person' : 'people'} found for a referral`
+        }`,
+        'fine',
+      ),
+    );
+    if (!job && h.company && h.title)
+      row.append(
+        button(
+          'Find people who can refer me',
+          async () => {
+            await applyRequest({ kind: 'apply', action: 'referral', url: h.url });
+            void refreshCard(true);
+          },
+          'linkish',
+          `Looking for people at ${h.company}…`,
+        ),
+      );
+    else if (job) {
+      const open = node('button', 'See them in Referrals', 'linkish');
+      open.type = 'button';
+      open.addEventListener('click', openReferrals);
+      row.append(open);
+    }
+    body.append(row);
+  }
+  historyBox.append(box);
+}
+/** Warns before the next fill when ChatGPT's page failed last time, with a quick way to check it again. */
+function aiHealthNote(d: Detect): HTMLElement | null {
+  if (!d.aiHealth || Date.now() - d.aiHealth.at > 24 * 3600 * 1000) return null;
+  const box = node('div', '', 'apply-health');
+  box.append(
+    node(
+      'p',
+      'ChatGPT’s page did not respond as expected last time. ChatGPT may have changed its page, or you may need to sign in again at chatgpt.com.',
+      'fine warn',
+    ),
+    testAiButton(),
+  );
+  return box;
+}
+function testAiButton(): HTMLElement {
+  return button(
+    'Test ChatGPT',
+    async () => {
+      draw(await applyRequest({ kind: 'apply', action: 'testAi' }));
+      notify('success', 'ChatGPT is working.');
+    },
+    'btn sm',
+    'Asking ChatGPT a one-word question…',
+  );
 }
 function draw(d: Detect): void {
   last = d;
+  drawHistory(d);
   const s = d.session;
   const show = d.onboarded && (d.canFill || !!s) && d.kind !== 'unsupported';
   card.hidden = !show && d.kind !== 'linkedin-list';
@@ -134,12 +291,16 @@ function draw(d: Detect): void {
   if (d.kind === 'linkedin-list' && !s) {
     card.className = 'card apply-card quiet';
     card.append(node('p', 'Open one job (click it in the list) to fill its application here.', 'card-sub'));
+    const first = nextJobRow(d, 'Open and fill the first Easy Apply job');
+    if (first) card.append(first);
     return;
   }
   card.className = `card apply-card${d.kind === 'other' && !s ? ' quiet' : ''}`;
   const head = node('div', '', 'apply-head');
   head.append(node('span', 'Application', 'eyebrow'), node('h3', s?.summary || 'Fill this application', 'card-title'));
   card.append(head);
+  const health = aiHealthNote(d);
+  if (health) card.append(health);
   if (!d.cv) {
     card.append(
       node(
@@ -163,6 +324,13 @@ function draw(d: Detect): void {
         'card-sub',
       ),
     );
+    // First application: four answers almost every form asks, given once, so later applications rarely stop.
+    const det = d.profile.details;
+    const needsSetup = !det.noticePeriod && !det.expectedCtc && !det.workAuthorization && !setupSkipped();
+    if (needsSetup) {
+      card.append(setupBox(d));
+      return;
+    }
     const row = node('div', '', 'row');
     row.append(
       button(
@@ -220,16 +388,29 @@ function draw(d: Detect): void {
   if (s.step) card.append(node('p', `Step ${s.stepCount}${s.step ? ` · ${s.step}` : ''}`, 'fine'));
   card.append(node('p', s.message, s.stage === 'error' ? 'apply-msg bad' : 'apply-msg'));
   if (s.ask.length) card.append(askBox(s));
-  const check = s.filled.filter(f => !f.ok || f.confidence === 'low' || f.note);
-  const fine = s.filled.filter(f => !check.includes(f));
+  const final = s.hasSubmit && !s.hasNext && s.stage === 'review';
+  const tools = (id: string) => (s.editable.includes(id) ? { id, written: s.written.includes(id) } : undefined);
+  // Written answers are what a recruiter reads first: shown in full, each with Edit / Rewrite / Shorter.
+  const written = s.filled.filter(f => f.ok && (s.written.includes(f.id) || f.value.length > 120));
+  const check = s.filled.filter(f => !written.includes(f) && (!f.ok || f.confidence === 'low' || f.note));
+  const fine = s.filled.filter(f => !check.includes(f) && !written.includes(f));
+  if (written.length) {
+    const box = node('div', '', 'apply-list');
+    box.append(node('h4', final ? 'Your written answers: read them before you submit' : 'Written answers', 'group-title'));
+    for (const f of written) box.append(item(f.label, f.value, f.why, f.confidence === 'low' ? 'check' : 'done', tools(f.id), true));
+    card.append(box);
+  }
   if (check.length) {
     const box = node('div', '', 'apply-list');
     box.append(node('h4', 'Check these on the page', 'group-title'));
     for (const f of check)
-      box.append(item(f.label, f.value, f.note || (f.ok ? f.why || 'ChatGPT was not sure' : 'Could not be typed here'), 'check'));
+      box.append(
+        item(f.label, f.value, f.note || (f.ok ? f.why || 'ChatGPT was not sure' : 'Could not be typed here'), 'check', tools(f.id)),
+      );
     card.append(box);
   }
   if (s.files.length || fine.length) {
+    if (final) ui.open.add('apply-filled'); // the last step is the moment to see everything
     const { box, body } = accordion('apply-filled', `Filled (${fine.length + s.files.filter(f => f.ok).length})`);
     for (const f of s.files)
       body.append(
@@ -240,7 +421,7 @@ function draw(d: Detect): void {
           f.ok ? 'done' : 'check',
         ),
       );
-    for (const f of fine) body.append(item(f.label, f.value, f.why, 'done'));
+    for (const f of fine) body.append(item(f.label, f.value, f.why, 'done', tools(f.id)));
     card.append(box);
   }
   if (s.leftForYou.length) {
@@ -287,7 +468,12 @@ function draw(d: Detect): void {
   );
   if (s.filled.length || s.files.length)
     actions.append(
-      button('Undo', async () => draw(await applyRequest({ kind: 'apply', action: 'undo' })), 'btn sm ghost', 'Put back what was there.'),
+      button(
+        'Undo this step',
+        async () => draw(await applyRequest({ kind: 'apply', action: 'undo' })),
+        'btn sm ghost',
+        'Put back what was there.',
+      ),
     );
   actions.append(button('Close', async () => draw(await applyRequest({ kind: 'apply', action: 'stop' })), 'btn sm ghost', 'Closed.'));
   card.append(actions);
@@ -308,6 +494,24 @@ const openReferrals = (): void => {
   document.scrollingElement?.scrollTo({ top: 0 });
 };
 /** After the site confirms the application: what happened, and the referral step that follows. */
+/** A LinkedIn results list (search or a collection) where the next job can be opened from the panel. */
+const onJobList = (url: string): boolean => /^https:\/\/www\.linkedin\.com\/jobs\/(search|collections)/.test(url);
+/** Assisted batch: one press opens the next Easy Apply job and fills it, still stopping before Submit. */
+function nextJobRow(d: Detect, label = 'Fill the next Easy Apply job'): HTMLElement | null {
+  if (!onJobList(d.url)) return null;
+  const wrap = node('div', '', 'apply-next');
+  if (d.today >= DAILY_SOFT_CAP)
+    wrap.append(
+      node(
+        'p',
+        `You have sent ${d.today} applications today. LinkedIn may limit accounts that apply in large bursts, so consider continuing tomorrow.`,
+        'fine warn',
+      ),
+    );
+  else if (d.today) wrap.append(node('p', `${d.today} sent today.`, 'fine'));
+  wrap.append(button(label, async () => draw(await applyRequest({ kind: 'apply', action: 'nextJob' })), 'btn', 'Opening the next job…'));
+  return wrap;
+}
 function sentBox(s: ApplySession, d: Detect): HTMLElement {
   const box = node('div', '', 'apply-sent');
   const company = s.job?.company || 'the company';
@@ -326,10 +530,24 @@ function sentBox(s: ApplySession, d: Detect): HTMLElement {
         'card-sub',
       ),
     );
+    if (s.sent?.resumed)
+      box.append(
+        node('p', 'Outreach was paused, so it has been switched on again for referrals only. General outreach stays off.', 'fine'),
+        button(
+          'Keep outreach paused',
+          async () => {
+            rerender(await request({ kind: 'network', action: 'pause' }));
+          },
+          'linkish',
+          'Outreach paused. The referral search waits until you resume.',
+        ),
+      );
     const row = node('div', '', 'row');
     row.append(button('See who it finds', async () => openReferrals(), 'btn primary', 'Opening Referrals…'));
     row.append(button('Done', async () => draw(await applyRequest({ kind: 'apply', action: 'stop' })), 'btn sm ghost', 'Closed.'));
     box.append(row);
+    const more = nextJobRow(d);
+    if (more) box.append(more);
     return box;
   }
   // Not started: the person turned it off, or the company could not be read from the page.
@@ -364,14 +582,62 @@ function sentBox(s: ApplySession, d: Detect): HTMLElement {
     button('Done', async () => draw(await applyRequest({ kind: 'apply', action: 'stop' })), 'btn sm ghost', 'Closed.'),
   );
   box.append(row);
-  void d;
+  const more = nextJobRow(d);
+  if (more) box.append(more);
   return box;
 }
-function item(label: string, value: string, note: string, tone: 'done' | 'check' | 'you'): HTMLElement {
+function item(
+  label: string,
+  value: string,
+  note: string,
+  tone: 'done' | 'check' | 'you',
+  tools?: { id: string; written: boolean },
+  full = false,
+): HTMLElement {
   const row = node('div', '', `apply-item ${tone}`);
   row.append(node('span', label, 'apply-label'));
-  if (value) row.append(node('span', value.length > 220 ? `${value.slice(0, 220)}…` : value, 'apply-value'));
+  if (value) row.append(node('span', !full && value.length > 220 ? `${value.slice(0, 220)}…` : value, 'apply-value'));
   if (note) row.append(node('span', note, 'fine'));
+  if (!tools) return row;
+  // Change one answer without refilling the step: type it, or have ChatGPT redo it.
+  const bar = node('div', '', 'row apply-tools');
+  const edit = node('button', 'Edit', 'linkish');
+  edit.type = 'button';
+  edit.addEventListener('click', () => {
+    if (row.querySelector('.apply-edit')) return;
+    const box = node('div', '', 'apply-edit');
+    const input = value.length > 60 || tools.written ? node('textarea', '', 'input') : node('input', '', 'input');
+    if (input instanceof HTMLTextAreaElement) input.rows = 4;
+    input.value = value;
+    box.append(
+      input,
+      button(
+        'Save to the form',
+        async () => {
+          draw(await applyRequest({ kind: 'apply', action: 'edit', id: tools.id, value: input.value }));
+        },
+        'btn sm',
+        'Updated on the page.',
+      ),
+    );
+    row.append(box);
+    input.focus();
+  });
+  bar.append(edit);
+  if (tools.written)
+    for (const [style, text] of [
+      ['rewrite', 'Rewrite'],
+      ['shorter', 'Shorter'],
+    ] as const)
+      bar.append(
+        button(
+          text,
+          async () => draw(await applyRequest({ kind: 'apply', action: 'rewrite', id: tools.id, style })),
+          'linkish',
+          style === 'shorter' ? 'Shortening…' : 'Rewriting…',
+        ),
+      );
+  row.append(bar);
   return row;
 }
 function askBox(s: ApplySession): HTMLElement {
@@ -382,12 +648,24 @@ function askBox(s: ApplySession): HTMLElement {
   );
   // Each answer is read through a getter, so short choices can be buttons and long ones a list.
   const answers: { id: string; value: () => string }[] = [];
+  const skip = new Set<string>();
   for (const q of s.ask) {
     const wrap = node('div', '', 'field');
     const id = `ask-${q.id}`;
     const question = node('label', q.question || q.label, 'field-label');
     question.htmlFor = id;
     wrap.append(question);
+    // No honest answer here: leave it for the page instead of being stuck.
+    const leave = node('button', 'I\u2019ll answer this on the page', 'linkish');
+    leave.type = 'button';
+    leave.addEventListener('click', () => {
+      const on = !skip.has(q.id);
+      if (on) skip.add(q.id);
+      else skip.delete(q.id);
+      wrap.classList.toggle('skipped', on);
+      leave.textContent = on ? 'Answer it here instead' : 'I\u2019ll answer this on the page';
+    });
+    queueMicrotask(() => wrap.append(leave));
     if (q.options?.length && q.options.length <= 6 && q.options.every(o => o.length <= 40)) {
       // Yes / No and other short choices: one press each.
       const group = node('div', '', 'choice-pills');
@@ -442,9 +720,12 @@ function askBox(s: ApplySession): HTMLElement {
     button(
       'Use these answers and continue',
       async () => {
-        const given = answers.map(a => ({ id: a.id, value: a.value().trim(), remember: remember.checked })).filter(a => a.value);
-        if (!given.length) throw new Error('Choose or type an answer first.');
-        draw(await applyRequest({ kind: 'apply', action: 'answer', answers: given }));
+        const given = answers
+          .filter(a => !skip.has(a.id))
+          .map(a => ({ id: a.id, value: a.value().trim(), remember: remember.checked }))
+          .filter(a => a.value);
+        if (!given.length && !skip.size) throw new Error('Choose or type an answer first.');
+        draw(await applyRequest({ kind: 'apply', action: 'answer', answers: given, skip: [...skip] }));
       },
       'btn primary',
       'Answers added. Continuing…',
@@ -455,7 +736,8 @@ function askBox(s: ApplySession): HTMLElement {
 /** The card is one element kept across redraws, so a half-typed answer survives the panel refreshing around it. */
 export function applyHome(): HTMLElement {
   if (!last) void refreshCard(true);
-  return card;
+  else drawHistory(last); // referral progress changes with every panel refresh
+  return homeBox;
 }
 
 /* ---------- Settings: application details ---------- */
@@ -524,6 +806,13 @@ export function buildApplySettings(): HTMLElement {
       'Uses the same referral search as "Ask for referrals". Invitations wait for your approval unless you chose automatic sending.',
     );
     slot.append(after.wrap);
+    const check = node('div', '', 'field');
+    check.append(
+      node('span', 'ChatGPT connection', 'field-label'),
+      node('p', 'Sends ChatGPT a one-word question to confirm the panel can still use it.', 'fine'),
+      testAiButton(),
+    );
+    slot.append(check);
     // CV
     const cvRow = node('div', '', 'field');
     cvRow.append(

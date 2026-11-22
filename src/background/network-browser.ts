@@ -87,6 +87,7 @@ export async function openWorkTab(url: string, kind: 'linkedin' | 'chatgpt' = 'l
     return tabId;
   }
   // The work window keeps one empty tab instead of closing (see closeWorkTab): reuse it before opening another.
+  await write('work-idle-since', 0);
   const spare = await read<number>('work-spare');
   if (spare !== undefined && spare >= 0) {
     await write('work-spare', -1);
@@ -132,13 +133,26 @@ export function closeWorkTab(tabId: number): Promise<void> {
  * Tidies the work window once nothing is using it: every tab is closed except one, which is emptied and kept so the
  * next task starts at once instead of opening a new window. A ChatGPT task still open in it is left alone.
  */
+const IDLE_CLOSE_MS = 30 * 60000;
 export async function closeWorkWindow(): Promise<void> {
   const windowId = await read<number>('work-window');
   if (windowId === undefined || windowId < 0) return;
   try {
     const tabs = await chrome.tabs.query({ windowId });
     if (tabs.some(t => /^https:\/\/chatgpt\.com\//.test(t.url ?? ''))) return;
-    if (tabs.length === 1 && tabs[0]!.url === 'about:blank') return; // already tidy
+    if (tabs.length === 1 && tabs[0]!.url === 'about:blank') {
+      // Already tidy. After half an hour with nothing to do, close the window itself; the next task opens a new one.
+      const since = (await read<number>('work-idle-since')) ?? 0;
+      if (!since) await write('work-idle-since', Date.now());
+      else if (Date.now() - since > IDLE_CLOSE_MS) {
+        await chrome.windows.remove(windowId).catch(() => undefined);
+        await write('work-window', -1);
+        await write('work-spare', -1);
+        await write('work-idle-since', 0);
+      }
+      return;
+    }
+    await write('work-idle-since', 0);
     const [keep, ...rest] = tabs;
     if (rest.length) await chrome.tabs.remove(rest.map(t => t.id!).filter(id => id !== undefined));
     if (keep?.id !== undefined) {

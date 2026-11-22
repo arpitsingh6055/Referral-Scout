@@ -170,3 +170,22 @@ describe('reading several job pages at once', () => {
     expect(tabs.remove).toHaveBeenCalled();
   });
 });
+
+it('closes the work window after half an hour with nothing to do', async () => {
+  const state = await import('../src/storage/state');
+  const { closeWorkWindow } = await import('../src/background/network-browser');
+  const read = state.read as unknown as ReturnType<typeof vi.fn>;
+  tabs.query.mockResolvedValue([{ id: 7, url: 'about:blank' }]);
+  read.mockImplementation(async (key: string) => (key === 'work-window' ? 3 : key === 'work-idle-since' ? 0 : undefined));
+  await closeWorkWindow();
+  expect(state.write).toHaveBeenCalledWith('work-idle-since', expect.any(Number));
+  expect(windows.remove).not.toHaveBeenCalled();
+  read.mockImplementation(async (key: string) =>
+    key === 'work-window' ? 3 : key === 'work-idle-since' ? Date.now() - 31 * 60000 : undefined,
+  );
+  await closeWorkWindow();
+  expect(windows.remove).toHaveBeenCalledWith(3);
+  expect(state.write).toHaveBeenCalledWith('work-window', -1);
+  read.mockImplementation(async (key: string) => (key === 'work-window' ? 3 : key === 'network-tab' ? 7 : undefined));
+  tabs.query.mockReset();
+});

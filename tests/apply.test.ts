@@ -14,6 +14,8 @@ import {
   fitTo,
   localPlan,
   wantsThinking,
+  applyError,
+  rewritePrompt,
   type FormField,
 } from '../src/shared/apply';
 import type { ApplyApi } from '../src/content/apply';
@@ -626,5 +628,112 @@ describe('referral messages after applying', () => {
     );
     expect(referralJobInput.safeParse({ ...job, location: '' }).success).toBe(true);
     expect(referralJobInput.safeParse({ ...job, url: 'http://insecure.example/job' }).success).toBe(false);
+  });
+});
+
+describe('plain-English errors', () => {
+  it('turns ChatGPT and browser failures into a sentence that says what to do', () => {
+    expect(applyError('Assistant response cannot be verified for job 12')).toMatch(/could not be read back/);
+    expect(applyError('ChatGPT did not accept the question in time')).toMatch(/signed in at chatgpt\.com/);
+    expect(applyError('The ChatGPT composer was not found')).toMatch(/Refresh your ChatGPT tab/);
+    expect(applyError('Cannot access contents of url "chrome://extensions"')).toMatch(/does not allow extensions/);
+    expect(applyError('Extension context invalidated.')).toMatch(/was just updated/);
+    expect(applyError('Upload your CV in Settings first.')).toBe('Upload your CV in Settings first.');
+    expect(applyError('TypeError: x is undefined at {foo}')).toMatch(/^Something unexpected/);
+  });
+  it('asks for a shorter answer within the same facts-only rules', () => {
+    const field = { id: 'q1', kind: 'textarea', label: 'Why us?', required: true, maxLength: 300 } as unknown as FormField;
+    const p = rewritePrompt({ field, current: 'A long answer.', job: 'PM at Acme', background: 'CV text', name: 'Asha', style: 'shorter' });
+    expect(p).toContain('Why us?');
+    expect(p).toContain('A long answer.');
+    expect(p).toMatch(/300/);
+  });
+});
+
+describe('outline marks', () => {
+  it('uses a different line style per tone with a hover note, focuses the first gap, and restores the page on clear', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    Element.prototype.scrollIntoView = function () {};
+    document.body.innerHTML = `<form>
+      <label for="a">First name</label><input id="a" title="Given name">
+      <label for="b">Visa status</label><input id="b">
+      <label for="c">City</label><input id="c">
+      <label for="d">Phone</label><input id="d"></form>`;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+    const snap = api.scan();
+    const id = (label: string) => snap.form.find(f => f.label === label)!.id;
+    api.mark([
+      { id: id('First name'), tone: 'done' },
+      { id: id('City'), tone: 'check' },
+      { id: id('Visa status'), tone: 'you' },
+    ]);
+    const a = document.getElementById('a')!,
+      b = document.getElementById('b')!,
+      c = document.getElementById('c')!;
+    expect(a.style.outline).toContain('solid');
+    expect(c.style.outline).toContain('dashed');
+    expect(b.style.outline).toContain('dotted');
+    expect(b.getAttribute('title')).toMatch(/left this for you/);
+    expect(document.activeElement).toBe(b);
+    api.clear();
+    expect(a.getAttribute('title')).toBe('Given name');
+    expect(b.hasAttribute('title')).toBe(false);
+  });
+});
+
+describe('the next Easy Apply job', () => {
+  it('opens the next card that offers Easy Apply and is not applied to, after the job shown', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    Element.prototype.scrollIntoView = function () {};
+    window.history.replaceState({}, '', '/jobs/search/?currentJobId=1000002&keywords=pm');
+    const card = (id: string, text: string) =>
+      `<div componentkey="job-card-component-ref-${id}"><a href="/jobs/search/?currentJobId=${id}">${text}</a></div>`;
+    document.body.innerHTML = [
+      card('1000001', 'Designer · Acme · Easy Apply'),
+      card('1000002', 'PM · Beta · Easy Apply'),
+      card('1000003', 'PM · Gamma · Applied 2 days ago · Easy Apply'),
+      card('1000004', 'PM · Delta · Promoted'),
+      card('1000005', 'PM · Epsilon · Easy Apply'),
+    ].join('');
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+    const clicked: string[] = [];
+    document.querySelectorAll('a').forEach(a =>
+      a.addEventListener('click', e => {
+        e.preventDefault();
+        clicked.push(a.getAttribute('href')!);
+      }),
+    );
+    expect(api.openNextJob()).toBe('1000005');
+    expect(clicked).toEqual(['/jobs/search/?currentJobId=1000005']);
+    document.body.innerHTML = card('1000002', 'PM · Beta · Easy Apply') + card('1000003', 'Applied · Easy Apply');
+    expect(api.openNextJob()).toBe('');
+  });
+});
+
+describe('a job already applied to', () => {
+  it('reports it instead of hunting for an Easy Apply button, ignoring "Applied" on other job cards', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    document.body.innerHTML = `
+      <div componentkey="job-card-component-ref-1000009">Other job · Applied 3 days ago</div>
+      <main><h1>Product Manager</h1><p>Applied 2 days ago</p><a href="/jobs/view/1/">See application</a></main>`;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+    expect(api.openEasyApply(false)).toBe('applied');
+    document.querySelector('main')!.innerHTML = '<h1>Product Manager</h1><button aria-label="Easy Apply to this job">Easy Apply</button>';
+    expect(api.openEasyApply(false)).toBe('opened');
   });
 });
