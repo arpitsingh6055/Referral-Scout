@@ -11,7 +11,7 @@ export function buildActivity(s: NetworkState): HTMLElement {
   if (!log.length) feed.append(node('p', 'Nothing yet. Each step shows up here once a job search starts.', 'muted'));
   else {
     const ul = node('ul', '', 'timeline');
-    for (const e of log.slice(0, 30)) {
+    for (const e of log.slice(0, 100)) {
       const li = node('li', '', `tl ${e.kind}`),
         t = node('div');
       t.append(node('span', e.text), node('time', ago(e.at)));

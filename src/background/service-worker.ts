@@ -1,5 +1,5 @@
 import { openDatabase } from '../storage/database';
-import { registerAiMessages } from './network-ai';
+import { registerAiMessages, pruneAiJobs } from './network-ai';
 import { registerNetworkMessages } from './network-messages';
 import { registerApplyMessages } from './apply';
 import { networkTick, updateNetwork } from './network';
@@ -13,6 +13,10 @@ async function initialize(): Promise<void> {
   await chrome.storage.sync.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   await openDatabase();
+  // Saved people, jobs and answers live in the browser's local database; this keeps the browser from clearing it to
+  // free space (unlimitedStorage exempts the extension's storage from eviction).
+  await navigator.storage?.persist?.().catch(() => false);
+  await pruneAiJobs().catch(() => 0);
   // Updating must never resume the retired Gmail / AI campaign.
   await chrome.alarms.clear('campaign-tick');
   await chrome.alarms.clear('cv-progress');

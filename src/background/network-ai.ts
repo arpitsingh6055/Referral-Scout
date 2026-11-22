@@ -450,6 +450,22 @@ async function askChatGptOnce(
   }
   throw new Error('ChatGPT has not finished. Its task is saved; processing can be resumed without creating a duplicate send.');
 }
+/**
+ * Finished ChatGPT tasks keep their whole prompt (profile and CV text) for recovery. They are useful for a few days,
+ * then only fill the disk: tasks that finished more than 14 days ago are removed, except the newest dossier task.
+ */
+export async function pruneAiJobs(now = Date.now()): Promise<number> {
+  const jobs = (await all('aiJobs')) as unknown as Pick<AiJob, 'id' | 'kind' | 'stage' | 'updatedAt' | 'createdAt'>[];
+  const newestDossier = jobs.filter(j => j.kind === 'BUILD_DOSSIER').sort((a, b) => b.createdAt - a.createdAt)[0]?.id;
+  let removed = 0;
+  for (const j of jobs) {
+    if (j.id === newestDossier || !terminal.has(j.stage) || now - (j.updatedAt || j.createdAt) < 14 * 86400000) continue;
+    await remove('aiJobs', j.id);
+    await remove('meta', key(j.id));
+    removed++;
+  }
+  return removed;
+}
 export async function clearAiJobs(): Promise<void> {
   for (const item of await all('meta')) if (item.id.startsWith('network-ai:')) await remove('meta', item.id);
   for (const item of await all('aiJobs')) await remove('aiJobs', item.id);

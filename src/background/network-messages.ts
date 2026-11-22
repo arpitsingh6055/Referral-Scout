@@ -290,7 +290,7 @@ export function registerNetworkMessages(): void {
             return s;
           }
           result = { ...old, ...item, note: item.note || old?.note || '', savedAt: old?.savedAt ?? Date.now() };
-          s.saved = [result, ...list.filter(x => x.url !== item.url)].slice(0, 500);
+          s.saved = [result, ...list.filter(x => x.url !== item.url)].slice(0, 5000);
           return s;
         });
         return result;
@@ -656,7 +656,7 @@ export function registerNetworkMessages(): void {
                   ...(fitNote ? { fitNote } : {}),
                 });
             }
-            s.referralJobs = list.slice(0, 100);
+            s.referralJobs = list; // every job is kept
             search.found = search.found.filter(j => !req.ids.includes(j.id)).map(j => ({ ...j, picked: false }));
             search.status = 'working';
             referralsOn(s);

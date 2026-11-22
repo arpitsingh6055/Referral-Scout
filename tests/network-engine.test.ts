@@ -1263,3 +1263,42 @@ it('sends an email-required connect to Needs you with a clear reason, not skippe
   expect(p.reason).toMatch(/email to confirm the connection/);
   expect(p.retryAfter).toBeUndefined(); // never retried — LinkedIn's email prompt can't be cleared automatically
 });
+
+it('keeps what the person changed on a contact while outreach was working on it (no stale copy written back)', async () => {
+  await seed({ contacts: [person('busy', { companyName: 'Acme' })], target: 'Product Management internship' }, { noteMode: 'preferred' });
+  // While the profile is being read, the person marks "Will refer me" and adds a note in the panel.
+  vi.mocked(networkCommand).mockImplementationOnce(async () => {
+    await updateNetwork(s => {
+      const p = s.contacts.find(c => c.name === 'busy')!;
+      p.outcome = 'referred';
+      p.outcomeAt = 123;
+      return s;
+    });
+    return { state: 'not-connected' };
+  });
+  await networkTick();
+  const p = (await getNetwork()).contacts[0]!;
+  expect(p.state).toBe('review'); // outreach's own change is saved
+  expect(p).toMatchObject({ outcome: 'referred', outcomeAt: 123 }); // and so is the person's
+});
+
+it('keeps every job, however many there are, instead of silently dropping the oldest', async () => {
+  const jobs = Array.from({ length: 150 }, (_, i) => ({
+    url: `https://www.linkedin.com/jobs/view/${1000 + i}/`,
+    title: `Role ${i}`,
+    company: `Company ${i}`,
+    location: '',
+    mode: 'referral' as const,
+    addedAt: i,
+    cursor: 0,
+    found: 0,
+    finishedAt: 1,
+  }));
+  await seed({ active: false, referralJobs: jobs });
+  const { queueReferral } = await import('../src/background/network');
+  await queueReferral(
+    { url: 'https://www.linkedin.com/jobs/view/9999/', title: 'New role', company: 'NewCo', location: '' },
+    'connections',
+  );
+  expect((await getNetwork()).referralJobs).toHaveLength(151);
+});

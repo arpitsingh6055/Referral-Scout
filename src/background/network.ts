@@ -144,7 +144,7 @@ export async function updateNetwork(fn: (s: NetworkState) => NetworkState): Prom
               ? ('ok' as const)
               : ('info' as const),
         },
-      ].slice(-60);
+      ].slice(-500);
     return next;
   });
   return state;
@@ -193,12 +193,41 @@ export async function recoverNetwork(): Promise<void> {
     return s;
   });
 }
+/**
+ * A contact is worked on for a while (its profile opened, a message drafted, an invitation sent) from a copy taken
+ * when the work began. Meanwhile the person may have changed the same contact in the panel (marked "Will refer me",
+ * edited the draft, approved it) or a check may have recorded an acceptance. Saving the whole copy back would erase
+ * those changes, so only the fields this work actually changed are written onto the stored contact.
+ */
+const snapshots = new WeakMap<NetworkContact, NetworkContact>();
+function remember(p: NetworkContact): void {
+  snapshots.set(p, structuredClone(p));
+}
+export function mergeContact(stored: NetworkContact, worked: NetworkContact, before: NetworkContact | undefined): NetworkContact {
+  if (!before) return worked;
+  const next: Record<string, unknown> = { ...stored };
+  const a = before as unknown as Record<string, unknown>,
+    b = worked as unknown as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (JSON.stringify(a[key]) === JSON.stringify(b[key])) continue;
+    if (b[key] === undefined) delete next[key];
+    else next[key] = b[key];
+  }
+  return next as unknown as NetworkContact;
+}
 async function saveContact(person: NetworkContact): Promise<void> {
+  const before = snapshots.get(person);
   await updateNetwork(s => {
-    s.contacts = s.contacts.map(p => (p.url === person.url && p.state !== 'skipped' ? person : p));
+    s.contacts = s.contacts.map(p => {
+      if (p.url !== person.url) return p;
+      // Skipped by the person while this work ran: their decision stands.
+      if (p.state === 'skipped' && before?.state !== 'skipped') return p;
+      return mergeContact(p, person, before);
+    });
     s.intent = null;
     return s;
   });
+  remember(person);
 }
 function permittedCompany(name: string, s: NetworkState): boolean {
   const settings = s.settings ?? defaultSettings,
@@ -1071,6 +1100,7 @@ const MAX_ATTEMPTS = 2,
 const RECIPIENT_ONLY =
   /Connect is unavailable on this recipient|requires a recipient email|Message button is unavailable|already have a conversation|unsent draft|already contains a draft|permits \d+ characters|open profile changed/i;
 export async function processContact(s: NetworkState, p: NetworkContact, signal: AbortSignal, approved = false): Promise<void | false> {
+  remember(p); // the copy this work starts from; only what it changes is saved back
   let failed = false;
   void failed;
   await note(s, `Opening ${p.name}'s profile…`);
@@ -1277,7 +1307,7 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
   delete p.approvalKind;
   await updateNetwork(current => {
     if (!current.active || current.revision !== s.revision) throw new Error('Outreach was paused.');
-    current.contacts = current.contacts.map(c => (c.url === p.url ? p : c));
+    current.contacts = current.contacts.map(c => (c.url === p.url ? mergeContact(c, p, snapshots.get(p)) : c));
     current.intent = intent;
     current.nextActionAt = Date.now() + Math.round(settings.paceMinutes * 60000 * (0.75 + Math.random() * 0.7));
     current.actions.push({
@@ -1289,6 +1319,7 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
     });
     return current;
   });
+  remember(p);
   try {
     const result = z
       .object({ state: z.enum(['pending', 'connected', 'messaged', 'conversation']), noteSent: z.boolean().optional() })
@@ -1690,7 +1721,7 @@ export async function queueReferral(
       old = list.find(j => j.url === job.url);
     if (!old) {
       list.unshift({ ...job, mode, addedAt: Date.now(), cursor: 0, found: 0 });
-      s.referralJobs = list.slice(0, 100);
+      s.referralJobs = list; // every job is kept: dropping old ones lost their people and progress
       message = 'Searching. See the Referrals tab.';
     } else if (old.mode === 'connections' && mode === 'referral') {
       // Already listed the connections; now also look wider and reach out.

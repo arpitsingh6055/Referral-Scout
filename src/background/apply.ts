@@ -541,7 +541,7 @@ async function markSent(tabId: number): Promise<void> {
   const now = Date.now();
   const job = s.job;
   const history = (await read<{ title: string; company: string; url: string; at: number }[]>(HISTORY_KEY)) ?? [];
-  if (job) await write(HISTORY_KEY, [{ title: job.title, company: job.company, url: job.url, at: now }, ...history].slice(0, 200));
+  if (job) await write(HISTORY_KEY, [{ title: job.title, company: job.company, url: job.url, at: now }, ...history].slice(0, 5000));
   const profile = await applyProfile();
   let sent: NonNullable<ApplySession['sent']>;
   if ((profile.afterApply ?? 'referrals') === 'nothing') sent = { at: now, referral: 'off', message: '' };

@@ -3,6 +3,13 @@
 All versions below were built on 11 November 2026 on the `cleanup/linkedin-only` branch.
 What is and is not proven on the live site is recorded in `docs/live-verification.md`.
 
+## 0.53.0: nothing you saved disappears on its own
+- **Jobs are no longer dropped.** The job list kept only the newest 100 jobs; with applications starting a referral search each, older jobs (and their people's progress) vanished after a few days. Every job is now kept until you remove it.
+- **Your changes to a person are no longer overwritten.** Outreach worked on a copy of a contact (while reading the profile or drafting) and saved the whole copy back, erasing anything you changed meanwhile, such as "Will refer me", an edited draft or an approval. Only the fields outreach changed are saved now.
+- **Longer history:** the activity log keeps 500 entries (100 shown, was 60 kept and 30 shown), applications 5,000 (was 200), remembered jobs and people 5,000 (was 500).
+- **The browser will not clear the extension's data to free space** (`unlimitedStorage`).
+- **Old ChatGPT tasks are tidied:** finished tasks older than 14 days are removed (each kept the full prompt with your profile and CV); running tasks and the newest dossier stay.
+
 ## 0.52.0: application filling made dependable on real company sites
 - **Privacy:** on an ordinary website the panel shows one quiet "Is this page a job application?" line and reads nothing on the page until you press it, even with all job sites allowed. Before, it read every page you visited while the panel was open.
 - **No lost progress:** every change to a tab's application record goes through one queue, so a late ChatGPT progress note can no longer overwrite the filled answers.
