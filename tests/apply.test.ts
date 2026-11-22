@@ -10,6 +10,7 @@ import {
   rememberedFor,
   sensitivity,
   needsWork,
+  sameApplication,
   fitTo,
   localPlan,
   wantsThinking,
@@ -503,5 +504,18 @@ describe('LinkedIn top choice', () => {
     const msg = snap.form.find(f => f.kind === 'textarea')!;
     expect(msg).toMatchObject({ required: true, maxLength: 400, minLength: 20 });
     expect(snap.topChoice?.checked).toBe(true);
+  });
+});
+
+describe('which job a fill belongs to', () => {
+  it('follows the LinkedIn job id, and the site elsewhere', () => {
+    const search = (id: string) => `https://www.linkedin.com/jobs/search-results/?currentJobId=${id}&keywords=pm`;
+    expect(sameApplication(search('4467186176'), 'https://www.linkedin.com/jobs/view/4467186176/?companyName=Weekday')).toBe(true);
+    expect(sameApplication(search('4467186176'), search('4473340296'))).toBe(false);
+    expect(sameApplication(search('4467186176'), 'https://www.linkedin.com/feed/')).toBe(false);
+    expect(
+      sameApplication('https://acme.wd5.myworkdayjobs.com/a/job/1/apply', 'https://acme.wd5.myworkdayjobs.com/a/job/1/apply/step2'),
+    ).toBe(true);
+    expect(sameApplication('https://boards.greenhouse.io/acme/jobs/1', 'https://jobs.lever.co/acme/2')).toBe(false);
   });
 });

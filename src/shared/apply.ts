@@ -496,3 +496,27 @@ export const wantsThinking = (fields: FormField[]): boolean =>
   fields.some(
     f => f.kind === 'textarea' || f.kind === 'richtext' || (f.kind === 'text' && (f.label.length > 80 || OPEN_QUESTION.test(f.label))),
   );
+
+/**
+ * Whether two addresses are the same job's application. On LinkedIn the job id decides (the address changes from the
+ * search page to /jobs/view/<id> when Easy Apply opens, which is still the same job); elsewhere the same site.
+ */
+export function sameApplication(a: string, b: string): boolean {
+  const jobId = (raw: string): string | null => {
+    try {
+      const u = new URL(raw);
+      if (!/(^|\.)linkedin\.com$/.test(u.hostname)) return null;
+      return /^\/jobs\/view\/(\d+)/.exec(u.pathname)?.[1] ?? u.searchParams.get('currentJobId') ?? '';
+    } catch {
+      return null;
+    }
+  };
+  const ja = jobId(a),
+    jb = jobId(b);
+  if (ja !== null || jb !== null) return ja === jb && !!ja;
+  try {
+    return new URL(a).host === new URL(b).host;
+  } catch {
+    return false;
+  }
+}

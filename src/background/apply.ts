@@ -15,6 +15,7 @@ import {
   planFromReply,
   questionKey,
   rememberedFor,
+  sameApplication,
   needsWork,
   localPlan,
   wantsThinking,
@@ -273,7 +274,14 @@ async function detect(tabId?: number, withPhoto = false): Promise<Detect> {
   const url = tab?.url ?? '';
   const kind = pageKindFromUrl(url);
   const origin = originOf(url);
-  const [s, cv, photo, session, profile] = await Promise.all([getNetwork(), cvFile(), photoFile(), loadSession(), applyProfile()]);
+  const [s, cv, photo, stored, profile] = await Promise.all([getNetwork(), cvFile(), photoFile(), loadSession(), applyProfile()]);
+  let session = stored;
+  // The tab moved to another job (LinkedIn changes the job in the same tab): the old fill no longer applies.
+  if (session && session.tabId === tab?.id && url && !sameApplication(session.url, url)) {
+    running?.abort();
+    await remove('meta', SESSION_KEY);
+    session = undefined;
+  }
   return {
     tabId: tab?.id ?? null,
     url,
