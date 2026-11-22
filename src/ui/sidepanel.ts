@@ -12,9 +12,9 @@ import {
   staleRequests,
 } from '../shared/network';
 import { type Tab, ui, page, toaster, node, icon, ago, request, notify, button, act, flags, onRedraw, accordion } from './core';
-import { runStatus, usage, journey, meter, tick, live } from './live';
+import { runStatus, usage, journey, meter, tick, live, readyToContact } from './live';
 import { consentGate, welcome, askTarget, buildSetup } from './setup';
-import { buildSaved, buildReferrals } from './jobs';
+import { buildSaved, buildReferrals, jobChooser } from './jobs';
 import { buildPeople } from './people';
 import { buildActivity } from './activity';
 import { applyHome } from './apply';
@@ -108,7 +108,14 @@ function render(s: NetworkState): void {
     wrap.append(icon(glyph));
     if (n) wrap.append(node('span', String(n), 'count'));
     b.append(wrap, node('span', label, 'tab-label'));
-    b.addEventListener('click', () => setTab(tab, true));
+    b.addEventListener('click', () => {
+      // People opens where the person is needed first, until they choose a filter themselves.
+      if (tab === 'people' && !ui.filterChosen) {
+        ui.filter = toApprove + attention ? 'needs' : 'all';
+        refreshPeople();
+      }
+      setTab(tab, true);
+    });
     tabButtons.set(tab, b);
     tabs.append(b);
   }
@@ -120,7 +127,15 @@ function render(s: NetworkState): void {
   gear.addEventListener('click', () => setTab(ui.tab === 'setup' ? 'home' : 'setup', true));
   tabButtons.set('setup', gear);
   const top = node('header', '', 'top');
-  top.append(node('div', 'RS', 'mark'), node('span', 'Referral Scout', 'name'), node('span', status.pill, `pill ${status.tone}`), gear);
+  const pill = node('button', status.pill, `pill ${status.tone}`);
+  pill.type = 'button';
+  pill.title = status.tone === 'warn' ? 'Show what needs you' : status.title;
+  // "Your turn" always leads straight to the thing waiting for the person.
+  pill.addEventListener('click', () => {
+    setTab('home');
+    (document.querySelector('.home-turn') ?? document.querySelector('.todos'))?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  });
+  top.append(node('div', 'RS', 'mark'), node('span', 'Referral Scout', 'name'), pill, gear);
   const openPeople = (filter: string): void => {
     ui.filter = filter;
     refreshPeople();
@@ -193,16 +208,19 @@ function render(s: NetworkState): void {
       ),
     );
   } else if (choosing) {
-    run.append(
-      button(
-        `Choose companies (${search!.found.length} found)`,
-        async () => {
-          setTab('referrals', true);
-        },
-        'btn primary block',
-      ),
-    );
+    // The list itself is right below on Home: nothing to find, no button to notice.
+    run.append(node('p', 'Tick the companies below, then press the button at the end of the list.', 'field-help'));
   } else {
+    // People are lined up and nobody is being contacted: that is the next step, so it is the main button.
+    const ready = readyToContact(s);
+    if (ready)
+      run.append(
+        button(
+          `Reach out to ${ready === 1 ? 'this person' : `these ${ready} people`}`,
+          () => act({ kind: 'network', action: 'resume' }, 'Reaching out. People are contacted one at a time, within your daily limit.'),
+          'btn primary block',
+        ),
+      );
     run.append(
       button(
         jobs.length ? 'Find more jobs' : 'Find jobs and referrals',
@@ -213,7 +231,7 @@ function render(s: NetworkState): void {
             'Job search started. First the search is planned, then LinkedIn jobs are read.',
           );
         },
-        'btn primary block',
+        readyToContact(s) ? 'btn block' : 'btn primary block',
       ),
     );
   }
@@ -388,6 +406,13 @@ function render(s: NetworkState): void {
     kpis.append(k);
   }
   home.append(applyHome(), hello, run);
+  // The person's turn comes first: the company list when it is ready, then anything else waiting for them.
+  if (choosing) {
+    const pick = jobChooser(search!);
+    pick.classList.add('home-turn');
+    home.append(pick);
+  }
+  if (needs) home.append(todos);
   const tracker = live(s, stage);
   if (tracker) home.append(tracker);
   if (s.undo && Date.now() - s.undo.at < 10 * 60000) {
@@ -509,7 +534,8 @@ function render(s: NetworkState): void {
           (p.state === 'connected' && !p.messagedAt),
       ),
       first = queue[0];
-    if (!s.paused && (queue.length || s.active)) {
+    // When reaching out is off and referral contacts are lined up, the status card above already offers it.
+    if (!s.paused && (s.active || (queue.length && !readyToContact(s)))) {
       const card = node('section', '', 'card sending'),
         words = node('div');
       words.append(
@@ -541,7 +567,7 @@ function render(s: NetworkState): void {
     }
     const pipe = accordion('pipeline', 'Your pipeline', `${counts[0]} asked · ${counts[2]} replied`);
     pipe.body.append(kpis);
-    home.append(todos);
+    if (!needs) home.append(todos);
     below.unshift(pipe.box);
     // Acceptances and replies: always one clear button, with when it was last done.
     if (s.contacts.length) {
@@ -605,10 +631,27 @@ async function refresh(): Promise<void> {
   const current = await request({ kind: 'network', action: 'status' });
   announce(current);
   const before = flags.last;
-  if (before?.jobSearch?.status === 'finding' && current.jobSearch?.status === 'choosing' && current.jobSearch.found.length) {
-    ui.tab = 'referrals'; // the list is ready and it is the person's turn: show it
-    document.scrollingElement?.scrollTo({ top: 0 });
+  // The moment it becomes the person's turn, take them there and say so, instead of leaving a button to be noticed.
+  const blocking = (x: NetworkState | null): string =>
+    !x || x.paused
+      ? ''
+      : x.jobSearch?.status === 'choosing' && x.jobSearch.found.length
+        ? `Your turn: ${x.jobSearch.found.length} companies found. Tick the ones worth going after.`
+        : (x.referralJobs ?? []).some(j => j.waiting && j.finishedAt === undefined)
+          ? 'Your turn: one question about a company before the search carries on.'
+          : '';
+  const turn = blocking(current);
+  if (turn && turn !== blocking(before) && ui.tab !== 'setup') {
+    ui.tab = 'home';
+    toaster.show('info', turn);
+    requestAnimationFrame(() => document.querySelector('.home-turn, .todos')?.scrollIntoView?.({ block: 'start' }));
   }
+  const approvals = (x: NetworkState | null): number => (x?.contacts ?? []).filter(p => p.state === 'review' && !p.approved).length;
+  if (before && approvals(current) > approvals(before))
+    toaster.show(
+      'info',
+      `${approvals(current)} ${approvals(current) === 1 ? 'message is' : 'messages are'} ready for your approval. Nothing is sent before you approve.`,
+    );
   const open = (x: NetworkState | null): number => (x?.referralJobs ?? []).filter(j => j.finishedAt === undefined).length;
   if (before && open(before) > 0 && open(current) === 0 && (current.referralJobs ?? []).length) {
     const jobUrls = new Set((before.referralJobs ?? []).filter(j => j.finishedAt === undefined).map(j => j.url));

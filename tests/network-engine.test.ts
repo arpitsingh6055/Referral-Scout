@@ -1302,3 +1302,18 @@ it('keeps every job, however many there are, instead of silently dropping the ol
   );
   expect((await getNetwork()).referralJobs).toHaveLength(151);
 });
+
+it('counts what waits for the person, for the toolbar badge', async () => {
+  const { turnCount } = await import('../src/background/network');
+  const base = await seed({
+    contacts: [person('a', { state: 'review' }), person('b', { state: 'review', approved: true }), person('c', { state: 'attention' })],
+    jobSearch: {
+      status: 'choosing',
+      cursor: 1,
+      found: [{ id: '1', url: 'u', title: 't', company: 'c', location: '', insight: '', term: 't', score: 1, picked: true }],
+      startedAt: 1,
+    },
+  });
+  expect(turnCount(base)).toBe(3); // one approval, one attention, the company list
+  expect(turnCount({ ...base, paused: true })).toBe(0);
+});

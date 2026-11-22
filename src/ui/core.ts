@@ -8,6 +8,8 @@ export type Tab = 'home' | 'referrals' | 'people' | 'saved' | 'activity' | 'setu
 export const ui = {
   tab: 'home' as Tab,
   filter: 'all',
+  /** Set once the person picks a filter themselves; until then People opens on "Needs you" when someone needs them. */
+  filterChosen: false,
   search: '',
   open: new Set<string>(),
   /** Set when the last company finishes being searched, until the person has seen the summary. */

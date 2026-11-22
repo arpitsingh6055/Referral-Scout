@@ -42,6 +42,15 @@ export function runStatus(s: NetworkState): { tone: 'ok' | 'warn' | 'idle'; pill
       sub: s.status || 'Starting up…',
     };
   if (s.active) return { tone: 'ok', pill: 'Running', title: 'Outreach is running', sub: s.status || 'Starting up…' };
+  // Not running and not paused: say what the person can do next, never "Paused" when they paused nothing.
+  const waiting = s.jobSearch?.status === 'finding' ? 0 : readyToContact(s);
+  if (waiting)
+    return {
+      tone: 'warn',
+      pill: 'Your turn',
+      title: 'Ready to reach out',
+      sub: `${waiting} ${waiting === 1 ? 'person is' : 'people are'} lined up to be asked for a referral. Nobody is contacted until you press Reach out.`,
+    };
   if (!s.status)
     return {
       tone: 'idle',
@@ -52,10 +61,18 @@ export function runStatus(s: NetworkState): { tone: 'ok' | 'warn' | 'idle'; pill
   if (s.jobSearch?.status === 'finding') return { tone: 'ok', pill: 'Searching', title: 'Searching for jobs', sub: s.status };
   return {
     tone: s.contacts.some(p => p.state === 'attention') ? 'warn' : 'idle',
-    pill: s.active ? 'Running' : 'Paused',
-    title: 'Paused',
-    sub: s.status,
+    pill: 'Ready',
+    title: 'All caught up',
+    sub: 'Nothing is running. Find more jobs, or check who accepted and replied.',
   };
+}
+/** People found for your jobs who are waiting to be contacted while reaching out is off. */
+export function readyToContact(s: NetworkState): number {
+  if (s.active) return 0;
+  return s.contacts.filter(
+    p =>
+      !!p.referralJob && (p.state === 'shortlisted' || (p.state === 'review' && p.approved) || (p.state === 'connected' && !p.messagedAt)),
+  ).length;
 }
 export function usage(s: NetworkState): { today: number; week: number; next: string } {
   const now = Date.now(),

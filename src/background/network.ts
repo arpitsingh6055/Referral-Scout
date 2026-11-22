@@ -20,6 +20,7 @@ import {
   type NetworkContact,
   repliesFrom,
   inConversation,
+  dueReminders,
 } from '../shared/network';
 import { classify, geoFor, normalizeCompany, planSearch, companyOf } from '../shared/targeting';
 import { companyFromCurrent } from '../parsers/network';
@@ -147,7 +148,32 @@ export async function updateNetwork(fn: (s: NetworkState) => NetworkState): Prom
       ].slice(-500);
     return next;
   });
+  void showTurn(state);
   return state;
+}
+/** How many things are waiting for the person: approvals, people needing attention, a question, companies to choose. */
+export function turnCount(s: NetworkState): number {
+  if (s.paused) return 0;
+  const approvals = s.contacts.filter(p => p.state === 'review' && !p.approved).length,
+    attention = s.contacts.filter(p => p.state === 'attention').length,
+    questions = (s.referralJobs ?? []).filter(j => j.waiting && j.finishedAt === undefined).length,
+    choose = s.jobSearch?.status === 'choosing' && s.jobSearch.found.length ? 1 : 0;
+  return approvals + attention + questions + choose + dueReminders(s).length;
+}
+let shownTurn = -1;
+/**
+ * The toolbar icon shows a count while something waits for the person, so they notice it with the panel closed
+ * (choosing companies, approving messages, answering a question), and the icon's tooltip says what it is.
+ */
+async function showTurn(s: NetworkState): Promise<void> {
+  const n = turnCount(s);
+  if (n === shownTurn || typeof chrome === 'undefined' || !chrome.action?.setBadgeText) return;
+  shownTurn = n;
+  await chrome.action.setBadgeText({ text: n ? String(Math.min(n, 99)) : '' }).catch(() => undefined);
+  await chrome.action.setBadgeBackgroundColor?.({ color: '#d97706' })?.catch(() => undefined);
+  await chrome.action
+    .setTitle({ title: n ? `Referral Scout: ${n} ${n === 1 ? 'thing needs' : 'things need'} you` : 'Open Referral Scout' })
+    .catch(() => undefined);
 }
 let running: Promise<void> | null = null,
   controller: AbortController | null = null;

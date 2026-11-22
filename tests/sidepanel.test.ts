@@ -350,11 +350,14 @@ it('says when it is the person’s turn, and takes them to the company list the 
   expect($<HTMLElement>('.tab[aria-selected=true]')!.textContent).toContain('Home');
   state = { ...state, jobSearch: { status: 'choosing', cursor: 1, found, startedAt: 1 } };
   await vi.advanceTimersByTimeAsync(2600);
-  await vi.waitFor(() => expect($<HTMLElement>('.tab[aria-selected=true]')!.textContent).toContain('Jobs'));
-  expect(byText('.eyebrow', 'Step 2 of 4 · your turn')).toBeTruthy();
-  byText('.tab', 'Home')!.click();
+  // The list appears on Home itself, right under the status, with no button to notice first.
+  await vi.waitFor(() => expect($<HTMLElement>('.tab[aria-selected=true]')!.textContent).toContain('Home'));
+  const home = [...document.querySelectorAll<HTMLElement>('.home-turn')].find(el => el.offsetParent !== null || !el.closest('[hidden]'));
+  expect(home?.textContent).toContain('Choose companies');
+  expect(home?.textContent).toContain('Ops Intern');
   expect($('.run-title')!.textContent).toBe('Choose your companies');
   expect($('.pill')!.textContent).toBe('Your turn');
+  expect(byText('button', 'Choose companies (1 found)')).toBeFalsy();
 });
 
 it('shows the people of a job as one line each, grouped by where they stand, with control over that company', async () => {
@@ -405,7 +408,11 @@ it('gives reaching out its own switch on Home and always offers the LinkedIn che
       },
     ],
   });
-  expect(byText('.sending', '2 people in the queue')!.textContent).toContain('Reaching out is off');
+  // Reaching out is off with people lined up: the status card says so and its main button starts it (no second card).
+  expect($('.run-title')!.textContent).toBe('Ready to reach out');
+  expect($('.pill')!.textContent).toBe('Your turn');
+  expect(document.querySelectorAll('button').length).toBeGreaterThan(0);
+  expect([...document.querySelectorAll('button')].filter(b => b.textContent === 'Reach out to these 2 people')).toHaveLength(1);
   expect(byText('.sending', 'Who accepted? Who replied?')).toBeTruthy();
   byText('button', 'Reach out to these 2 people')!.click();
   await vi.waitFor(() => expect(sent.map(r => r.action)).toContain('resume'));

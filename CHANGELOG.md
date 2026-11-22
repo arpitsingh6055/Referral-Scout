@@ -3,6 +3,16 @@
 All versions below were built on 11 November 2026 on the `cleanup/linkedin-only` branch.
 What is and is not proven on the live site is recorded in `docs/live-verification.md`.
 
+## 0.54.0: the panel leads you to your next step
+- **Choosing companies happens on Home.** When the job search finishes, the company list appears on Home right under the status, with the button at the end of the list. Before, a "Choose companies" button had to be noticed and pressed first.
+- **It takes you there.** The moment it becomes your turn (companies to choose, a question about a company), the panel switches to Home, scrolls to it and says so, including when you open the panel after the search finished.
+- **The toolbar icon shows a count** while something waits for you (companies to choose, messages to approve, people needing attention, a question, reminders), so you notice it with the panel closed. Its tooltip says how many.
+- **"Your turn" is a button:** pressing it scrolls to what needs you.
+- **"Needs you" sits right under the status**, above the progress details.
+- **No more "Paused" when you paused nothing:** with people lined up and reaching out off, the status reads "Ready to reach out" and its main button starts it; otherwise "All caught up".
+- **People opens on "Needs you"** when someone needs you, until you pick a filter yourself.
+- New messages awaiting approval are announced.
+
 ## 0.53.0: nothing you saved disappears on its own
 - **Jobs are no longer dropped.** The job list kept only the newest 100 jobs; with applications starting a referral search each, older jobs (and their people's progress) vanished after a few days. Every job is now kept until you remove it.
 - **Your changes to a person are no longer overwritten.** Outreach worked on a copy of a contact (while reading the profile or drafting) and saved the whole copy back, erasing anything you changed meanwhile, such as "Will refer me", an edited draft or an approval. Only the fields outreach changed are saved now.

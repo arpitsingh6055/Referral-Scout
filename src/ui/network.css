@@ -2013,3 +2013,15 @@ details.person-row > .person .person-head {
 .person-row-name:focus-visible {
   text-decoration: underline;
 }
+button.pill {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+button.pill:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.home-turn {
+  scroll-margin-top: 72px;
+}

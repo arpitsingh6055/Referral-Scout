@@ -31,6 +31,7 @@ export function buildPeople(s: NetworkState, list: HTMLElement, redraw: () => vo
     b.setAttribute('aria-pressed', String(ui.filter === key));
     b.addEventListener('click', () => {
       ui.filter = key;
+      ui.filterChosen = true;
       redraw();
     });
     bar.append(b);
