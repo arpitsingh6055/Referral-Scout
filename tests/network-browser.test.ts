@@ -57,14 +57,53 @@ it('opens ChatGPT as a tab in the same work window instead of a second window, a
   expect(windows.create).not.toHaveBeenCalled();
 });
 
-it('closes the work window when nothing is using it, but never while a ChatGPT task is still open in it', async () => {
+it('tidies the work window down to one empty tab when nothing is using it, never while a ChatGPT task is open in it', async () => {
+  const state = await import('../src/storage/state');
   const { closeWorkWindow } = await import('../src/background/network-browser');
-  tabs.query.mockResolvedValueOnce([{ url: 'https://www.linkedin.com/feed/' }, { url: 'https://chatgpt.com/c/1' }]);
+  tabs.query.mockResolvedValueOnce([
+    { id: 7, url: 'https://www.linkedin.com/feed/' },
+    { id: 8, url: 'https://chatgpt.com/c/1' },
+  ]);
   await closeWorkWindow();
-  expect(windows.remove).not.toHaveBeenCalled();
-  tabs.query.mockResolvedValueOnce([{ url: 'https://www.linkedin.com/feed/' }]);
+  expect(tabs.remove).not.toHaveBeenCalled();
+  tabs.query.mockResolvedValueOnce([
+    { id: 7, url: 'https://www.linkedin.com/feed/' },
+    { id: 9, url: 'https://www.linkedin.com/jobs/view/1/' },
+  ]);
   await closeWorkWindow();
-  expect(windows.remove).toHaveBeenCalledWith(3);
+  expect(windows.remove).not.toHaveBeenCalled(); // the window stays, so the next task starts at once
+  expect(tabs.remove).toHaveBeenCalledWith([9]);
+  expect(tabs.update).toHaveBeenCalledWith(7, { url: 'about:blank' });
+  expect(state.write).toHaveBeenCalledWith('work-spare', 7);
+});
+
+it('closes a finished tab, but empties the last tab of the work window instead of closing the window', async () => {
+  const state = await import('../src/storage/state');
+  const { closeWorkTab } = await import('../src/background/network-browser');
+  tabs.get.mockResolvedValue({ id: 31, windowId: 3, url: 'https://chatgpt.com/c/1' });
+  tabs.query.mockResolvedValueOnce([{ id: 7 }, { id: 31 }]);
+  await closeWorkTab(31);
+  expect(tabs.remove).toHaveBeenCalledWith(31);
+  tabs.query.mockResolvedValueOnce([{ id: 31 }]);
+  await closeWorkTab(31);
+  expect(tabs.remove).toHaveBeenCalledTimes(1);
+  expect(tabs.update).toHaveBeenCalledWith(31, { url: 'about:blank' });
+  expect(state.write).toHaveBeenCalledWith('work-spare', 31);
+});
+
+it('reuses the empty tab for the next task instead of opening another', async () => {
+  const state = await import('../src/storage/state');
+  vi.mocked(state.read).mockImplementation(async (key: string) =>
+    key === 'work-window' ? 3 : key === 'work-spare' ? 31 : key === 'network-tab' ? 7 : undefined,
+  );
+  windows.get.mockResolvedValue({ id: 3 });
+  tabs.get.mockResolvedValue({ id: 31, windowId: 3, url: 'about:blank' });
+  const { openWorkTab } = await import('../src/background/network-browser');
+  expect(await openWorkTab('https://chatgpt.com/', 'chatgpt')).toBe(31);
+  expect(tabs.update).toHaveBeenCalledWith(31, { url: 'https://chatgpt.com/', active: true });
+  expect(tabs.create).not.toHaveBeenCalled();
+  expect(state.write).toHaveBeenCalledWith('work-spare', -1);
+  vi.mocked(state.read).mockImplementation(async (key: string) => (key === 'work-window' ? 3 : key === 'network-tab' ? 7 : undefined));
 });
 
 describe('reading several job pages at once', () => {
@@ -74,6 +113,7 @@ describe('reading several job pages at once', () => {
     windows.get.mockResolvedValue({ id: 3 });
     tabs.create.mockImplementation(async () => ({ id: next++ }));
     tabs.remove.mockResolvedValue(undefined);
+    tabs.query.mockResolvedValue([{ id: 7 }, { id: 100 }, { id: 101 }, { id: 102 }, { id: 103 }]); // the LinkedIn tab stays
   });
 
   it('uses at most four background tabs, reads every page, and closes every tab it opened', async () => {

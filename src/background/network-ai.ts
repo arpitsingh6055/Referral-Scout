@@ -3,7 +3,7 @@ import { read as readState, write as writeState } from '../storage/state';
 import { z } from 'zod';
 import { all, put, remove } from '../storage/database';
 import { read } from '../storage/state';
-import { openWorkTab } from './network-browser';
+import { closeWorkTab, openWorkTab } from './network-browser';
 import type { NetworkState, NetworkContact } from '../shared/network';
 import { renderNote, introduction, defaultSettings } from '../shared/network';
 import { validatedDossier } from '../shared/dossier';
@@ -279,6 +279,25 @@ export async function askApi(prompt: string, signal: AbortSignal, api: ApiConfig
   if (typeof text !== 'string' || !text.trim()) throw new Error('The OpenAI API returned no text.');
   return text;
 }
+/**
+ * A task is finished: close its ChatGPT tab (the work window keeps one emptied tab). The profile summary keeps its
+ * conversation until it is validated, because a format repair is asked in that same conversation.
+ */
+async function done(job: AiJob): Promise<void> {
+  if (job.kind === 'BUILD_DOSSIER' || job.tab === undefined) return;
+  const tab = job.tab;
+  delete job.tab;
+  await put('meta', { id: key(job.id), value: job }).catch(() => undefined);
+  await closeWorkTab(tab);
+}
+async function closeTaskTab(id: string): Promise<void> {
+  const job = await load(id);
+  if (job?.tab === undefined) return;
+  const tab = job.tab;
+  delete job.tab;
+  await put('meta', { id: key(job.id), value: job }).catch(() => undefined);
+  await closeWorkTab(tab);
+}
 export async function askChatGpt(
   prompt: string,
   signal: AbortSignal,
@@ -291,7 +310,10 @@ export async function askChatGpt(
   if (api) return askApi(prompt, signal, api, !!limits?.thinking);
   const id = await aiJobId(prompt, kind, owner, parentId);
   let job = await load(id);
-  if (job?.result) return job.result;
+  if (job?.result) {
+    await done(job);
+    return job.result;
+  }
   if (!job) {
     job = {
       id,
@@ -332,7 +354,7 @@ export async function askChatGpt(
     delete job.documentId;
     delete job.error;
     await save(job, 'queued');
-    if (stale !== undefined) await chrome.tabs.remove(stale).catch(() => undefined);
+    if (stale !== undefined) await closeWorkTab(stale);
   }
   await dispatch(job, signal).catch(async e => {
     const message = e instanceof Error ? e.message : String(e);
@@ -364,7 +386,7 @@ export async function askChatGpt(
           delete current.tab;
           delete current.documentId;
           await save(current, 'failed');
-          if (tab !== undefined) await chrome.tabs.remove(tab).catch(() => undefined);
+          if (tab !== undefined) await closeWorkTab(tab);
         }
         throw new Error(
           sent
@@ -373,7 +395,10 @@ export async function askChatGpt(
         );
       }
     }
-    if (stored?.result) return stored.result;
+    if (stored?.result) {
+      await done(stored);
+      return stored.result;
+    }
     if (stored?.stage === 'failed' || stored?.stage === 'uncertain')
       throw new Error(stored.error || `ChatGPT task ${stored.stage}. Inspect its visible tab.`);
     if (job.tab && i % 3 === 0) {
@@ -383,7 +408,7 @@ export async function askChatGpt(
           job.result = state.text;
           await save(job, 'response_extracted', state.documentId);
           // Per-contact drafts would otherwise leave hundreds of tabs open. Keep the dossier chat for inspection.
-          if (job.kind !== 'BUILD_DOSSIER' && job.tab !== undefined) await chrome.tabs.remove(job.tab).catch(() => undefined);
+          await done(job);
           return state.text;
         }
       } catch {
@@ -420,12 +445,18 @@ export async function prepareDossier(s: NetworkState, signal: AbortSignal): Prom
   if (s.cv && !s.cv.text.trim()) throw new Error('Extract CV text before processing.');
   const prompt = dossierPrompt(s);
   const first = await askChatGpt(prompt, signal, 'BUILD_DOSSIER', s.profile.url);
+  const parent = await aiJobId(prompt, 'BUILD_DOSSIER', s.profile.url);
   try {
-    return validatedDossier(first);
+    const valid = validatedDossier(first);
+    await closeTaskTab(parent);
+    return valid;
   } catch {
-    const parent = await aiJobId(prompt, 'BUILD_DOSSIER', s.profile.url);
     const repair = `The JSON response to the previous REFERRAL_SCOUT_JOB is not valid against the requested schema. Re-read the original candidate sources already visible in this SAME conversation. Correct only the schema/format errors, retain every supported fact, and return exactly one valid schemaVersion 2 JSON object. Do not invent details. No markdown or explanation.`;
-    return validatedDossier(await askChatGpt(repair, signal, 'BUILD_DOSSIER', s.profile.url, parent));
+    const valid = validatedDossier(await askChatGpt(repair, signal, 'BUILD_DOSSIER', s.profile.url, parent));
+    // The repair ran in the same conversation; both are finished now.
+    await closeTaskTab(parent);
+    await closeTaskTab(await aiJobId(repair, 'BUILD_DOSSIER', s.profile.url, parent));
+    return valid;
   }
 }
 

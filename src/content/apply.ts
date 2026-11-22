@@ -48,8 +48,10 @@ export interface ApplyApi {
   openEasyApply(click?: boolean): 'opened' | 'external' | 'open' | 'none';
   /** Ticks LinkedIn's "Mark job as a top choice" (only when the person asks; it uses a monthly allowance). */
   markTopChoice(): 'checked' | 'already' | 'none';
+  /** Passes LinkedIn's "Job search safety reminder" by pressing its Continue applying. True when it did. */
+  passInterstitial(): boolean;
 }
-const VERSION = 5;
+const VERSION = 6;
 const scope = globalThis as typeof globalThis & { __referralScoutApply?: ApplyApi };
 
 /* ---------- reading the page ---------- */
@@ -741,6 +743,20 @@ function create(): ApplyApi {
       this.clear();
       next.el.click();
       return { clicked: next.label };
+    },
+    passInterstitial() {
+      // Only a notice about the application itself, never a form: it has a "Continue applying" button and no fields.
+      for (const d of document.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"]')) {
+        if (!visible(d) || d.querySelector('input:not([type="hidden"]), select, textarea')) continue;
+        const go = [...d.querySelectorAll<HTMLElement>('button, a')].find(
+          b => visible(b) && /^continue applying$|^continue to (the )?application$|^apply anyway$/i.test(buttonText(b)),
+        );
+        if (go) {
+          go.click();
+          return true;
+        }
+      }
+      return false;
     },
     markTopChoice() {
       const root = easyApplyDialog(document) ?? document;

@@ -137,6 +137,19 @@ type Frame = { frameId: number; result: ReturnType<ApplyApi['scan']> };
 async function inject(tabId: number): Promise<void> {
   await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['apply.js'] });
 }
+/** Presses "Continue applying" on LinkedIn's safety reminder, in whichever frame shows it. */
+async function passInterstitials(tabId: number): Promise<boolean> {
+  await inject(tabId).catch(() => undefined);
+  const passed = await chrome.scripting
+    .executeScript({
+      target: { tabId, allFrames: true },
+      func: () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.passInterstitial() ?? false,
+    })
+    .catch(() => []);
+  if (!passed.some(p => p.result === true)) return false;
+  await new Promise(r => setTimeout(r, 900));
+  return true;
+}
 async function scanAll(tabId: number, linkedin = false): Promise<Frame[]> {
   await inject(tabId);
   const results = await chrome.scripting.executeScript({
@@ -317,6 +330,8 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
     })));
   await update(s => ({ ...s, stage: 'reading', message: 'Reading the application form…', url }));
   const linkedin = kind === 'linkedin-job';
+  // LinkedIn may put a "Job search safety reminder" in front of the form: pass it, the person need not see it.
+  if (linkedin) await passInterstitials(tabId);
   let frames = await scanAll(tabId, linkedin);
   let page = merge(frames, url, tab.title ?? '');
   if (!page.form.length && (page.hasNext || page.hasSubmit)) {
@@ -366,9 +381,10 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
       );
     if (opened === 'opened') {
       await update(s => ({ ...s, stage: 'opening', message: 'Opening Easy Apply…' }));
-      for (let i = 0; i < 10 && !page.form.length; i++) {
+      for (let i = 0; i < 12 && !page.form.length; i++) {
         await new Promise(r => setTimeout(r, 700));
         signal.throwIfAborted();
+        await passInterstitials(tabId);
         frames = await scanAll(tabId, linkedin);
         page = merge(frames, url, tab.title ?? '');
       }
@@ -395,6 +411,23 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
     );
   }
   const [bg, profile, photo, cv] = await Promise.all([background(), applyProfile(), photoFile(), cvFile()]);
+  // "Mark this job as a top choice": ticked on every application while LinkedIn offers it, unless the person chose
+  // to decide themselves. Ticking reveals a required message, which is written below with the rest of the step.
+  let topTicked = false;
+  if (linkedin && page.topChoice && !page.topChoice.checked && page.topChoice.remaining !== 0 && (profile.topChoice ?? 'auto') === 'auto') {
+    const ticks = await chrome.scripting
+      .executeScript({
+        target: { tabId, allFrames: true },
+        func: () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.markTopChoice() ?? 'none',
+      })
+      .catch(() => []);
+    if (ticks.some(t => t.result === 'checked')) {
+      topTicked = true;
+      await new Promise(r => setTimeout(r, 1200));
+      frames = await scanAll(tabId, linkedin);
+      page = merge(frames, url, tab.title ?? '');
+    }
+  }
   if (!cv) throw new Error('Upload your CV (PDF or Word) in Settings first: applications need the file.');
   await update(s => ({
     ...s,
@@ -486,7 +519,19 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
       ? `Step ${s.stepCount} done${plan.fill.length + plan.files.length ? '' : ' (already filled)'}. Moving on…`
       : reviewMessage(plan, failed, page),
     filled: [
-      ...s.filled.filter(x => !plan.fill.some(f => f.id === x.id)),
+      ...s.filled.filter(x => !plan.fill.some(f => f.id === x.id) && !(topTicked && x.id === 'top-choice')),
+      ...(topTicked
+        ? [
+            {
+              id: 'top-choice',
+              label: 'Mark this job as a top choice',
+              value: 'Yes',
+              confidence: 'high' as const,
+              why: 'Your setting',
+              ok: true,
+            },
+          ]
+        : []),
       ...plan.fill.map(f => ({
         id: f.id,
         label: f.label,
@@ -766,6 +811,7 @@ export const applyRequest = z.discriminatedUnion('action', [
     action: z.literal('saveProfile'),
     details: detailsSchema,
     eeo: z.enum(['leave', 'decline']),
+    topChoice: z.enum(['auto', 'ask']).optional(),
     forget: z.array(z.string().max(200)).max(200).optional(),
   }),
   z.object({ kind: z.literal('apply'), action: z.literal('capturePhoto') }),
@@ -832,6 +878,7 @@ export function registerApplyMessages(): void {
             .filter(([, v]) => v),
         );
         profile.eeo = req.eeo;
+        if (req.topChoice) profile.topChoice = req.topChoice;
         for (const k of req.forget ?? []) delete profile.answers[k];
         await write(PROFILE_KEY, profile);
       }

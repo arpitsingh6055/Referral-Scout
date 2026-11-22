@@ -86,22 +86,69 @@ export async function openWorkTab(url: string, kind: 'linkedin' | 'chatgpt' = 'l
     await write('work-window', created.id);
     return tabId;
   }
+  // The work window keeps one empty tab instead of closing (see closeWorkTab): reuse it before opening another.
+  const spare = await read<number>('work-spare');
+  if (spare !== undefined && spare >= 0) {
+    await write('work-spare', -1);
+    try {
+      if ((await chrome.tabs.get(spare)).windowId === windowId) {
+        await chrome.tabs.update(spare, { url, active });
+        return spare;
+      }
+    } catch {
+      /* the person closed it */
+    }
+  }
   const tab = await chrome.tabs.create({ windowId, url, active });
   if (tab.id === undefined) throw new Error('Could not open a tab in the work window.');
   return tab.id;
 }
-/** Closes the work window once nothing is using it. A ChatGPT task still open in it keeps it alive. */
+let closing: Promise<unknown> = Promise.resolve();
+/**
+ * Closes a tab the extension is done with (a ChatGPT answer read, a job page read). The work window always keeps one
+ * tab, emptied, so the window is not closed and reopened between tasks: reopening a window is slow and can pull it in
+ * front of the person. Closes are done one at a time so two finishing together never close the window.
+ */
+export function closeWorkTab(tabId: number): Promise<void> {
+  const run = closing.then(async () => {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      const windowId = await read<number>('work-window');
+      if (windowId !== undefined && tab.windowId === windowId && (await chrome.tabs.query({ windowId })).length <= 1) {
+        await chrome.tabs.update(tabId, { url: 'about:blank' });
+        await write('work-spare', tabId);
+        if ((await read<number>('network-tab')) === tabId) await write('network-tab', -1);
+        return;
+      }
+      await chrome.tabs.remove(tabId);
+    } catch {
+      /* already closed */
+    }
+  });
+  closing = run.catch(() => undefined);
+  return run;
+}
+/**
+ * Tidies the work window once nothing is using it: every tab is closed except one, which is emptied and kept so the
+ * next task starts at once instead of opening a new window. A ChatGPT task still open in it is left alone.
+ */
 export async function closeWorkWindow(): Promise<void> {
   const windowId = await read<number>('work-window');
   if (windowId === undefined || windowId < 0) return;
   try {
     const tabs = await chrome.tabs.query({ windowId });
     if (tabs.some(t => /^https:\/\/chatgpt\.com\//.test(t.url ?? ''))) return;
-    await chrome.windows.remove(windowId);
+    if (tabs.length === 1 && tabs[0]!.url === 'about:blank') return; // already tidy
+    const [keep, ...rest] = tabs;
+    if (rest.length) await chrome.tabs.remove(rest.map(t => t.id!).filter(id => id !== undefined));
+    if (keep?.id !== undefined) {
+      await chrome.tabs.update(keep.id, { url: 'about:blank' });
+      await write('work-spare', keep.id);
+    }
+    await write('network-tab', -1);
   } catch {
-    /* already closed by the person */
+    await write('work-window', -1); // closed by the person
   }
-  await write('work-window', -1);
 }
 /** Shows a tab inside the work window without focusing that window. */
 export async function showWorkTab(tabId: number): Promise<void> {
@@ -191,7 +238,7 @@ export async function readPagesInParallel<T>(
   try {
     await Promise.all(Array.from({ length: workers }, (_, i) => worker(i)));
   } finally {
-    await Promise.all(opened.map(id => chrome.tabs.remove(id).catch(() => undefined)));
+    for (const id of opened) await closeWorkTab(id);
   }
   return results;
 }

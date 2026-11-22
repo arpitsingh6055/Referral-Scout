@@ -519,3 +519,24 @@ describe('which job a fill belongs to', () => {
     expect(sameApplication('https://boards.greenhouse.io/acme/jobs/1', 'https://jobs.lever.co/acme/2')).toBe(false);
   });
 });
+
+describe('LinkedIn safety reminder', () => {
+  it('presses Continue applying on the reminder, and never on a real form', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    document.body.innerHTML = `
+      <div role="dialog"><h2>Job search safety reminder</h2><p>Research the company</p>
+        <button>Review job post</button><button id="go">Continue applying</button></div>`;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+    let pressed = false;
+    document.getElementById('go')!.addEventListener('click', () => (pressed = true));
+    expect(api.passInterstitial()).toBe(true);
+    expect(pressed).toBe(true);
+    document.body.innerHTML = `<div role="dialog"><label for="x">Phone</label><input id="x"><button>Continue applying</button></div>`;
+    expect(api.passInterstitial()).toBe(false);
+  });
+});

@@ -246,7 +246,7 @@ function draw(d: Detect): void {
     card.append(box);
   }
   // LinkedIn's final page can mark the job as a top choice (a few per month) with a short message to the hirer.
-  if (s.topChoice && !s.topChoice.checked && s.hasSubmit && !s.hasNext && s.stage === 'review') {
+  if (s.topChoice && !s.topChoice.checked && s.topChoice.remaining !== 0 && s.hasSubmit && !s.hasNext && s.stage === 'review') {
     const box = node('div', '', 'apply-ask');
     box.append(
       node('h4', 'Mark this job as a top choice?', 'group-title'),
@@ -402,6 +402,16 @@ export function buildApplySettings(): HTMLElement {
       'Referral Scout never answers these with real information.',
     );
     slot.append(eeo.wrap);
+    const top = choice(
+      'LinkedIn "Mark this job as a top choice"',
+      d.profile.topChoice ?? 'auto',
+      [
+        ['auto', 'Mark every application while LinkedIn allows it'],
+        ['ask', 'Only when I press the button'],
+      ],
+      'LinkedIn allows a few top choices a month. Each one comes with a short message ChatGPT writes for that job.',
+    );
+    slot.append(top.wrap);
     // CV
     const cvRow = node('div', '', 'field');
     cvRow.append(
@@ -493,6 +503,7 @@ export function buildApplySettings(): HTMLElement {
             action: 'saveProfile',
             details: Object.fromEntries(inputs.map(([k, i]) => [k, i.value.trim()])),
             eeo: eeo.input.value as 'leave' | 'decline',
+            topChoice: top.input.value as 'auto' | 'ask',
             forget: [...forget],
           });
           flags.dirty = false;

@@ -174,8 +174,13 @@ export interface ApplyProfile {
   answers: Record<string, string>;
   /** Diversity questions: leave them for the person (default) or pick "Prefer not to say" where offered. */
   eeo: 'leave' | 'decline';
+  /**
+   * LinkedIn's "Mark this job as a top choice" (a monthly allowance): tick it on every application while LinkedIn
+   * offers it (default), or only when the person presses the panel's button.
+   */
+  topChoice?: 'auto' | 'ask';
 }
-export const emptyApplyProfile = (): ApplyProfile => ({ details: {}, answers: {}, eeo: 'leave' });
+export const emptyApplyProfile = (): ApplyProfile => ({ details: {}, answers: {}, eeo: 'leave', topChoice: 'auto' });
 export const questionKey = (label: string): string =>
   label
     .toLowerCase()
