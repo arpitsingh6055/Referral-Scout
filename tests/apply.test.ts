@@ -456,7 +456,7 @@ describe('LinkedIn final page with a top-choice message', () => {
     expect(wantsThinking([msg])).toBe(true);
     expect(
       fillPrompt({
-        page: { ...snap, url: 'x', title: 't' },
+        page: { ...snap, url: 'x', title: 't', actions: [] },
         background: '',
         roles: [],
         profile: emptyApplyProfile(),
@@ -989,5 +989,118 @@ describe('production review fixes', () => {
   it('recognises more confirmation wordings as sent', async () => {
     const api = await load(`<main><h1>You're all set!</h1><p>We will review your application and get back to you.</p></main>`);
     expect(api.submitted()).toBe(true);
+  });
+});
+
+describe('lists on a form (add a role, add education)', () => {
+  const load = async (html: string) => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    Element.prototype.scrollIntoView = function () {};
+    document.body.innerHTML = html;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    return (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+  };
+  // Live page, 23 Nov 2026 (MailerMen onboarding, "Where have you worked?"): an empty list with only "Add a role",
+  // and a newsletter form with a Cloudflare check in the footer.
+  const page = `<main><header><h1>Where have you worked?</h1></header>
+    <form id="app"><input type="hidden" name="entries" value="[]"><h2>Experience</h2>
+      <p>No roles yet.</p><ul id="roles"></ul>
+      <div><button type="button" id="add">Add a role</button><span>0 of 20</span></div>
+      <button type="submit">Save and continue</button><a href="/onboarding?step=education">Skip this step</a></form></main>
+    <footer><form><iframe src="https://challenges.cloudflare.com/turnstile"></iframe><label for="nl">Email address</label>
+      <input id="nl" type="email" required><button type="submit">Subscribe</button></form></footer>`;
+  const role = (n: number) => `<li aria-label="Role ${n}"><span>Role ${n}</span>
+      <label for="t${n}">Job title*</label><input id="t${n}" required>
+      <label for="c${n}">Company*</label><input id="c${n}" required>
+      <label for="s${n}">From</label><input id="s${n}" type="month">
+      <label for="k${n}">Tools you used</label><div><input id="k${n}" placeholder="Type one and press Enter"><button type="button">Add</button></div></li>`;
+  it('finds the "Add a role" button on an empty list, reads the application (not the footer newsletter) and sees no security check', async () => {
+    const api = await load(page);
+    const snap = api.scan();
+    expect(snap.form).toEqual([]);
+    expect(snap.empty).toBe(false);
+    expect(snap.captcha).toBe(false);
+    expect(snap.actions).toEqual([expect.objectContaining({ label: 'Add a role', section: 'Experience', count: 0 })]);
+  });
+  it('presses only that button, and names each new entry so its fields are filled from the right job', async () => {
+    const api = await load(page);
+    let n = 0;
+    document.getElementById('add')!.addEventListener('click', () => {
+      n++;
+      document.getElementById('roles')!.insertAdjacentHTML('beforeend', role(n));
+    });
+    const snap = api.scan();
+    const id = snap.actions![0]!.id;
+    expect(api.press(id)).toBe(true);
+    expect(api.press(id)).toBe(true);
+    expect(api.press('rs-not-a-button')).toBe(false);
+    const next = api.scan();
+    expect(next.form.filter(f => f.label === 'Job title').map(f => f.section)).toEqual(['Experience › Role 1', 'Experience › Role 2']);
+    expect(next.form.find(f => f.label === 'From')!.kind).toBe('date');
+  });
+  it('never treats Save, Submit or Remove as a list button', async () => {
+    const api = await load(`<form><h2>Experience</h2><button type="button">Remove role</button><button type="button">Save role</button>
+      <button type="submit">Add role</button><button type="button">Add another role</button></form>`);
+    expect(api.scan().actions!.map(a => a.label)).toEqual(['Add another role']);
+  });
+  it('fills a month box with YYYY-MM and a tag box one item at a time', async () => {
+    const api = await load(`<form><h2>Experience</h2>${role(1)}</form>`);
+    const tags = document.getElementById('k1') as HTMLInputElement;
+    const box = tags.parentElement!;
+    box.querySelector('button')!.addEventListener('click', () => {
+      box.insertAdjacentHTML('afterbegin', `<span class="chip">${tags.value}</span>`);
+      tags.value = '';
+    });
+    const snap = api.scan();
+    const id = (l: string) => snap.form.find(f => f.label === l)!.id;
+    const r = await api.fill(
+      [
+        { id: id('From'), kind: 'date', value: '2024-06-01' },
+        { id: id('Tools you used'), kind: 'text', value: 'SQL, Power BI, Python' },
+      ],
+      [],
+    );
+    expect((document.getElementById('s1') as HTMLInputElement).value).toBe('2024-06');
+    expect([...box.querySelectorAll('.chip')].map(c => c.textContent)).toEqual(['Python', 'Power BI', 'SQL']);
+    expect(r.every(x => x.ok)).toBe(true);
+  }, 15000);
+  it('asks ChatGPT how many entries a list needs and accepts only buttons the page offered', () => {
+    const actions = [{ id: 'add1', frame: 0, label: 'Add a role', section: 'Experience', count: 0 }];
+    const prompt = fillPrompt({
+      page: { url: 'u', title: 't', job: '', html: '', form: [], step: '', hasNext: true, hasSubmit: false, captcha: false, actions },
+      background: 'Intern at Acme (2024); Analyst at Beta (2025)',
+      roles: [],
+      profile: emptyApplyProfile(),
+      name: 'A',
+      linkedinUrl: '',
+      photo: false,
+    });
+    expect(prompt).toContain('LIST BUTTONS');
+    expect(prompt).toContain('"add"');
+    const plan = planFromReply(
+      {
+        summary: '',
+        fill: [],
+        files: [],
+        ask: [],
+        add: [
+          { id: 'add1', times: 2 },
+          { id: 'submit-button', times: 1 },
+          { id: 'add1', times: 40 },
+        ],
+      },
+      [],
+      emptyApplyProfile(),
+      false,
+      actions,
+    );
+    expect(plan.add).toEqual([
+      { id: 'add1', frame: 0, label: 'Add a role', times: 2 },
+      { id: 'add1', frame: 0, label: 'Add a role', times: 6 },
+    ]);
   });
 });

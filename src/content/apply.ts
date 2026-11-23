@@ -28,7 +28,7 @@ export interface FillResult {
 export interface ApplyApi {
   version: number;
   /** linkedin: read only LinkedIn's Easy Apply window, never the rest of the page (search box, messaging, filters). */
-  scan(opts?: { linkedin?: boolean }): Omit<PageSnapshot, 'url' | 'title'> & {
+  scan(opts?: { linkedin?: boolean }): Omit<PageSnapshot, 'url' | 'title' | 'actions'> & {
     url: string;
     title: string;
     frames: string[];
@@ -36,7 +36,11 @@ export interface ApplyApi {
     easyApplyOpen?: boolean;
     topChoice?: { checked: boolean; remaining?: number };
     jobMatch?: 'low' | 'medium' | 'high';
+    /** Buttons that add one more entry to a list on the form ("Add a role", "Add education"). */
+    actions?: { id: string; label: string; section: string; count?: number }[];
   };
+  /** Presses one of the "add an entry" buttons the last scan listed, and nothing else. True when it did. */
+  press(id: string): boolean;
   fill(
     items: { id: string; kind: FieldKind; value: string | string[] }[],
     files: { id: string; name: string; type: string; data: string }[],
@@ -203,10 +207,25 @@ const optionLabel = (input: HTMLInputElement): string => {
 const isRequired = (el: Element, label: string): boolean =>
   (el as HTMLInputElement).required || el.getAttribute('aria-required') === 'true' || /\*\s*$|\(required\)|\brequired\b/i.test(label);
 function sectionOf(el: Element): string {
-  const fs = el.closest('fieldset')?.querySelector('legend');
-  if (fs) return clean(fs.textContent).slice(0, 120);
-  const heading = el.closest('section, [role="region"], form, div')?.querySelector('h2, h3');
-  return clean(heading?.textContent).slice(0, 120);
+  // One entry of a repeated list ("Role 1", "Education 2"): named, so the answers for each entry go to the right fields.
+  const entry = el.closest('li, [role="listitem"], [role="group"], fieldset');
+  const entryName =
+    clean(entry?.getAttribute('aria-label')) ||
+    clean(entry?.querySelector(':scope > legend')?.textContent) ||
+    clean(
+      [...(entry?.querySelectorAll('span, h3, h4, p') ?? [])].find(e => /^[a-z][\w ]{1,30}\s\d{1,2}$/i.test(clean(e.textContent)))
+        ?.textContent,
+    );
+  // The nearest heading above it: the closest ancestor (up to eight levels) holding a legend or an h2/h3.
+  let heading = '';
+  for (let n = el.parentElement, depth = 0; n && depth < 8 && !n.matches('body'); n = n.parentElement, depth++) {
+    const h = n.querySelector(':scope > legend') ?? n.querySelector('legend, h2, h3');
+    if (h && clean(h.textContent)) {
+      heading = clean(h.textContent).slice(0, 120);
+      break;
+    }
+  }
+  return [heading, entryName && entryName !== heading ? entryName : ''].filter(Boolean).join(' › ').slice(0, 160);
 }
 /** Where the application lives: LinkedIn's Easy Apply window, any open dialog with fields, the largest form, or the page. */
 // LinkedIn's messaging pop-up. Not any "message" field: LinkedIn's top-choice box is labelled "Include a message...".
@@ -233,6 +252,20 @@ function topChoiceBox(root: ParentNode): HTMLInputElement | undefined {
     /top choice/i.test(c.getAttribute('aria-label') ?? labelOf(c)),
   );
 }
+/**
+ * "Add another entry" buttons of a list on the form: a role, a school, a project, a certification, a language, a link.
+ * Only these are ever pressed by the extension besides Next; never a button that saves, submits or removes.
+ */
+const ADD_ENTRY =
+  /^(\+\s*)?(add|add another|add (a|an|one) more|add new|new)\s+(a\s+|an\s+|another\s+|new\s+)?(role|experience|work experience|position|job|employment|employer|education|qualification|school|college|degree|course|project|certification|certificate|licen[cs]e|language|skill|award|achievement|honou?r|publication|link|website|social (profile|link)|reference|referee|volunteer(ing)?( experience)?|internship|entry|item|row)s?$|^(\+\s*)?add (more|another)$/i;
+function addButtons(root: Element): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>('button, [role="button"], a[href="#"], a:not([href])')].filter(b => {
+    if (!visible(b) || (b as HTMLButtonElement).disabled || b.getAttribute('aria-disabled') === 'true') return false;
+    if ((b as HTMLButtonElement).type === 'submit' || b.closest('header, nav, footer')) return false;
+    const label = clean(b.getAttribute('aria-label')) || clean(b.textContent);
+    return ADD_ENTRY.test(label);
+  });
+}
 function formRoot(doc: Document): Element {
   const has = (e: Element) => [...e.querySelectorAll('input, select, textarea, [contenteditable="true"]')].some(visible);
   const easy = easyApplyDialog(doc);
@@ -241,8 +274,13 @@ function formRoot(doc: Document): Element {
     d => visible(d) && has(d) && !d.matches(MESSAGING) && !d.closest(MESSAGING),
   );
   if (dialogs.length) return dialogs.at(-1)!;
+  // A form may hold no fields yet, only "Add a role" (an empty list): it is still the application. A footer form (a
+  // newsletter sign-up) never is.
   const forms = [...doc.querySelectorAll('form')].filter(
-    f => has(f) && !f.matches('[role="search"]') && !f.closest('header, nav, [role="search"]'),
+    f =>
+      (has(f) || addButtons(f).length > 0) &&
+      !f.matches('[role="search"]') &&
+      !f.closest('header, nav, footer, [role="search"], [role="contentinfo"]'),
   );
   if (forms.length) {
     const count = (f: Element) => [...f.querySelectorAll('input, select, textarea')].filter(visible).length;
@@ -434,6 +472,8 @@ function bestMatch<T>(value: string, items: T[], text: (t: T) => string): T | un
 }
 /** A date written the way the field wants it: YYYY-MM-DD for date inputs, otherwise following the placeholder. */
 function dateFor(el: HTMLInputElement, iso: string): string {
+  // A month box (type="month") takes YYYY-MM; ChatGPT may give a full date or just the month.
+  if (el.type === 'month') return /^(\d{4})-(\d{2})/.exec(iso)?.slice(1, 3).join('-') ?? iso;
   const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m || el.type === 'date') return iso;
   const [, y, mo, d] = m;
@@ -606,6 +646,41 @@ async function fillOne(entry: Entry, value: string | string[]): Promise<{ ok: bo
           return settled(input, text);
         }
       }
+      // A tag box ("Type one and press Enter", or a box with its own Add button): one item at a time, each confirmed.
+      // Only a button right beside this box counts (not one elsewhere in the same entry), and only on a text box.
+      const addBtn = [...(input.parentElement?.children ?? [])].find(
+        (b): b is HTMLButtonElement => b instanceof HTMLButtonElement && /^add$/i.test(clean(b.textContent)),
+      );
+      if (
+        input instanceof HTMLInputElement &&
+        (input.type === 'text' || input.type === '') &&
+        (addBtn || /press enter|then enter|hit enter/i.test(input.placeholder))
+      ) {
+        const items = text
+          .split(/\s*[,;|\n]\s*/)
+          .map(t => t.trim())
+          .filter(Boolean)
+          .slice(0, 15);
+        for (const item of items) {
+          input.focus();
+          setNative(input, item);
+          fire(input, 'input');
+          for (const type of ['keydown', 'keypress', 'keyup'])
+            input.dispatchEvent(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true }));
+          if (addBtn && input.value.trim()) addBtn.click();
+          await sleep(150);
+        }
+        const box = clean(input.closest('div')?.parentElement?.textContent).toLowerCase();
+        const kept = items.filter(i => box.includes(i.toLowerCase())).length;
+        return kept === items.length
+          ? { ok: true }
+          : {
+              ok: kept > 0,
+              note: kept
+                ? `${kept} of ${items.length} added; add the rest on the page.`
+                : 'The site did not take these; add them on the page.',
+            };
+      }
       // A date picker's box is often read-only so only its calendar can set it: set it directly, then restore.
       const locked = input.readOnly;
       if (locked) input.readOnly = false;
@@ -633,6 +708,8 @@ function create(): ApplyApi {
   let counter = 0;
   const entries = new Map<string, Entry>();
   const undo: Previous[] = [];
+  /** The "add an entry" buttons the last scan found: the only buttons press() will ever touch. */
+  const addable = new Set<string>();
   const marked = new Set<HTMLElement>();
   // The form area the last scan read; Next is only ever looked for inside it.
   let lastRoot: Element | null = null;
@@ -757,7 +834,9 @@ function create(): ApplyApi {
                 ? 'combobox'
                 : type === 'email' || type === 'tel' || type === 'url' || type === 'number' || type === 'date'
                   ? (type as FieldKind)
-                  : 'text';
+                  : type === 'month'
+                    ? 'date'
+                    : 'text';
           if (list.length) options = list;
           label = labelOf(input);
           // Segmented dates (Workday: separate Month / Day / Year spin buttons) name only the part; add the question.
@@ -814,9 +893,24 @@ function create(): ApplyApi {
         });
       }
       const found = buttons(root.ownerDocument === doc && root !== doc.body ? root : doc.body);
-      const captcha = !!doc.querySelector(
-        'iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare"], .g-recaptcha, .h-captcha, .cf-turnstile',
-      );
+      // A security check counts only where the application is, not a newsletter box in the footer.
+      const captcha = [
+        ...doc.querySelectorAll(
+          'iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare"], .g-recaptcha, .h-captcha, .cf-turnstile',
+        ),
+      ].some(c => !c.closest('footer, [role="contentinfo"]') && (root === doc.body || root.contains(c) || !c.closest('form')));
+      const adds = opts?.linkedin ? [] : addButtons(root.tagName === 'FORM' ? root : (root.closest('main') ?? root));
+      const actions = adds.map(b => {
+        const near = clean(b.parentElement?.textContent).match(/(?:^|\D)(\d+)\s+of\s+\d+\b/);
+        return {
+          id: idFor(b),
+          label: (clean(b.getAttribute('aria-label')) || clean(b.textContent)).slice(0, 80),
+          section: sectionOf(b),
+          ...(near ? { count: Number(near[1]) } : {}),
+        };
+      });
+      addable.clear();
+      for (const b of adds) addable.add(b.getAttribute('data-rs-id')!);
       const frames = [...doc.querySelectorAll('iframe')]
         .filter(f => visible(f) && f.src && /^https?:/.test(f.src) && f.getBoundingClientRect().height > 150)
         .map(f => f.src)
@@ -832,7 +926,8 @@ function create(): ApplyApi {
         hasSubmit: found.some(b => b.role === 'submit'),
         captcha,
         frames,
-        empty: !form.length,
+        empty: !form.length && !actions.length,
+        ...(actions.length ? { actions } : {}),
         ...(opts?.linkedin ? { easyApplyOpen: true } : {}),
         ...(() => {
           const box = topChoiceBox(root);
@@ -1185,6 +1280,16 @@ function create(): ApplyApi {
       ].filter(visible);
       const pw = all.filter(i => i instanceof HTMLInputElement && i.type === 'password');
       return pw.length > 0 && all.length - pw.length <= 4;
+    },
+    press(id) {
+      if (!addable.has(id)) return false;
+      const b = document.querySelector<HTMLElement>(`[data-rs-id="${esc(id)}"]`);
+      // Checked again at the moment of pressing: still an "add an entry" button, still enabled, never a submit.
+      if (!b || !visible(b) || (b as HTMLButtonElement).disabled || (b as HTMLButtonElement).type === 'submit') return false;
+      if (!ADD_ENTRY.test(clean(b.getAttribute('aria-label')) || clean(b.textContent))) return false;
+      b.scrollIntoView({ block: 'center' });
+      b.click();
+      return true;
     },
     openNextJob() {
       const current = new URL(location.href).searchParams.get('currentJobId') ?? /\/jobs\/view\/(\d+)/.exec(location.pathname)?.[1] ?? '';

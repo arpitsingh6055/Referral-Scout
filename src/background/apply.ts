@@ -29,6 +29,7 @@ import {
   type ApplyProfile,
   type FillPlan,
   type FormField,
+  type PageAction,
   type PageKind,
   type PageSnapshot,
 } from '../shared/apply';
@@ -97,6 +98,8 @@ export interface ApplySession {
   handoff?: { tabId: number; host: string } | undefined;
   /** The site asked to sign in or create an account: filling carries on once the form shows. */
   waitSignIn?: boolean;
+  /** Lists already extended on a step ("step|button"), so entries are added once and never again in a loop. */
+  added?: string[];
 }
 export const fileFromBase64Size = (data: string): number => Math.floor((data.length * 3) / 4);
 
@@ -236,6 +239,7 @@ function merge(
     topChoice: frames.find(f => f.result.topChoice)?.result.topChoice,
     jobMatch: frames.find(f => f.result.jobMatch)?.result.jobMatch,
     frames: main?.frames ?? [],
+    actions: frames.flatMap(f => (f.result.actions ?? []).map(a => ({ ...a, frame: f.frameId }))),
   };
 }
 
@@ -878,7 +882,8 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
   }
   let frames = await scanAll(tabId, linkedin);
   let page = merge(frames, url, tab.title ?? '');
-  if (!page.form.length && (page.hasNext || page.hasSubmit)) {
+  const lists = !linkedin && !!page.actions?.length;
+  if (!page.form.length && !lists && (page.hasNext || page.hasSubmit)) {
     // A step with nothing to fill: move on, or stop at the final review for the person to submit.
     await update(tabId, s => ({
       ...s,
@@ -943,7 +948,7 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
       }
     }
   }
-  if (!page.form.length) {
+  if (!page.form.length && !lists) {
     // The form may live in a frame from another site (a careers page embedding Greenhouse, say).
     const missing: string[] = [];
     for (const src of page.frames) {
@@ -1017,7 +1022,13 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
       .map(f => ({ id: f.id, label: f.label, reason: 'Left for you to answer.' })),
     summary: '',
   };
-  if (rest.length) {
+  // Lists not yet extended on this step: ChatGPT is asked even when no field is empty, to say how many entries the
+  // applicant's background needs (an empty "Experience" list with only "Add a role" has no fields at all).
+  const before = await loadSession(tabId);
+  const stepKey = (a: { label: string; section: string }) => `${before?.stepCount ?? 1}|${a.section}|${a.label}`;
+  const doneAdds = new Set(before?.added ?? []);
+  const openLists: PageAction[] = lists ? page.actions!.filter(a => !doneAdds.has(stepKey(a))) : [];
+  if (rest.length || openLists.length) {
     const thinking = wantsThinking(rest);
     const prompt =
       fillPrompt({ page, background: bg.text, roles: bg.roles, profile, name: bg.name, linkedinUrl: bg.url, photo: !!photo }) +
@@ -1038,7 +1049,7 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
     signal.throwIfAborted();
     let ai: FillPlan;
     try {
-      ai = planFromReply(extractJson(reply), page.form, profile, !!photo);
+      ai = planFromReply(extractJson(reply), page.form, profile, !!photo, openLists);
     } catch {
       throw new Error('ChatGPT’s answer could not be read. Press Fill again.');
     }
@@ -1064,6 +1075,7 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
       ask: ai.ask.filter(a => allowed(a.id)),
       leftForYou: ai.leftForYou,
       summary: ai.summary,
+      ...(ai.add ? { add: ai.add } : {}),
     };
     // Questions the person already answered on an earlier application are filled, not asked again.
     const remembered = new Map(rememberedFor(page.form, profile).map(r => [r.id, r.value]));
@@ -1100,6 +1112,42 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
   }
   const byId = new Map(results.map(r => [r.id, r]));
   await mark(tabId, page.form, plan, byId);
+  // Lists that need more entries (two jobs in the CV, no "Role" yet): press their "Add" button that many times, then
+  // fill the new entries in the next pass. Each list is extended once per step, so this can never loop.
+  if (plan.add?.length) {
+    const keys: string[] = [];
+    let pressed = 0;
+    for (const a of plan.add) {
+      const offered = page.actions?.find(x => x.id === a.id);
+      if (!offered) continue;
+      keys.push(stepKey(offered));
+      for (let n = 0; n < a.times; n++) {
+        const ok = await inFrame(
+          tabId,
+          a.frame,
+          (id: unknown) => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.press(id as string) ?? false,
+          [a.id],
+        ).catch(() => false);
+        if (!ok) break;
+        pressed++;
+        await new Promise(r => setTimeout(r, 600 + Math.floor(Math.random() * 500)));
+      }
+    }
+    await update(tabId, x => ({
+      ...x,
+      added: [...(x.added ?? []), ...keys],
+      ...(pressed
+        ? {
+            stage: 'reading' as const,
+            message: `Added ${pressed} ${pressed === 1 ? 'entry' : 'entries'} (${plan.add!.map(a => a.label.toLowerCase()).join(', ')}). Filling ${pressed === 1 ? 'it' : 'them'} from your background…`,
+          }
+        : {}),
+    }));
+    if (pressed) return { advance: false, again: true };
+  } else if (openLists.length) {
+    // ChatGPT saw these lists and judged them complete: they are not asked about again on this step.
+    await update(tabId, x => ({ ...x, added: [...(x.added ?? []), ...openLists.map(stepKey)] }));
+  }
   // Answers can reveal more questions ("Do you need sponsorship? Yes" brings "Which visa?"). Read the step again: any
   // new empty question is filled in another pass before moving on, instead of pressing Next into the site's error.
   let revealed = 0;
@@ -1350,7 +1398,7 @@ async function autoRun(tabId: number, signal: AbortSignal, attempt: number, move
   for (let i = 0, passes = 0; i < 25; i++) {
     const r = await fillStep(tabId, signal, i === 0 ? attempt : 1);
     // New questions appeared on the same step: fill them (at most twice per step) before moving on.
-    if (r?.again && passes < 2) {
+    if (r?.again && passes < 3) {
       passes++;
       i--;
       continue;

@@ -3,6 +3,13 @@
 All versions below were built on 11 November 2026 on the `cleanup/linkedin-only` branch.
 What is and is not proven on the live site is recorded in `docs/live-verification.md`.
 
+## 0.55.0: lists on a form (add a role, add education) are filled too
+- Profile and application forms often start with an empty list and only an "Add a role" (or "Add education", "Add a project") button. Before, Referral Scout found no fields and stopped ("No form fields were found"), or moved past the step. Now these buttons are given to ChatGPT with your background; it says how many entries your CV supports, Referral Scout presses the button that many times, and the new entries are filled in the next pass, each from a different job (most recent first).
+- Only "add an entry" buttons are ever pressed this way, checked again at the moment of pressing; never Save, Submit, Remove or Delete. Each list is extended once per step, at most six entries, so it cannot loop.
+- Each entry's fields are named ("Experience › Role 1"), so answers go to the right entry.
+- Month boxes get YYYY-MM; tag boxes ("Type one and press Enter", or with their own Add button) get one item at a time.
+- A newsletter form or security check in the page footer is no longer mistaken for the application.
+
 ## 0.54.2: no false "Open ChatGPT in the signed-in account"
 - ChatGPT tasks could stop with "Open ChatGPT in the signed-in account before proceeding" while ChatGPT was signed in. A finished task's tab is emptied (about:blank) and reused when it is the work window's last tab; a later task still pointed at it, and its blank address was read as "not on ChatGPT". A task now only uses its old tab if that tab still shows ChatGPT, and otherwise opens ChatGPT again.
 - A tab that is still loading ChatGPT is waited for (its destination is checked, not its old address). Only a real sign-in page says you are signed out, with a plain message.

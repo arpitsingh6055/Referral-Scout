@@ -114,6 +114,15 @@ export interface PageSnapshot {
   hasNext: boolean;
   hasSubmit: boolean;
   captcha: boolean;
+  /** "Add an entry" buttons of lists on the form (another role, school, project...), with how many entries exist. */
+  actions?: PageAction[];
+}
+export interface PageAction {
+  id: string;
+  frame: number;
+  label: string;
+  section: string;
+  count?: number;
 }
 
 const EEO =
@@ -246,6 +255,18 @@ export function fillPrompt(input: {
     `JOB PAGE: ${JSON.stringify({ url: page.url, title: page.title, step: page.step })}`,
     `JOB: ${JSON.stringify(page.job.slice(0, 7000) || 'not found on the page - infer it from the page title and form')}`,
     `FORM FIELDS: ${JSON.stringify(page.form.map(fieldForPrompt))}`,
+    ...(page.actions?.length
+      ? [
+          `LIST BUTTONS (each adds one more empty entry to a list on this form, such as another job or school): ${JSON.stringify(
+            page.actions.map(a => ({
+              id: a.id,
+              label: a.label,
+              section: a.section,
+              ...(a.count !== undefined ? { entriesNow: a.count } : {}),
+            })),
+          )}`,
+        ]
+      : []),
     ...(page.html ? [`FORM HTML (cleaned, for layout and wording only): ${JSON.stringify(page.html.slice(0, 14000))}`] : []),
     '',
     'HOW TO WORK (think it through privately; output only the JSON at the end):',
@@ -264,7 +285,8 @@ export function fillPrompt(input: {
     '6. If a REQUIRED field needs a fact you do not have (salary, notice period, a date, a link, a certificate number), put it in "ask" with one short question (and the options, if it is a choice). Do not guess. If an optional field needs a fact you do not have, leave it out. Open questions are not facts: write them (see the standard below) rather than asking.',
     '7. Fields with a "current" value that is already right: leave them out. Fix a current value only if it is clearly wrong.',
     `8. Fields marked "sensitive" (password, captcha, legal, signature) must be left out entirely - the applicant does them.${eeoRule}`,
-    '9. Never decide to submit anything. You only fill fields.',
+    '9. Never decide to submit anything. You only fill fields and, where a list needs it, add entries (rule 10).',
+    '10. Lists (work experience, education, projects, certifications, languages, links): one entry per real item in the background, most recent first, at most 6 per list, and only items the list asks for (an "Experience" list takes jobs and internships, not projects). Fields of one entry share a "section" such as "Experience › Role 1": fill each entry from a different item, in order. If the background has more items than the list has entries, return "add" with that LIST BUTTON id and how many more entries are needed; the new entries are filled in the next pass. Never add entries the background does not support, and never add to a list that is already complete. For a month field use YYYY-MM; for a list of tools or skills give them comma-separated.',
     '',
     'THE STANDARD FOR WRITTEN ANSWERS (any text or textarea that asks a question rather than a fact):',
     'Length. Obey any limit stated in the label, help text or placeholder ("in one or two sentences", "100 words", "max 500 characters") and the field\u2019s maxLength and minLength, strictly: maxLength counts characters including spaces, so aim for about 90% of it and never go over. Without a stated limit: a one-line text box gets one sentence; a textarea gets 70 to 140 words; a cover letter box gets 180 to 250 words in three short paragraphs. Shorter and sharper beats longer.',
@@ -285,7 +307,7 @@ export function fillPrompt(input: {
     'Confidence: "high" for facts copied from the source data and for answers built on direct, strong evidence; "medium" for computed or composed answers; "low" when the evidence is thin or the question is ambiguous, so the applicant checks it.',
     '',
     'Reply with ONLY one JSON object, no prose:',
-    '{"fill":[{"id": field id, "value": string or array of strings, "confidence": "high"|"medium"|"low", "why": at most 10 words}], "files":[{"id": field id, "file": "cv"|"photo"}], "ask":[{"id": field id, "question": short question for the applicant, "options": [optional list]}], "summary": one short line naming the role and company, "job": {"title": the role as the employer names it, "company": the hiring company (not the job board or recruiting agency, when the page says who the employer is)}}',
+    '{"fill":[{"id": field id, "value": string or array of strings, "confidence": "high"|"medium"|"low", "why": at most 10 words}], "files":[{"id": field id, "file": "cv"|"photo"}], "ask":[{"id": field id, "question": short question for the applicant, "options": [optional list]}], "add":[{"id": LIST BUTTON id, "times": how many more entries to add}], "summary": one short line naming the role and company, "job": {"title": the role as the employer names it, "company": the hiring company (not the job board or recruiting agency, when the page says who the employer is)}}',
   ].join('\n');
 }
 
@@ -309,6 +331,11 @@ const reply = z.object({
   ask: z
     .array(z.object({ id: z.string(), question: z.string().max(300), options: z.array(z.string().max(200)).max(80).optional() }))
     .max(60)
+    .default([]),
+  add: z
+    .array(z.object({ id: z.string(), times: z.coerce.number().int().catch(1) }))
+    .max(10)
+    .catch([])
     .default([]),
   summary: z.string().max(300).catch(''),
   job: z
@@ -334,6 +361,8 @@ export interface FillPlan {
   summary: string;
   /** The role and hiring company as ChatGPT read them from the page. */
   job?: { title: string; company: string };
+  /** How many more entries to add to a list (press its "Add" button) before the new fields are filled. */
+  add?: { id: string; frame: number; label: string; times: number }[];
 }
 /** Shortens text to a limit at the end of a sentence, or else a word, never mid-word. */
 export function fitTo(text: string, max: number): string {
@@ -369,7 +398,13 @@ const reasonFor: Record<Sensitive, string> = {
  * fields are never filled (a diversity field only with a "prefer not to say" option, and only when allowed); files
  * go only to upload fields; nothing is ever filled into a field twice.
  */
-export function planFromReply(json: unknown, form: FormField[], profile: ApplyProfile, photo: boolean): FillPlan {
+export function planFromReply(
+  json: unknown,
+  form: FormField[],
+  profile: ApplyProfile,
+  photo: boolean,
+  actions: PageAction[] = [],
+): FillPlan {
   const parsed = reply.parse(json);
   const byId = new Map(form.map(f => [f.id, f]));
   const used = new Set<string>();
@@ -455,6 +490,12 @@ export function planFromReply(json: unknown, form: FormField[], profile: ApplyPr
       ...(item.options?.length ? { options: item.options } : f.options?.length ? { options: f.options } : {}),
     });
   }
+  // Entries to add to a list: only buttons the page really offered, a sane number each, never more than six.
+  const offered = new Map(actions.map(a => [a.id, a]));
+  const add = parsed.add
+    .filter(a => offered.has(a.id) && a.times > 0)
+    .map(a => ({ id: a.id, frame: offered.get(a.id)!.frame, label: offered.get(a.id)!.label, times: Math.min(6, a.times) }));
+  if (add.length) plan.add = add;
   return plan;
 }
 /** Answers the person already gave, matched to fields by question, so they are filled without asking again. */
