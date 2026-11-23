@@ -321,7 +321,7 @@ async function perform(id: string, prompt: string, parentId?: string, thinking?:
         }
       }
       // The click alone is not proof of a submission.
-      user = await wait(() => turnFor(id), signal, 30000).catch(() => {
+      user = await wait(() => turnFor(id), signal, 60000).catch(() => {
         throw new Error(`Send result cannot be verified (${diagnose(id)}). Inspect the ChatGPT tab; do not retry blindly.`);
       });
     }
@@ -329,12 +329,21 @@ async function perform(id: string, prompt: string, parentId?: string, thinking?:
     let last = '',
       changed = Date.now(),
       began = Date.now(),
+      missingSince = 0,
       streamingReported = false;
-    while (Date.now() - began < 300000) {
+    while (Date.now() - began < 600000) {
       guard(signal);
       if (errorPage()) throw new Error(errorPage()!);
       const currentUser = turnFor(id);
-      if (!currentUser) throw new Error('The verified user turn disappeared; conversation may have changed.');
+      // ChatGPT redraws the conversation when it moves from the new-chat page to the chat's own address (and while a
+      // thinking answer is replaced by the final one): the sent message is briefly missing. Only a long absence counts.
+      if (!currentUser) {
+        missingSince ||= Date.now();
+        if (Date.now() - missingSince > 20000) throw new Error('The verified user turn disappeared; conversation may have changed.');
+        await sleep(500, signal);
+        continue;
+      }
+      missingSince = 0;
       const reply = relevantAssistant(currentUser);
       const nowText = (reply ? replyValue(reply) : '') || replyByPosition(currentUser, prompt);
       if (nowText !== last) {

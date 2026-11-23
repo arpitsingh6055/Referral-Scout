@@ -16,6 +16,8 @@ import {
   questionKey,
   rememberedFor,
   rememberable,
+  entryPlan,
+  type ListItem,
   rewritePrompt,
   isWritten,
   fitTo,
@@ -100,6 +102,8 @@ export interface ApplySession {
   waitSignIn?: boolean;
   /** Lists already extended on a step ("step|button"), so entries are added once and never again in a loop. */
   added?: string[];
+  /** The entries ChatGPT listed for the lists on this step, typed into the entries once they are added. */
+  listItems?: { section: string; label: string; items: ListItem[] }[];
 }
 export const fileFromBase64Size = (data: string): number => Math.floor((data.length * 3) / 4);
 
@@ -1011,6 +1015,12 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
   const todo = needsWork(page.form, linkedin);
   // Saved answers cost nothing, so they also go into empty optional fields (current location, links...).
   const local = localPlan(needsWork(page.form, false), profile, { linkedinUrl: bg.url, photo: !!photo, location: bg.location });
+  // List entries just added: their details came with ChatGPT's first answer, so they are typed in without asking again.
+  const listed = (await loadSession(tabId))?.listItems ?? [];
+  if (listed.length) {
+    const taken = new Set(local.fill.map(f => f.id));
+    local.fill.push(...entryPlan(page.form, listed).filter(f => !taken.has(f.id)));
+  }
   const covered = new Set([...local.fill.map(f => f.id), ...local.files.map(f => f.id)]);
   const rest = todo.filter(f => !covered.has(f.id));
   let plan: FillPlan = {
@@ -1077,6 +1087,7 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
       leftForYou: ai.leftForYou,
       summary: ai.summary,
       ...(ai.add ? { add: ai.add } : {}),
+      ...(ai.items ? { items: ai.items } : {}),
     };
     // Questions the person already answered on an earlier application are filled, not asked again.
     const remembered = new Map(rememberedFor(page.form, profile).map(r => [r.id, r.value]));
@@ -1137,6 +1148,7 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
     await update(tabId, x => ({
       ...x,
       added: [...(x.added ?? []), ...keys],
+      ...(plan.items ? { listItems: plan.items } : {}),
       ...(pressed
         ? {
             stage: 'reading' as const,
@@ -1375,7 +1387,12 @@ async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
     const page = merge(frames, tab.url ?? '', tab.title ?? '');
     // A step can have no fields at all (LinkedIn's review page has only Submit), so a changed step counts too.
     if (signature(page) !== before && (page.form.length || page.hasSubmit || page.hasNext)) {
-      await update(tabId, x => ({ ...x, stepCount: x.stepCount + 1 }));
+      // A new step: the entries listed for the last step's lists belong to that step only.
+      await update(tabId, x => {
+        const { listItems, ...rest } = x;
+        void listItems;
+        return { ...rest, stepCount: x.stepCount + 1 };
+      });
       return true;
     }
     emptyReads = !page.form.length && !page.hasNext && !page.hasSubmit ? emptyReads + 1 : 0;

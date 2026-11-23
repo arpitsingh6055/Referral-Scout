@@ -287,7 +287,7 @@ export function fillPrompt(input: {
     '7. Fields with a "current" value that is already right: leave them out. Fix a current value only if it is clearly wrong.',
     `8. Fields marked "sensitive" (password, captcha, legal, signature) must be left out entirely - the applicant does them.${eeoRule}`,
     '9. Never decide to submit anything. You only fill fields and, where a list needs it, add entries (rule 10).',
-    '10. Lists. What each list holds, whatever its button says: Education / Qualifications ("Add a course", "Add a degree", "Add a qualification", "Add education", "Add a school") = every degree, diploma and school certificate in the background, highest or most recent first (for example a PGDM or MBA, a B.E. or B.Tech, then Class XII and Class X when the page mentions schooling or asks for all qualifications; a course is a programme of study, so a degree is a course). Experience ("Add a role", "Add experience", "Add a position") = jobs and internships, most recent first, not projects. Projects = named projects the background describes, including ones built at work. Certifications = certificates, licences and courses with a certificate. Languages and links = as stated in the background. Return each list in "lists" with every matching item as one short name ("PGDM, IMT Ghaziabad, 2026-2028"), at most 6. The extension then adds the missing entries itself and the new fields are filled in the next pass: fields of one entry share a "section" such as "Education › Course 1"; fill each entry from a different item, in the order you listed them. Only items that really are in the background; a list with no matching items gets "items": []. For a month field use YYYY-MM; for a list of tools or skills give them comma-separated.',
+    '10. Lists. What each list holds, whatever its button says: Education / Qualifications ("Add a course", "Add a degree", "Add a qualification", "Add education", "Add a school") = every degree, diploma and school certificate in the background, highest or most recent first (for example a PGDM or MBA, a B.E. or B.Tech, then Class XII and Class X when the page mentions schooling or asks for all qualifications; a course is a programme of study, so a degree is a course). Experience ("Add a role", "Add experience", "Add a position") = jobs and internships, most recent first, not projects. Projects = named projects the background describes, including ones built at work. Certifications = certificates, licences and courses with a certificate. Languages and links = as stated in the background. Return each list in "lists" with every matching item (at most 6), each as an object with what such an entry usually asks, from the background only: {"name": short name, "title": job title, degree or course name, "organisation": company, school or university, "location", "type": "full-time", "part-time", "internship", "contract" or "freelance" for jobs, "field": subject or specialisation, "grade": grade or score if stated, "start": "YYYY-MM", "end": "YYYY-MM" or "" if current, "current": true or false, "description": one to three sentences on what the applicant did, with numbers, from the background, "skills": tools used, comma-separated, "url"}. Leave out what the background does not say. The extension adds the missing entries and types these details into them directly; if FORM FIELDS already contains entries of that list (fields whose "section" is like "Education › Course 1"), also fill those fields yourself, each entry from a different item in the order you listed them. Only items that really are in the background; a list with no matching items gets "items": []. For a month field use YYYY-MM; for a list of tools or skills give them comma-separated.',
     '',
     'THE STANDARD FOR WRITTEN ANSWERS (any text or textarea that asks a question rather than a fact):',
     'Length. Obey any limit stated in the label, help text or placeholder ("in one or two sentences", "100 words", "max 500 characters") and the field\u2019s maxLength and minLength, strictly: maxLength counts characters including spaces, so aim for about 90% of it and never go over. Without a stated limit: a one-line text box gets one sentence; a textarea gets 70 to 140 words; a cover letter box gets 180 to 250 words in three short paragraphs. Shorter and sharper beats longer.',
@@ -308,11 +308,30 @@ export function fillPrompt(input: {
     'Confidence: "high" for facts copied from the source data and for answers built on direct, strong evidence; "medium" for computed or composed answers; "low" when the evidence is thin or the question is ambiguous, so the applicant checks it.',
     '',
     'Reply with ONLY one JSON object, no prose:',
-    '{"fill":[{"id": field id, "value": string or array of strings, "confidence": "high"|"medium"|"low", "why": at most 10 words}], "files":[{"id": field id, "file": "cv"|"photo"}], "ask":[{"id": field id, "question": short question for the applicant, "options": [optional list]}], "lists":[{"id": LIST BUTTON id, "items": [one short name per matching item in the background]}], "summary": one short line naming the role and company, or the form and step when there is no job (for example "MailerMen profile: Education"), "job": {"title": the role as the employer names it, "company": the hiring company (not the job board or recruiting agency, when the page says who the employer is)}}',
+    '{"fill":[{"id": field id, "value": string or array of strings, "confidence": "high"|"medium"|"low", "why": at most 10 words}], "files":[{"id": field id, "file": "cv"|"photo"}], "ask":[{"id": field id, "question": short question for the applicant, "options": [optional list]}], "lists":[{"id": LIST BUTTON id, "items": [one object per matching item in the background, as in rule 10]}], "summary": one short line naming the role and company, or the form and step when there is no job (for example "MailerMen profile: Education"), "job": {"title": the role as the employer names it, "company": the hiring company (not the job board or recruiting agency, when the page says who the employer is)}}',
   ].join('\n');
 }
 
 /* ---------- ChatGPT's answer, checked ---------- */
+/** One entry of a list (a job, a degree, a project) with what its fields usually ask, so it can be typed in directly. */
+const listItem = z
+  .object({
+    name: z.string().max(200).catch(''),
+    title: z.string().max(200).catch(''),
+    organisation: z.string().max(200).catch(''),
+    location: z.string().max(120).catch(''),
+    type: z.string().max(60).catch(''),
+    field: z.string().max(120).catch(''),
+    grade: z.string().max(60).catch(''),
+    start: z.string().max(20).catch(''),
+    end: z.string().max(20).catch(''),
+    current: z.boolean().catch(false),
+    description: z.string().max(2000).catch(''),
+    skills: z.string().max(500).catch(''),
+    url: z.string().max(300).catch(''),
+  })
+  .partial();
+export type ListItem = z.infer<typeof listItem>;
 const reply = z.object({
   fill: z
     .array(
@@ -339,7 +358,15 @@ const reply = z.object({
     .catch([])
     .default([]),
   lists: z
-    .array(z.object({ id: z.string(), items: z.array(z.string().max(200)).max(20).catch([]) }))
+    .array(
+      z.object({
+        id: z.string(),
+        items: z
+          .array(z.union([z.string().max(200), listItem]))
+          .max(20)
+          .catch([]),
+      }),
+    )
     .max(10)
     .catch([])
     .default([]),
@@ -369,6 +396,8 @@ export interface FillPlan {
   job?: { title: string; company: string };
   /** How many more entries to add to a list (press its "Add" button) before the new fields are filled. */
   add?: { id: string; frame: number; label: string; times: number }[];
+  /** The entries ChatGPT listed for each list (by its section), typed into the new entries without asking again. */
+  items?: { section: string; label: string; items: ListItem[] }[];
 }
 /** Shortens text to a limit at the end of a sentence, or else a word, never mid-word. */
 export function fitTo(text: string, max: number): string {
@@ -506,6 +535,15 @@ export function planFromReply(
   const add = [...wanted]
     .filter(([, times]) => times > 0)
     .map(([id, times]) => ({ id, frame: offered.get(id)!.frame, label: offered.get(id)!.label, times: Math.min(6, times) }));
+  const items = parsed.lists
+    .filter(l => offered.has(l.id))
+    .map(l => ({
+      section: offered.get(l.id)!.section,
+      label: offered.get(l.id)!.label,
+      items: l.items.slice(0, 6).map(i => (typeof i === 'string' ? { name: i } : i)),
+    }))
+    .filter(l => l.items.some(i => Object.keys(i).length > 1)); // only entries that carry their details
+  if (items.length) plan.items = items;
   if (add.length) plan.add = add;
   return plan;
 }
@@ -652,8 +690,73 @@ const OPEN_QUESTION =
 /** Thinking mode only for written answers; yes/no, numbers and choices are answered in seconds without it. */
 export const wantsThinking = (fields: FormField[]): boolean =>
   fields.some(
-    f => f.kind === 'textarea' || f.kind === 'richtext' || (f.kind === 'text' && (f.label.length > 80 || OPEN_QUESTION.test(f.label))),
+    f =>
+      // An entry of a list ("Experience › Role 1": what you did there) is a summary of the CV, not an essay.
+      !f.section?.includes(' › ') &&
+      (f.kind === 'textarea' || f.kind === 'richtext' || (f.kind === 'text' && (f.label.length > 80 || OPEN_QUESTION.test(f.label)))),
   );
+/**
+ * Types the details ChatGPT gave for each list entry into that entry's fields, matched by what the field asks
+ * (title, company or school, dates, what you did, tools), with no second question to ChatGPT. Entries are matched in
+ * order to the last entries of the list on the page (the ones just added). Choice fields only take one of their options.
+ */
+export function entryPlan(form: FormField[], lists: { section: string; items: ListItem[] }[]): FillItem[] {
+  const out: FillItem[] = [];
+  const KEYS: [RegExp, keyof ListItem][] = [
+    [
+      /\b(job title|title|role|position|designation|degree|course|qualification|programme|program|certificat\w* name|name of (the )?(course|degree))\b/i,
+      'title',
+    ],
+    [/\b(company|employer|organi[sz]ation|school|college|university|institut\w*|board|issuer|issued by|provider)\b/i, 'organisation'],
+    [/\b(location|city|place)\b/i, 'location'],
+    [/\b(employment )?type\b/i, 'type'],
+    [/\b(field|major|speciali[sz]ation|stream|subject|branch|discipline)\b/i, 'field'],
+    [/\b(grade|gpa|cgpa|percentage|score|marks|result)\b/i, 'grade'],
+    [/\b(from|start|began|joined)\b/i, 'start'],
+    [/\b(to|end|until|graduat\w*|completion|completed|passing|finish\w*)\b/i, 'end'],
+    [/\b(current|still|present|ongoing|currently)\b/i, 'current'],
+    [/\b(what you did|description|describe|responsibilit\w*|summary|details|achievements?|about)\b/i, 'description'],
+    [/\b(tools|skills|technolog\w*|stack)\b/i, 'skills'],
+    [/\b(url|link|website)\b/i, 'url'],
+  ];
+  for (const list of lists) {
+    const prefix = `${list.section} › `;
+    const entries = [...new Set(form.filter(f => f.section?.startsWith(prefix)).map(f => f.section!))];
+    const mine = entries.slice(-list.items.length);
+    const start = list.items.length - mine.length; // fewer entries than items: the first items go into them
+    mine.forEach((section, i) => {
+      const item = list.items[start + i]!;
+      for (const f of form.filter(x => x.section === section && !x.sensitive && x.kind !== 'file' && !x.value)) {
+        const key = KEYS.find(([re]) => re.test(f.label))?.[1];
+        if (!key) continue;
+        let value: string | undefined;
+        const raw = item[key];
+        if (key === 'current') value = raw ? 'true' : 'false';
+        else if (typeof raw === 'string' && raw.trim()) value = raw.trim();
+        if (key === 'title' && !value && item.name) value = item.name;
+        if (!value) continue;
+        if (key === 'current' && f.kind !== 'checkbox') continue;
+        if ((key === 'start' || key === 'end') && f.kind === 'date' && /^\d{4}-\d{2}$/.test(value)) value = `${value}-01`;
+        if (f.options?.length && (f.kind === 'select' || f.kind === 'radio' || f.kind === 'combobox')) {
+          const hit = matchOption(value, f.options) ?? matchOption(value.replace(/[-_]+/g, ' '), f.options); // "full-time" = "Full time"
+          if (!hit) continue;
+          value = hit;
+        }
+        if (f.maxLength && value.length > f.maxLength) value = fitTo(value, f.maxLength);
+        out.push({
+          id: f.id,
+          frame: f.frame,
+          kind: f.kind,
+          label: f.label,
+          value,
+          confidence: 'high',
+          why: `From your CV: ${item.name || item.title || 'entry'}`,
+        });
+      }
+    });
+  }
+  return out;
+}
 
 /**
  * Whether two addresses are the same job's application. On LinkedIn the job id decides (the address changes from the

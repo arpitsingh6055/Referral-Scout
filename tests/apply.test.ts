@@ -19,6 +19,7 @@ import {
   outboundUrl,
   rememberable,
   looksLikeRedirect,
+  entryPlan,
   type FormField,
 } from '../src/shared/apply';
 import type { ApplyApi } from '../src/content/apply';
@@ -1155,4 +1156,60 @@ it('sends the step’s own title and instructions with an empty list, so ChatGPT
   expect(snap.job).not.toContain('Internships');
   expect(snap.html).toContain('Add a course');
   expect(snap.actions![0]).toMatchObject({ label: 'Add a course', section: 'Education', count: 0 });
+});
+
+it('types the entries ChatGPT listed into the roles just added, with no second question, and keeps written ones off thinking mode', () => {
+  const f = (id: string, label: string, section: string, kind: FormField['kind'] = 'text', options?: string[]): FormField =>
+    ({ id, frame: 0, kind, label, required: false, section, ...(options ? { options } : {}) }) as FormField;
+  const role = (n: number) => [
+    f(`t${n}`, 'Job title', `Experience › Role ${n}`),
+    f(`c${n}`, 'Company', `Experience › Role ${n}`),
+    f(`y${n}`, 'Type', `Experience › Role ${n}`, 'select', ['Not saying', 'Full time', 'Part time', 'Contract', 'Internship', 'Freelance']),
+    f(`s${n}`, 'From', `Experience › Role ${n}`, 'date'),
+    f(`e${n}`, 'To', `Experience › Role ${n}`, 'date'),
+    f(`n${n}`, 'Still there?', `Experience › Role ${n}`, 'checkbox'),
+    f(`d${n}`, 'What you did', `Experience › Role ${n}`, 'textarea'),
+    f(`k${n}`, 'Tools you used', `Experience › Role ${n}`),
+  ];
+  const form = [...role(1), ...role(2)];
+  const items = [
+    {
+      name: 'Oracle',
+      title: 'Technical Associate Consultant',
+      organisation: 'Oracle Financial Services Software',
+      type: 'full-time',
+      start: '2023-08',
+      end: '2026-06',
+      current: false,
+      description: 'Built Digx Deploy for 50+ engineers.',
+      skills: 'OCI, Docker, Kubernetes',
+    },
+    {
+      name: 'AI-Bharata',
+      title: 'Backend Intern',
+      organisation: 'AI-Bharata (AMPIY)',
+      type: 'internship',
+      start: '2022-02',
+      end: '2022-08',
+    },
+  ];
+  const fills = Object.fromEntries(entryPlan(form, [{ section: 'Experience', items }]).map(x => [x.id, x.value]));
+  expect(fills).toMatchObject({
+    t1: 'Technical Associate Consultant',
+    c1: 'Oracle Financial Services Software',
+    y1: 'Full time',
+    s1: '2023-08-01',
+    e1: '2026-06-01',
+    n1: 'false',
+    d1: 'Built Digx Deploy for 50+ engineers.',
+    k1: 'OCI, Docker, Kubernetes',
+    t2: 'Backend Intern',
+    y2: 'Internship',
+  });
+  expect(wantsThinking(form)).toBe(false); // "What you did" in a list entry is a CV summary, not an essay
+  const plan = planFromReply({ summary: '', lists: [{ id: 'add', items }] }, [], emptyApplyProfile(), false, [
+    { id: 'add', frame: 0, label: 'Add a role', section: 'Experience', count: 0 },
+  ]);
+  expect(plan.add).toEqual([{ id: 'add', frame: 0, label: 'Add a role', times: 2 }]);
+  expect(plan.items![0]!.items).toHaveLength(2);
 });

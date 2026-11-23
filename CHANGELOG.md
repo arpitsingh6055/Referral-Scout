@@ -3,6 +3,10 @@
 All versions below were built on 11 November 2026 on the `cleanup/linkedin-only` branch.
 What is and is not proven on the live site is recorded in `docs/live-verification.md`.
 
+## 0.55.2: lists filled in one quick answer, and ChatGPT replies no longer "lost"
+- **Faster lists:** ChatGPT now returns each list entry with its details (title, organisation, dates, type, what you did, tools) in its first answer, without thinking mode. The extension presses "Add" for the missing entries and types those details straight in, with no second ChatGPT question. Entries of a list never switch thinking mode on.
+- **Answers no longer lost:** ChatGPT redraws the conversation when a new chat moves to its own address (and when a thinking answer is replaced by the final one), so the sent message briefly disappears. The extension stopped there with "its answer could not be read back" although ChatGPT had answered. It now waits up to 20 seconds for the message to reappear, 60 seconds to confirm the send, and up to 10 minutes for a long answer.
+
 ## 0.55.1: lists are completed, not described
 - On a step with only "Add a course" (MailerMen's empty Education step) ChatGPT replied that nothing needed filling. The prompt sent no page text for such a step (its title and instructions were dropped with the site header), framed the work as "go through every field" (there were none), and left lists to a cautious rule. Now:
   - the step's own title, instructions and markup are sent ("Degrees, diplomas and schooling, highest first");
