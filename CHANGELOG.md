@@ -3,6 +3,13 @@
 All versions below were built on 11 November 2026 on the `cleanup/linkedin-only` branch.
 What is and is not proven on the live site is recorded in `docs/live-verification.md`.
 
+## 0.56.1: a job page is applied to, not reported as "nothing to fill"
+- On Indeed's results page, Fill read the search bar ("What", "Where") as the application. It found those fields already filled and stopped with "Nothing needed filling here". Two fixes:
+  - A job board's search bar is never read as a form.
+  - Whenever a page has nothing to fill and no Next or Submit button the rules recognise, ChatGPT reads the page and its buttons and picks what to press. On a job page that is its Apply button. It then follows the application (a new tab included) and fills it.
+- "Apply with Indeed" on Indeed, like any "Apply with" button on that site itself, is the site's own Apply button and may be pressed. "Apply with LinkedIn" (or another site) on a company's page is still never offered, since it hands the application and its sign-in to someone else.
+- On a page with many buttons (thirty job cards, each with Save and Not interested), the buttons that move an application on come first. A label repeated on every card is sent at most twice, so the job's Apply button is never crowded out.
+
 ## 0.56.0: ChatGPT moves the application on, and an optional hands-free submit
 - **Any job page, not only known buttons:** when a page shows no form the rules recognise (a job page whose button says "I'm interested", an "apply manually or import your CV" chooser, a pop-up over the form), the page's own buttons and links are sent to ChatGPT with the page text. It answers without thinking mode, so this takes seconds. It says what the page is (job, form, review, sign-in, confirmation, or unrelated) and names the one button to press. At most five such pages per application, so it cannot wander.
 - **Unusual Next buttons:** on a form step where no Next or Continue button is recognised, ChatGPT's choice (for example "Save and continue") is used to move on.

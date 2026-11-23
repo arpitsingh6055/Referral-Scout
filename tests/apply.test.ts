@@ -1249,6 +1249,24 @@ describe('the page agent (buttons ChatGPT may press)', () => {
     expect(pressed).toBe(1);
     expect(api.click('rs-made-up').error).toBeTruthy();
   });
+  it('on a job board results page: no search bar as a form, the job’s Apply ahead of 30 job cards, no other site’s apply', async () => {
+    const cards = Array.from(
+      { length: 30 },
+      (_, i) => `<div class="card"><a href="/viewjob?jk=${i}">Job ${i}</a><button>Save job</button><button>Not interested</button></div>`,
+    ).join('');
+    const api = await load(`<main><form id="find"><label for="w">What</label><input id="w" name="q" value="product intern">
+        <label for="l">Where</label><input id="l" name="l" value="India"><button type="submit">Find jobs</button></form>
+      <div id="list">${cards}</div>
+      <section id="detail"><h2>Product Management Intern</h2><p>Novixpert, Jaipur</p>
+        <button id="apply">Apply now</button><button>Apply with LinkedIn</button></section></main>`);
+    const snap = api.scan();
+    expect(snap.form).toEqual([]);
+    const labels = (snap.controls ?? []).map(c => c.label);
+    expect(labels[0]).toBe('Apply now');
+    expect(labels).not.toContain('Apply with LinkedIn');
+    expect(labels.filter(l => l === 'Save job').length).toBeLessThanOrEqual(2);
+    expect(labels.length).toBeLessThanOrEqual(40);
+  });
   it('never presses a button that sends the application unless hands-free asked for it', async () => {
     const api = await load(`<main><form><label for="n">Full name</label><input id="n" value="A">
       <button type="submit" id="send">Submit application</button></form></main>`);
@@ -1316,8 +1334,7 @@ describe('ChatGPT’s next move, checked', () => {
     expect(plan.next).toEqual(expect.objectContaining({ id: 'c3', frame: 2, final: true }));
   });
   it('never offers accounts, other sites or sharing as a next step', () => {
-    for (const l of ['Sign in', 'Create an account', 'Apply with LinkedIn', 'Save job', 'Share', 'Get job alerts'])
-      expect(BAD_NEXT.test(l)).toBe(true);
+    for (const l of ['Sign in', 'Create an account', 'Save job', 'Share', 'Get job alerts']) expect(BAD_NEXT.test(l)).toBe(true);
     for (const l of ['Apply now', 'Continue', 'Save and continue', 'Apply manually', 'I’m interested'])
       expect(BAD_NEXT.test(l)).toBe(false);
   });

@@ -596,7 +596,7 @@ export function navPrompt(page: PageSnapshot, goal: string): string {
 
 /** Buttons never pressed for the applicant, whatever ChatGPT picks: accounts, other sites, sharing, saving. */
 export const BAD_NEXT =
-  /\b(sign ?in|log ?in|sign ?up|register|create (an )?account|forgot|apply (with|using|via) (linkedin|indeed|google|facebook|seek)|share|save (this )?job|job alerts?|subscribe|newsletter|cookie|withdraw|delete|remove|log ?out|sign ?out)\b/i;
+  /\b(sign ?in|log ?in|sign ?up|register|create (an )?account|forgot|share|save (this )?job|job alerts?|find jobs|subscribe|newsletter|cookie|withdraw|delete|remove|log ?out|sign ?out)\b/i;
 
 /* ---------- the fast path: what a step really needs ---------- */
 const hasValue = (f: FormField): boolean => (f.kind === 'checkbox' ? f.value === 'true' : !!f.value?.trim());

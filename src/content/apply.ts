@@ -92,7 +92,7 @@ export interface ApplyApi {
     data: string;
   }): Promise<{ ok: boolean; note?: string; how: 'input' | 'drop' | 'none' }>;
 }
-const VERSION = 11;
+const VERSION = 12;
 const scope = globalThis as typeof globalThis & { __referralScoutApply?: ApplyApi };
 
 /* ---------- reading the page ---------- */
@@ -276,6 +276,21 @@ function addButtons(root: Element): HTMLElement[] {
     return ADD_ENTRY.test(label);
   });
 }
+/** Labels that move an application on: kept first when a page has many buttons. */
+const MOVES_ON = /\b(apply|application|continue|next|proceed|start|submit|review|get started|i[’']?m in|i[’']?m interested)\b/i;
+/** A job board's search bar ("What", "Where", Find jobs): never the application, wherever the site puts it. */
+function searchForm(f: Element): boolean {
+  if (f.matches('[role="search"]') || f.querySelector('input[type="search"]')) return true;
+  const fields = [...f.querySelectorAll('input:not([type="hidden"]), select, textarea')].filter(visible);
+  if (fields.length > 4) return false;
+  const named = fields.some(e =>
+    /^(q|what|where|keywords?|search|location|l|query)$|search|keyword/i.test(`${e.getAttribute('name') ?? ''} ${e.id}`),
+  );
+  const go = [...f.querySelectorAll('button, input[type="submit"]')].some(b =>
+    /^(search|find( jobs?)?|go)$/i.test(clean(b.textContent || (b as HTMLInputElement).value)),
+  );
+  return named || go;
+}
 function formRoot(doc: Document): Element {
   const has = (e: Element) => [...e.querySelectorAll('input, select, textarea, [contenteditable="true"]')].some(visible);
   const easy = easyApplyDialog(doc);
@@ -287,10 +302,7 @@ function formRoot(doc: Document): Element {
   // A form may hold no fields yet, only "Add a role" (an empty list): it is still the application. A footer form (a
   // newsletter sign-up) never is.
   const forms = [...doc.querySelectorAll('form')].filter(
-    f =>
-      (has(f) || addButtons(f).length > 0) &&
-      !f.matches('[role="search"]') &&
-      !f.closest('header, nav, footer, [role="search"], [role="contentinfo"]'),
+    f => (has(f) || addButtons(f).length > 0) && !searchForm(f) && !f.closest('header, nav, footer, [role="search"], [role="contentinfo"]'),
   );
   if (forms.length) {
     const count = (f: Element) => [...f.querySelectorAll('input, select, textarea')].filter(visible).length;
@@ -832,7 +844,13 @@ function create(): ApplyApi {
           // Custom radios and checkboxes hide the real input behind a styled label.
           if (!(input && (type === 'radio' || type === 'checkbox') && el.closest('label') && visible(el.closest('label')!))) continue;
         }
-        if (el.closest('[data-rs-ignore]') || el.closest('header, nav, footer, [role="search"], [role="banner"]') || el.closest(MESSAGING))
+        const inForm = el.closest('form');
+        if (
+          el.closest('[data-rs-ignore]') ||
+          el.closest('header, nav, footer, [role="search"], [role="banner"]') ||
+          el.closest(MESSAGING) ||
+          (inForm && inForm !== root && searchForm(inForm))
+        )
           continue;
         if (trap(el, type)) continue; // a field people cannot see, there to catch bots
         let kind: FieldKind;
@@ -974,22 +992,43 @@ function create(): ApplyApi {
       clickable.clear();
       const pageControls: { id: string; label: string; kind: 'button' | 'submit' | 'link'; final: boolean }[] = [];
       if (!opts?.linkedin) {
-        const area = [root, ...doc.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"], main, [role="main"]')];
+        // Open windows first, then the form, then the main area: on a job board the list of other jobs comes before the
+        // job's own Apply button, so buttons that move an application on are kept ahead of the rest.
+        const area = [
+          ...doc.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"]'),
+          root,
+          ...doc.querySelectorAll('main, [role="main"]'),
+          doc.body,
+        ];
         const seen = new Set<Element>();
+        const perLabel = new Map<string, number>();
+        const found: { b: HTMLElement; label: string; rank: number }[] = [];
         for (const scope of area)
           for (const b of scope.querySelectorAll<HTMLElement>(
             'button, a[href], [role="button"], input[type="submit"], input[type="button"]',
           )) {
-            if (seen.has(b) || pageControls.length >= 40) continue;
+            if (seen.has(b) || found.length >= 400) continue;
             seen.add(b);
             if (!visible(b) || (b as HTMLButtonElement).disabled || b.getAttribute('aria-disabled') === 'true') continue;
             if (b.closest('header, nav, footer, [role="navigation"], [role="contentinfo"]') || b.closest(MESSAGING)) continue;
             const label = buttonText(b).slice(0, 80);
             if (!label || addable.has(b.getAttribute('data-rs-id') ?? '')) continue;
-            const kind = b instanceof HTMLAnchorElement ? 'link' : (b as HTMLButtonElement).type === 'submit' ? 'submit' : 'button';
-            pageControls.push({ id: idFor(b), label, kind, final: buttonRole(label) === 'submit' });
-            clickable.add(b.getAttribute('data-rs-id')!);
+            // "Apply with LinkedIn" on a company site hands the application to another site (and its sign-in); on that
+            // site itself ("Apply with Indeed" on Indeed) it is the site's own apply button.
+            const via = /\bapply (?:with|using|via|through) (\w+)/i.exec(label)?.[1]?.toLowerCase();
+            if (via && !location.host.toLowerCase().includes(via)) continue;
+            // The same label twenty times (a bookmark on every job card) says nothing new after the second.
+            const n = (perLabel.get(label.toLowerCase()) ?? 0) + 1;
+            perLabel.set(label.toLowerCase(), n);
+            if (n > 2) continue;
+            const rank = MOVES_ON.test(label) ? 0 : b.closest('[role="dialog"], dialog, [aria-modal="true"], form') ? 1 : 2;
+            found.push({ b, label, rank });
           }
+        for (const { b, label } of found.sort((x, y) => x.rank - y.rank).slice(0, 40)) {
+          const kind = b instanceof HTMLAnchorElement ? 'link' : (b as HTMLButtonElement).type === 'submit' ? 'submit' : 'button';
+          pageControls.push({ id: idFor(b), label, kind, final: buttonRole(label) === 'submit' });
+          clickable.add(b.getAttribute('data-rs-id')!);
+        }
       }
       const frames = [...doc.querySelectorAll('iframe')]
         .filter(f => visible(f) && f.src && /^https?:/.test(f.src) && f.getBoundingClientRect().height > 150)

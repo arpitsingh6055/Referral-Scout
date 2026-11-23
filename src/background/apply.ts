@@ -1203,6 +1203,13 @@ async function fillStep(
     // ChatGPT saw these lists and judged them complete: they are not asked about again on this step.
     await update(tabId, x => ({ ...x, added: [...(x.added ?? []), ...openLists.map(stepKey)] }));
   }
+  // Nothing on this page was ours to fill and the rules see no Next or Submit (a job page with a search bar, a page whose
+  // apply button has an unusual label): ChatGPT decides what to press, instead of stopping with "nothing to fill".
+  const didNothing = !plan.fill.length && !plan.files.length && !plan.ask.length && !plan.add?.length;
+  if (!linkedin && didNothing && !page.hasNext && !page.hasSubmit && page.controls?.length) {
+    if (plan.next && !plan.next.final) return await pressChoice(tabId, plan.next, (await loadSession(tabId))?.hops ?? 0, signal);
+    return await navigate(tabId, page, signal);
+  }
   // Answers can reveal more questions ("Do you need sponsorship? Yes" brings "Which visa?"). Read the step again: any
   // new empty question is filled in another pass before moving on, instead of pressing Next into the site's error.
   let revealed = 0;
@@ -1383,7 +1390,19 @@ async function navigate(tabId: number, page: PageSnapshot, signal: AbortSignal):
         ? `${plan.summary.replace(/\.?$/, '.')} No way to apply was found here. Open the application form, then press Fill again.`
         : 'No application form or Apply button was found on this page. Open the form, then press Fill again.',
     );
-  const choice = plan.next;
+  return await pressChoice(tabId, plan.next, hops, signal);
+}
+/** Presses the button ChatGPT chose, follows a new tab it opens, and waits for the page it leads to. */
+async function pressChoice(
+  tabId: number,
+  choice: NonNullable<FillPlan['next']>,
+  hops: number,
+  signal: AbortSignal,
+): Promise<{ advance: boolean; moved?: boolean } | void> {
+  if (hops >= MAX_HOPS)
+    throw new Error(
+      'Several pages were opened and no application form appeared. Open the form on the page yourself, then press Fill again.',
+    );
   await update(tabId, x => ({ ...x, hops: hops + 1, stage: 'opening', aiStage: undefined, message: `Pressing “${choice.label}”…` }));
   const { result, spawned } = await watchNewTab(tabId, signal, () =>
     inFrame(
