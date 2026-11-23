@@ -86,3 +86,28 @@ it('recovers a reply that is already on screen when the send could not be verifi
   await expect(askChatGpt(PROMPT, new AbortController().signal, KIND, OWNER)).resolves.toBe('{"schemaVersion":2}');
   expect(tabs.create).not.toHaveBeenCalled();
 });
+
+it('does not mistake a reused, emptied tab for a signed-out ChatGPT: it opens ChatGPT again and carries on', async () => {
+  // Live case, 23 Nov 2026: the task's old tab had become the work window's empty spare (about:blank), and the task
+  // stopped with "Open ChatGPT in the signed-in account" although ChatGPT was signed in.
+  await seed('queued', ['queued', 'tab_opened']);
+  tabs.get.mockImplementation(async (id: number) => (id === 7 ? { id, url: 'about:blank' } : { id, url: 'https://chatgpt.com/' }));
+  const reply = await askChatGpt(PROMPT, new AbortController().signal, KIND, OWNER);
+  expect(reply).toBe('{"schemaVersion":2}');
+  expect(tabs.create).toHaveBeenCalled(); // ChatGPT opened in a usable tab
+});
+
+it('waits while a reused tab is still loading ChatGPT, instead of failing on its old address', async () => {
+  await seed('queued', ['queued']);
+  let calls = 0;
+  tabs.get.mockImplementation(async (id: number) =>
+    ++calls < 3 ? { id, url: 'about:blank', pendingUrl: 'https://chatgpt.com/' } : { id, url: 'https://chatgpt.com/' },
+  );
+  await expect(askChatGpt(PROMPT, new AbortController().signal, KIND, OWNER)).resolves.toBe('{"schemaVersion":2}');
+});
+
+it('says plainly when ChatGPT really asks to sign in', async () => {
+  await seed('queued', ['queued']);
+  tabs.get.mockImplementation(async (id: number) => ({ id, url: 'https://auth.openai.com/log-in' }));
+  await expect(askChatGpt(PROMPT, new AbortController().signal, KIND, OWNER)).rejects.toThrow(/sign in/i);
+});

@@ -123,12 +123,28 @@ export function registerAiMessages(): void {
     return true;
   });
 }
+const onChatGpt = (url: string): boolean => {
+  try {
+    const host = new URL(url).hostname;
+    return host === 'chatgpt.com' || host.endsWith('.chatgpt.com');
+  } catch {
+    return false;
+  }
+};
 async function ready(tabId: number, signal: AbortSignal): Promise<{ documentId: string }> {
   for (let attempt = 0; attempt < 140; attempt++) {
     signal.throwIfAborted();
     const tab = await chrome.tabs.get(tabId);
-    if (tab.url && (!tab.url.startsWith('https://chatgpt.com/') || /\/auth\/|\/login|challenge/.test(new URL(tab.url).pathname)))
-      throw new Error('Open ChatGPT in the signed-in account before proceeding.');
+    // Where the tab is going, not where it was: a reused empty tab still reports about:blank while ChatGPT loads.
+    const at = tab.pendingUrl || tab.url || '';
+    if (/^https?:/i.test(at)) {
+      const u = new URL(at);
+      // Only a real sign-in page means signed out (ChatGPT's own /auth pages, or OpenAI's login site).
+      if (u.hostname === 'auth.openai.com' || (onChatGpt(at) && /^\/(auth|log-?in)\b/i.test(u.pathname)))
+        throw new Error('ChatGPT is asking you to sign in. Sign in at chatgpt.com in this browser, then try again.');
+      if (!onChatGpt(at)) throw new Error('The ChatGPT tab was moved to another site. Try again; a new ChatGPT tab is opened.');
+    }
+    // about:blank, a new-tab page or a security check still loading: keep waiting for ChatGPT itself.
     try {
       const reply = await chrome.tabs.sendMessage(tabId, { kind: 'network.ai.ping' });
       if (reply?.ok && reply.ready && reply.documentId) return { documentId: reply.documentId };
@@ -182,7 +198,11 @@ async function dispatch(job: AiJob, signal: AbortSignal): Promise<void> {
     await save(job, 'tab_opened');
   }
   try {
-    await chrome.tabs.get(job.tab);
+    // The tab a task used may since have been reused: when a finished task's tab is the work window's last one it is
+    // emptied (about:blank) and later opened for something else (LinkedIn, another task). Only a tab still showing
+    // ChatGPT counts as this task's tab; anything else is treated as closed.
+    const t = await chrome.tabs.get(job.tab);
+    if (!onChatGpt(t.pendingUrl || t.url || '')) throw new Error('reused');
   } catch {
     // A completed or attempted submission must never be restarted in another chat blindly.
     if (['send_clicked', 'user_turn_verified', 'assistant_streaming', 'completion_verified'].includes(job.stage))

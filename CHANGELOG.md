@@ -3,6 +3,10 @@
 All versions below were built on 11 November 2026 on the `cleanup/linkedin-only` branch.
 What is and is not proven on the live site is recorded in `docs/live-verification.md`.
 
+## 0.54.2: no false "Open ChatGPT in the signed-in account"
+- ChatGPT tasks could stop with "Open ChatGPT in the signed-in account before proceeding" while ChatGPT was signed in. A finished task's tab is emptied (about:blank) and reused when it is the work window's last tab; a later task still pointed at it, and its blank address was read as "not on ChatGPT". A task now only uses its old tab if that tab still shows ChatGPT, and otherwise opens ChatGPT again.
+- A tab that is still loading ChatGPT is waited for (its destination is checked, not its old address). Only a real sign-in page says you are signed out, with a plain message.
+
 ## 0.54.1: Delete everything works again
 - "Delete everything" (and Pause) failed with "Value must be at least 0" once the background LinkedIn tab had been closed: the stored "no tab" marker (-1) was passed to Chrome, which rejects it before anything else happens. It is now skipped.
 
