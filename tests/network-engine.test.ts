@@ -1317,3 +1317,19 @@ it('counts what waits for the person, for the toolbar badge', async () => {
   expect(turnCount(base)).toBe(3); // one approval, one attention, the company list
   expect(turnCount({ ...base, paused: true })).toBe(0);
 });
+
+it('pauses (and so "Delete everything" works) when no LinkedIn tab is open, without passing Chrome a negative tab id', async () => {
+  const { pauseNetwork } = await import('../src/background/network');
+  const { write } = await import('../src/storage/state');
+  await seed();
+  await write('network-tab', -1); // what is stored once the LinkedIn tab was closed
+  // Chrome validates the id before returning a promise: a negative one throws on the spot.
+  const sendMessage = vi.fn((id: number) => {
+    if (id < 0) throw new Error("Error at parameter 'tabId': Value must be at least 0.");
+    return Promise.resolve({});
+  });
+  (globalThis as unknown as { chrome: { tabs: { sendMessage: unknown } } }).chrome.tabs.sendMessage = sendMessage;
+  await expect(pauseNetwork()).resolves.toBeUndefined();
+  expect(sendMessage).not.toHaveBeenCalled();
+  expect((await getNetwork()).paused).toBe(true);
+});

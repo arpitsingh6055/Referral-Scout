@@ -188,8 +188,12 @@ export async function pauseNetwork(reason = 'Paused. Your saved people and progr
     status: reason,
   }));
   controller?.abort();
+  // -1 means "no LinkedIn tab": Chrome rejects a negative tab id before any promise exists, so it is never passed on.
   const tab = await read<number>('network-tab');
-  if (tab !== undefined) await chrome.tabs.sendMessage(tab, { kind: 'network.cancel' }).catch(() => undefined);
+  if (typeof tab === 'number' && tab >= 0)
+    await Promise.resolve()
+      .then(() => chrome.tabs.sendMessage(tab, { kind: 'network.cancel' }))
+      .catch(() => undefined);
   await closeWorkWindow().catch(() => undefined); // nothing runs while paused, so the background window goes away too
 }
 export async function currentRun(revision: number, signal: AbortSignal): Promise<NetworkState> {

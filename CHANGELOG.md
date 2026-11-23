@@ -3,6 +3,9 @@
 All versions below were built on 11 November 2026 on the `cleanup/linkedin-only` branch.
 What is and is not proven on the live site is recorded in `docs/live-verification.md`.
 
+## 0.54.1: Delete everything works again
+- "Delete everything" (and Pause) failed with "Value must be at least 0" once the background LinkedIn tab had been closed: the stored "no tab" marker (-1) was passed to Chrome, which rejects it before anything else happens. It is now skipped.
+
 ## 0.54.0: the panel leads you to your next step
 - **Choosing companies happens on Home.** When the job search finishes, the company list appears on Home right under the status, with the button at the end of the list. Before, a "Choose companies" button had to be noticed and pressed first.
 - **It takes you there.** The moment it becomes your turn (companies to choose, a question about a company), the panel switches to Home, scrolls to it and says so, including when you open the panel after the search finished.
