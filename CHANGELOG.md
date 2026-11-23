@@ -3,6 +3,22 @@
 All versions below were built on 11 November 2026 on the `cleanup/linkedin-only` branch.
 What is and is not proven on the live site is recorded in `docs/live-verification.md`.
 
+## 0.56.0: ChatGPT moves the application on, and an optional hands-free submit
+- **Any job page, not only known buttons:** when a page shows no form the rules recognise (a job page whose button says "I'm interested", an "apply manually or import your CV" chooser, a pop-up over the form), the page's own buttons and links are sent to ChatGPT with the page text. It answers without thinking mode, so this takes seconds. It says what the page is (job, form, review, sign-in, confirmation, or unrelated) and names the one button to press. At most five such pages per application, so it cannot wander.
+- **Unusual Next buttons:** on a form step where no Next or Continue button is recognised, ChatGPT's choice (for example "Save and continue") is used to move on.
+- **What is never pressed:** only buttons from the last read of the page, checked again at the moment of pressing. Sign-in, register, "apply with" another site, save, share, job alerts and cookie settings are refused whatever ChatGPT picks. A button that sends the application is refused unless hands-free mode is on and every check passed. Links to other sites are not followed.
+- **Sign-in is always yours:** a login or account page (found by the rules, or by ChatGPT reading the page) stops and waits for you. Filling carries on by itself once the form shows. Passwords are never typed.
+- **Hands-free submit (Settings → "When every step is filled", off by default):** Referral Scout presses Submit only when:
+  - nothing failed to fill;
+  - no question is waiting for you;
+  - no required signature, declaration or other personal field is left;
+  - there is no security check;
+  - fewer than 25 applications were sent today.
+
+  It ticks required "I agree to the terms / privacy policy" boxes, and only in this mode. It presses Submit once per application, then confirms from the site's own message or by ChatGPT reading the page that follows. If neither confirms, it says so and offers "I've sent it". A site that rejects the submission (fields marked in red) stops it for you to fix.
+- **Custom dropdowns (Greenhouse, Lever and similar):** these open on a press of their outer box, not the input. The extension now presses that box, types the answer (then a shorter search if nothing lists), and chooses the matching option. It falls back to Enter on the highlighted option. It checks that the choice shows in the box.
+- Content script version 11: an open tab picks up the new script on the next Fill.
+
 ## 0.55.2: lists filled in one quick answer, and ChatGPT replies no longer "lost"
 - **Faster lists:** ChatGPT now returns each list entry with its details (title, organisation, dates, type, what you did, tools) in its first answer, without thinking mode. The extension presses "Add" for the missing entries and types those details straight in, with no second ChatGPT question. Entries of a list never switch thinking mode on.
 - **Answers no longer lost:** ChatGPT redraws the conversation when a new chat moves to its own address (and when a thinking answer is replaced by the final one), so the sent message briefly disappears. The extension stopped there with "its answer could not be read back" although ChatGPT had answered. It now waits up to 20 seconds for the message to reappear, 60 seconds to confirm the send, and up to 10 minutes for a long answer.

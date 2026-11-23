@@ -883,6 +883,16 @@ export function buildApplySettings(): HTMLElement {
       'Uses the same referral search as "Ask for referrals". Invitations wait for your approval unless you chose automatic sending.',
     );
     slot.append(after.wrap);
+    const finish = choice(
+      'When every step is filled',
+      d.profile.autoSubmit ?? 'never',
+      [
+        ['never', 'Stop so I can review and submit (recommended)'],
+        ['auto', 'Submit it for me (hands-free)'],
+      ],
+      `Hands-free presses Submit only when nothing failed and nothing needs you. It ticks required "I agree to the terms / privacy policy" boxes for you, and always stops for sign-in, security checks, signatures, questions only you can answer, and after ${DAILY_SOFT_CAP} applications a day. ChatGPT’s answers are sent without your review, so check your saved details first.`,
+    );
+    slot.append(finish.wrap);
     const check = node('div', '', 'field');
     check.append(
       node('span', 'ChatGPT connection', 'field-label'),
@@ -1012,6 +1022,7 @@ export function buildApplySettings(): HTMLElement {
             eeo: eeo.input.value as 'leave' | 'decline',
             topChoice: top.input.value as 'auto' | 'ask',
             afterApply: after.input.value as 'referrals' | 'nothing',
+            autoSubmit: finish.input.value as 'never' | 'auto',
             forget: [...forget],
           });
           flags.dirty = false;

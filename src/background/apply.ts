@@ -28,6 +28,9 @@ import {
   needsWork,
   localPlan,
   wantsThinking,
+  navPrompt,
+  consentTick,
+  DAILY_SOFT_CAP,
   type ApplyProfile,
   type FillPlan,
   type FormField,
@@ -104,6 +107,12 @@ export interface ApplySession {
   added?: string[];
   /** The entries ChatGPT listed for the lists on this step, typed into the entries once they are added. */
   listItems?: { section: string; label: string; items: ListItem[] }[];
+  /** The button ChatGPT chose to move this step on, when the site's own Next button is not one the rules know. */
+  nextControl?: { id: string; frame: number; label: string } | undefined;
+  /** Pages moved through before a form appeared (job page, "Apply", "Apply manually"), capped so it never wanders. */
+  hops?: number;
+  /** Hands-free mode pressed the final Submit on this application (never twice). */
+  autoSent?: boolean;
 }
 export const fileFromBase64Size = (data: string): number => Math.floor((data.length * 3) / 4);
 
@@ -244,6 +253,7 @@ function merge(
     jobMatch: frames.find(f => f.result.jobMatch)?.result.jobMatch,
     frames: main?.frames ?? [],
     actions: frames.flatMap(f => (f.result.actions ?? []).map(a => ({ ...a, frame: f.frameId }))),
+    controls: frames.flatMap(f => (f.result.controls ?? []).map(c => ({ ...c, frame: f.frameId }))).slice(0, 50),
   };
 }
 
@@ -864,7 +874,11 @@ async function handOff(tabId: number, url: string, jobText: string, signal: Abor
   // The new tab gets its own run; this one (the LinkedIn tab) is finished.
   void run(target, sig => autoRun(target, sig, 1));
 }
-async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Promise<{ advance: boolean; again?: boolean } | void> {
+async function fillStep(
+  tabId: number,
+  signal: AbortSignal,
+  attempt: number,
+): Promise<{ advance: boolean; again?: boolean; moved?: boolean } | void> {
   const tab = await chrome.tabs.get(tabId);
   const url = tab.url ?? '';
   const kind = pageKindFromUrl(url);
@@ -903,6 +917,11 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
         ? `Step ${s.stepCount}: nothing to fill. Moving on…`
         : 'All steps are filled. This is the final review: check the application and press Submit on the page yourself.',
     }));
+    // Hands-free: a final review page with nothing left to answer is submitted for the person.
+    if (!page.hasNext && !page.captcha && ((await applyProfile()).autoSubmit ?? 'never') === 'auto') {
+      const left = (await loadSession(tabId))?.ask.length ?? 0;
+      if (!left) await submitForPerson(tabId, undefined, signal);
+    }
     return { advance: page.hasNext && !page.captcha };
   }
   if (!page.form.length && kind === 'linkedin-job') {
@@ -966,6 +985,8 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
         needOrigins: missing,
         message: `The form on this page comes from ${missing.map(m => new URL(m).host).join(', ')}. Allow it to fill the form.`,
       })));
+    // No form the rules recognise: ChatGPT reads the page and picks the one button that moves the application on.
+    if (!linkedin && page.controls?.length) return await navigate(tabId, page, signal);
     throw new Error(
       kind === 'linkedin-job'
         ? 'No application form is open. Press Easy Apply (or Apply) on the job first.'
@@ -1060,7 +1081,7 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
     signal.throwIfAborted();
     let ai: FillPlan;
     try {
-      ai = planFromReply(extractJson(reply), page.form, profile, !!photo, openLists);
+      ai = planFromReply(extractJson(reply), page.form, profile, !!photo, openLists, page.controls ?? []);
     } catch {
       throw new Error('ChatGPT’s answer could not be read. Press Fill again.');
     }
@@ -1088,6 +1109,8 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
       summary: ai.summary,
       ...(ai.add ? { add: ai.add } : {}),
       ...(ai.items ? { items: ai.items } : {}),
+      ...(ai.next ? { next: ai.next } : {}),
+      ...(ai.phase ? { phase: ai.phase } : {}),
     };
     // Questions the person already answered on an earlier application are filled, not asked again.
     const remembered = new Map(rememberedFor(page.form, profile).map(r => [r.id, r.value]));
@@ -1101,6 +1124,25 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
     }
   }
   signal.throwIfAborted();
+  // A login form read as fields: the person signs in, filling carries on afterwards.
+  if (plan.phase === 'signin' && !linkedin && page.form.some(f => f.sensitive === 'password')) return void (await waitForSignIn(tabId));
+  // Hands-free: the required "I agree to the privacy policy" ticks are part of submitting, so they are ticked too.
+  // Signatures, declarations to type and every other legal field stay with the person (and stop hands-free below).
+  const handsFree = (profile.autoSubmit ?? 'never') === 'auto';
+  if (handsFree)
+    for (const f of page.form)
+      if (f.required && consentTick(f) && f.value !== 'true' && !plan.fill.some(x => x.id === f.id)) {
+        plan.fill.push({
+          id: f.id,
+          frame: f.frame,
+          kind: f.kind,
+          label: f.label,
+          value: 'true',
+          confidence: 'high',
+          why: 'Hands-free: terms accepted',
+        });
+        plan.leftForYou = plan.leftForYou.filter(l => l.id !== f.id);
+      }
   if (plan.fill.length || plan.files.length) await update(tabId, s => ({ ...s, stage: 'filling', message: 'Filling the form…' }));
   const results = plan.fill.length || plan.files.length ? await applyPlan(tabId, plan, page.form, cv, photo) : [];
   // The CV is required for every application. With no ordinary upload field on this step (a site that adds it when
@@ -1182,9 +1224,18 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
     }));
     return { advance: false, again: true };
   }
-  const advance = !!page.hasNext && !blocked;
+  // The site's Next button, or else the one ChatGPT chose (a "Save and continue" link, an unusual label).
+  const viaAi = !page.hasNext && !!plan.next && !plan.next.final;
+  const advance = (!!page.hasNext || viaAi) && !blocked;
+  // What is still the person's: a required field left for them that hands-free cannot do (a signature, a declaration).
+  const personal = page.form.filter(
+    f => f.required && f.sensitive && !plan.fill.some(x => x.id === f.id) && !(f.kind === 'checkbox' && f.value === 'true'),
+  );
+  const finalStep = !advance && !page.hasNext && (page.hasSubmit || !!plan.next?.final);
+  const autoSubmit = handsFree && finalStep && !blocked && !personal.length && !revealed;
   await update(tabId, s => ({
     ...s,
+    nextControl: viaAi && plan.next ? { id: plan.next.id, frame: plan.next.frame, label: plan.next.label } : undefined,
     stage: advance ? 'moving' : 'review',
     aiStage: undefined,
     summary: plan.summary || s.summary,
@@ -1228,7 +1279,198 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
     ask: plan.ask.map(a => ({ ...a, kind: page.form.find(f => f.id === a.id)?.kind })),
     leftForYou: [...s.leftForYou.filter(x => !plan.leftForYou.some(l => l.id === x.id)), ...plan.leftForYou],
   }));
+  if (handsFree && finalStep && !autoSubmit)
+    await update(tabId, s => ({
+      ...s,
+      message: `${s.message} Hands-free stopped here: ${
+        personal.length
+          ? `“${personal[0]!.label.slice(0, 80)}” is yours to answer`
+          : page.captcha
+            ? 'there is a security check'
+            : 'something above needs you'
+      }.`,
+    }));
+  if (autoSubmit) await submitForPerson(tabId, plan.next?.final ? plan.next : undefined, signal);
   return { advance };
+}
+/** The site asks for an account or a login: always the person's, the extension never types a password. */
+async function waitForSignIn(tabId: number): Promise<void> {
+  const s0 = await loadSession(tabId);
+  let host = 'This site';
+  try {
+    host = new URL(s0?.url ?? '').host;
+  } catch {
+    /* keep the plain words */
+  }
+  await update(tabId, x => ({
+    ...x,
+    stage: 'review',
+    waitSignIn: true,
+    message: `${host} asks you to sign in or create an account before applying. Do that in this tab (Referral Scout never types passwords); filling carries on by itself once the application form shows.`,
+  }));
+}
+/** Watches a tab for a new tab it opens while one action runs, so a form opened elsewhere is followed. */
+async function watchNewTab<T>(tabId: number, signal: AbortSignal, act: () => Promise<T>): Promise<{ result: T; spawned?: number }> {
+  let spawned: number | undefined;
+  const onCreated = (t: chrome.tabs.Tab) => {
+    if (t.openerTabId === tabId && t.id !== undefined && spawned === undefined) spawned = t.id;
+  };
+  chrome.tabs.onCreated.addListener(onCreated);
+  try {
+    const result = await act();
+    for (let w = 0; w < 6 && spawned === undefined; w++) await pause(500, signal);
+    return { result, ...(spawned !== undefined ? { spawned } : {}) };
+  } finally {
+    chrome.tabs.onCreated.removeListener(onCreated);
+  }
+}
+async function settle(tabId: number, signal: AbortSignal): Promise<void> {
+  await pause(1500, signal);
+  for (let w = 0; w < 20; w++) {
+    const t = await chrome.tabs.get(tabId).catch(() => undefined);
+    if (!t || t.status === 'complete') break;
+    await pause(500, signal);
+  }
+  await pause(800, signal);
+}
+const MAX_HOPS = 5;
+/**
+ * A page with no form the rules know (a job page whose button says "I'm interested", a "how do you want to apply"
+ * chooser, a pop-up over the form): ChatGPT reads the page without thinking mode and names the one button that moves
+ * the application on. Sign-in pages go to the person; a confirmation page records the application.
+ */
+async function navigate(tabId: number, page: PageSnapshot, signal: AbortSignal): Promise<{ advance: boolean; moved?: boolean } | void> {
+  const s0 = await loadSession(tabId);
+  const hops = s0?.hops ?? 0;
+  if (hops >= MAX_HOPS)
+    throw new Error(
+      'Several pages were opened and no application form appeared. Open the form on the page yourself, then press Fill again.',
+    );
+  await update(tabId, x => ({ ...x, stage: 'thinking', message: 'ChatGPT is reading the page to find the way to the application…' }));
+  const bg = await background();
+  const goal = s0?.job?.title
+    ? `Reach and complete the application for "${s0.job.title}"${s0.job.company ? ` at ${s0.job.company}` : ''}.`
+    : 'Reach and complete the application form for the job on this page.';
+  const reply = await askChatGpt(
+    navPrompt(page, goal) + (hops ? `\n(Page ${hops + 1} of this application.)` : ''),
+    signal,
+    'FILL_APPLICATION',
+    bg.url,
+    '',
+    {
+      startMs: 60000,
+      totalMs: 2 * 60000,
+      thinking: false,
+      onStage: stage => void update(tabId, s => ({ ...s, aiStage: stage })),
+    },
+  );
+  signal.throwIfAborted();
+  let plan: FillPlan;
+  try {
+    plan = planFromReply(extractJson(reply), [], await applyProfile(), false, [], page.controls ?? []);
+  } catch {
+    throw new Error('ChatGPT’s answer could not be read. Press Fill again.');
+  }
+  if (plan.phase === 'signin') return void (await waitForSignIn(tabId));
+  if (plan.phase === 'done') {
+    // Only after this fill pressed Submit itself or filled anything; a stray thank-you page is not an application.
+    if (s0?.autoSent || s0?.filled.length) return void (await markSent(tabId));
+    throw new Error('This page says an application was already sent. Open another job to apply.');
+  }
+  if (!plan.next || plan.phase === 'other')
+    throw new Error(
+      plan.summary
+        ? `${plan.summary.replace(/\.?$/, '.')} No way to apply was found here. Open the application form, then press Fill again.`
+        : 'No application form or Apply button was found on this page. Open the form, then press Fill again.',
+    );
+  const choice = plan.next;
+  await update(tabId, x => ({ ...x, hops: hops + 1, stage: 'opening', aiStage: undefined, message: `Pressing “${choice.label}”…` }));
+  const { result, spawned } = await watchNewTab(tabId, signal, () =>
+    inFrame(
+      tabId,
+      choice.frame,
+      (id: unknown) => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.click(id as string) ?? { error: 'gone' },
+      [choice.id],
+    ).catch(() => undefined),
+  );
+  if (!result?.clicked) throw new Error(result?.error ?? 'The page changed; press Fill again.');
+  if (spawned !== undefined) return void (await followTo(tabId, spawned, signal));
+  await settle(tabId, signal);
+  return { advance: false, moved: true };
+}
+async function startOfTodayCount(): Promise<number> {
+  const [history, since] = await Promise.all([read<Detect['history']>(HISTORY_KEY).then(h => h ?? []), startOfToday()]);
+  return history.filter(h => h.at >= since).length;
+}
+/**
+ * Hands-free mode: presses the final Submit once every check passed, then confirms the site took it (its own
+ * confirmation, or ChatGPT reading the page). Never twice for one application, and never past the daily limit.
+ */
+async function submitForPerson(tabId: number, chosen: FillPlan['next'], signal: AbortSignal): Promise<void> {
+  const s0 = await loadSession(tabId);
+  if (!s0 || s0.autoSent || s0.sent) return;
+  if ((await startOfTodayCount()) >= DAILY_SOFT_CAP)
+    return void (await update(tabId, x => ({
+      ...x,
+      message: `All steps are filled. You have sent ${DAILY_SOFT_CAP} applications today, so hands-free stops here: review it and press Submit yourself.`,
+    })));
+  await update(tabId, x => ({
+    ...x,
+    autoSent: true,
+    hasSubmit: true,
+    hasNext: false,
+    stage: 'moving',
+    message: 'Hands-free: submitting the application…',
+  }));
+  const frame = chosen?.frame ?? s0.form?.[0]?.frame ?? 0;
+  const r = await inFrame(
+    tabId,
+    frame,
+    (id: unknown) => {
+      const api = (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply;
+      return (id ? api?.click(id as string, true) : api?.submitFinal()) ?? { error: 'gone' };
+    },
+    [chosen?.id ?? ''],
+  ).catch(() => undefined);
+  if (!r?.clicked)
+    return void (await update(tabId, x => ({
+      ...x,
+      stage: 'review',
+      message: `${r?.error ?? 'The Submit button could not be pressed.'} Review the application and submit it yourself.`,
+    })));
+  // Confirmation: the site's own words first, then ChatGPT reading the page that followed.
+  const began = Date.now();
+  while (Date.now() - began < 20000) {
+    await pause(1500, signal);
+    if (await checkSubmitted(tabId)) return;
+    if (Date.now() - began > 6000 && (await siteRefused(tabId)))
+      return void (await update(tabId, x => ({
+        ...x,
+        stage: 'review',
+        autoSent: false,
+        message: 'The site did not accept the application: it marks what is missing in red. Fix it on the page, then submit.',
+      })));
+  }
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+  const page = merge(await scanAll(tabId, false).catch(() => [] as Frame[]), tab?.url ?? '', tab?.title ?? '');
+  const bg = await background();
+  const reply = await askChatGpt(navPrompt(page, 'Say whether the application was sent.'), signal, 'FILL_APPLICATION', bg.url, '', {
+    startMs: 60000,
+    totalMs: 2 * 60000,
+    thinking: false,
+  }).catch(() => '');
+  let phase: FillPlan['phase'];
+  try {
+    phase = planFromReply(extractJson(reply), [], await applyProfile(), false).phase;
+  } catch {
+    phase = undefined;
+  }
+  if (phase === 'done') return void (await markSent(tabId));
+  await update(tabId, x => ({
+    ...x,
+    stage: 'review',
+    message: 'Submit was pressed, but the page shows no clear confirmation. Check the page: if it was sent, press “I’ve sent it”.',
+  }));
 }
 function reviewMessage(plan: FillPlan, failed: number, page: PageSnapshot, lists: PageAction[] = []): string {
   const n = plan.fill.length + plan.files.length;
@@ -1372,7 +1614,16 @@ async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
   const frame = s.form?.[0]?.frame ?? 0;
   const before = signature({ form: s.form ?? [], step: s.step });
   await update(tabId, x => ({ ...x, stage: 'moving' }));
-  const clicked = await inFrame(tabId, frame, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.next());
+  // The site's Next button, or the one ChatGPT chose for this step when the rules found none.
+  const via = s.nextControl;
+  const clicked = via
+    ? await inFrame(
+        tabId,
+        via.frame,
+        (id: unknown) => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.click(id as string),
+        [via.id],
+      )
+    : await inFrame(tabId, frame, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.next());
   if (!clicked?.clicked) throw new Error(clicked?.error ?? 'The page changed; press Fill again.');
   // Slow sites (Workday, company job sites) can take 20 seconds or more to show the next step: wait up to 25 seconds
   // for the step to change, and stop early only when the site has plainly refused (an error shown on the fields).
@@ -1389,8 +1640,9 @@ async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
     if (signature(page) !== before && (page.form.length || page.hasSubmit || page.hasNext)) {
       // A new step: the entries listed for the last step's lists belong to that step only.
       await update(tabId, x => {
-        const { listItems, ...rest } = x;
+        const { listItems, nextControl, ...rest } = x;
         void listItems;
+        void nextControl;
         return { ...rest, stepCount: x.stepCount + 1 };
       });
       return true;
@@ -1418,6 +1670,8 @@ async function autoRun(tabId: number, signal: AbortSignal, attempt: number, move
   if (moveFirst && !(await pressNext(tabId, signal))) return;
   for (let i = 0, passes = 0; i < 25; i++) {
     const r = await fillStep(tabId, signal, i === 0 ? attempt : 1);
+    // ChatGPT pressed a button on a page with no form (Apply, Apply manually): read the page it led to.
+    if (r && 'moved' in r && r.moved) continue;
     // New questions appeared on the same step: fill them (at most twice per step) before moving on.
     if (r?.again && passes < 3) {
       passes++;
@@ -1567,6 +1821,7 @@ export const applyRequest = z.discriminatedUnion('action', [
     eeo: z.enum(['leave', 'decline']),
     topChoice: z.enum(['auto', 'ask']).optional(),
     afterApply: z.enum(['referrals', 'nothing']).optional(),
+    autoSubmit: z.enum(['never', 'auto']).optional(),
     forget: z.array(z.string().max(200)).max(200).optional(),
   }),
   z.object({ kind: z.literal('apply'), action: z.literal('capturePhoto') }),
@@ -1757,6 +2012,7 @@ export function registerApplyMessages(): void {
         profile.eeo = req.eeo;
         if (req.topChoice) profile.topChoice = req.topChoice;
         if (req.afterApply) profile.afterApply = req.afterApply;
+        if (req.autoSubmit) profile.autoSubmit = req.autoSubmit;
         for (const k of req.forget ?? []) delete profile.answers[k];
         await write(PROFILE_KEY, profile);
       }

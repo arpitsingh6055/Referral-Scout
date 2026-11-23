@@ -7,7 +7,8 @@
  * Injected with chrome.scripting into every frame of the tab; each injection reuses the same instance, so the state
  * needed for Undo survives between calls.
  */
-import { buttonRole, sensitivity, type FieldKind, type FormField, type PageSnapshot } from '../shared/apply';
+import { buttonRole, sensitivity } from '../shared/fields';
+import type { FieldKind, FormField, PageSnapshot } from '../shared/apply';
 
 type Control = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement;
 interface Entry {
@@ -28,7 +29,7 @@ export interface FillResult {
 export interface ApplyApi {
   version: number;
   /** linkedin: read only LinkedIn's Easy Apply window, never the rest of the page (search box, messaging, filters). */
-  scan(opts?: { linkedin?: boolean }): Omit<PageSnapshot, 'url' | 'title' | 'actions'> & {
+  scan(opts?: { linkedin?: boolean }): Omit<PageSnapshot, 'url' | 'title' | 'actions' | 'controls'> & {
     url: string;
     title: string;
     frames: string[];
@@ -38,9 +39,18 @@ export interface ApplyApi {
     jobMatch?: 'low' | 'medium' | 'high';
     /** Buttons that add one more entry to a list on the form ("Add a role", "Add education"). */
     actions?: { id: string; label: string; section: string; count?: number }[];
+    /** Every other button and link that matters on the page, for ChatGPT to choose how to move on. */
+    controls?: { id: string; label: string; kind: 'button' | 'submit' | 'link'; final: boolean }[];
   };
   /** Presses one of the "add an entry" buttons the last scan listed, and nothing else. True when it did. */
   press(id: string): boolean;
+  /**
+   * Presses one of the page's buttons or links the last scan listed (to open a form, move on, close a pop-up).
+   * Never one that sends the application, unless final is true (hands-free mode, after every check has passed).
+   */
+  click(id: string, final?: boolean): { clicked?: string; error?: string };
+  /** Hands-free mode only: presses the button that sends the application on the open form. */
+  submitFinal(): { clicked?: string; error?: string };
   fill(
     items: { id: string; kind: FieldKind; value: string | string[] }[],
     files: { id: string; name: string; type: string; data: string }[],
@@ -82,7 +92,7 @@ export interface ApplyApi {
     data: string;
   }): Promise<{ ok: boolean; note?: string; how: 'input' | 'drop' | 'none' }>;
 }
-const VERSION = 10;
+const VERSION = 11;
 const scope = globalThis as typeof globalThis & { __referralScoutApply?: ApplyApi };
 
 /* ---------- reading the page ---------- */
@@ -485,18 +495,23 @@ function dateFor(el: HTMLInputElement, iso: string): string {
   if (/^mm/.test(p)) return `${mo}/${d}/${y}`;
   return iso;
 }
+/** Options of an open dropdown: ARIA options, or the class names custom dropdowns (react-select and others) use. */
+const OPTION = '[role="option"], [id*="-option-"], [class*="__option"]';
 async function pickFromList(input: HTMLElement, value: string): Promise<boolean> {
   const doc = input.ownerDocument;
   for (let i = 0; i < 12; i++) {
     await sleep(150);
     const listId = input.getAttribute('aria-controls') || input.getAttribute('aria-owns');
     const list = listId ? doc.getElementById(listId) : null;
-    const opts = [...(list ?? doc).querySelectorAll('[role="option"]')].filter(visible) as HTMLElement[];
+    const opts = [...(list ?? doc).querySelectorAll(OPTION)].filter(
+      o => visible(o) && !o.querySelector(OPTION) && clean(o.textContent).length > 0,
+    ) as HTMLElement[];
     if (!opts.length) continue;
     const hit = bestMatch(value, opts, o => clean(o.textContent));
     if (hit) {
       hit.scrollIntoView?.({ block: 'nearest' });
-      hit.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      for (const type of ['pointerover', 'mouseover', 'pointerdown', 'mousedown'])
+        hit.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
       hit.click();
       return true;
     }
@@ -610,15 +625,54 @@ async function fillOne(entry: Entry, value: string | string[]): Promise<{ ok: bo
     }
     case 'combobox': {
       const input = first as HTMLInputElement;
-      input.focus();
-      input.click();
-      if ('value' in input) {
-        setNative(input, one);
+      // Custom dropdowns (react-select on Greenhouse, Lever's and Workday's own) open on a press of their outer box,
+      // not on the input: press that, then type, and try a shorter search if the full answer lists nothing.
+      const control =
+        (input.closest('[class*="control"], [class*="Control"], [data-automation-id*="select"]') as HTMLElement | null) ??
+        input.parentElement ??
+        input;
+      const open = () => {
+        for (const type of ['pointerdown', 'mousedown'])
+          control.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+        input.focus();
+        input.click();
+      };
+      const type = (text: string) => {
+        if (!('value' in input)) return;
+        setNative(input, text);
         fire(input, 'input');
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, bubbles: true }));
+      };
+      const shown = () => {
+        const box = input.closest('[class*="container"], [class*="Container"]') ?? control;
+        const text = clean(box.textContent).toLowerCase();
+        return !!one && text.includes(one.toLowerCase().slice(0, 30));
+      };
+      open();
+      type(one);
+      let picked = await pickFromList(input, one);
+      const word = one.split(/[\s,(/-]+/).find(w => w.length > 1);
+      if (!picked && word && word !== one) {
+        open();
+        type(word);
+        picked = await pickFromList(input, one);
       }
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-      const picked = await pickFromList(input, one);
-      if (picked) return { ok: true };
+      if (!picked && 'value' in input) {
+        // Some lists highlight the first match and choose it on Enter.
+        open();
+        type(one);
+        await sleep(300);
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true }));
+        await sleep(200);
+        picked = shown() && !input.value.trim();
+      }
+      if (picked) {
+        await sleep(200);
+        // The choice shows in the box (react-select clears its input and shows the value beside it).
+        return shown() || (input as HTMLInputElement).value?.trim()
+          ? { ok: true }
+          : { ok: true, note: 'Chosen; check it shows on the page.' };
+      }
       // A box with a plain suggestion list (a datalist) accepts typed text; a real dropdown needs a chosen option.
       if (input instanceof HTMLInputElement && input.list && input.value.trim()) return { ok: true };
       return { ok: false, note: 'Typed, but no option from its list was chosen; choose one on the page.' };
@@ -713,6 +767,8 @@ function create(): ApplyApi {
   const undo: Previous[] = [];
   /** The "add an entry" buttons the last scan found: the only buttons press() will ever touch. */
   const addable = new Set<string>();
+  /** The page's other buttons and links from the last scan: the only ones click() will touch. */
+  const clickable = new Set<string>();
   const marked = new Set<HTMLElement>();
   // The form area the last scan read; Next is only ever looked for inside it.
   let lastRoot: Element | null = null;
@@ -914,6 +970,27 @@ function create(): ApplyApi {
       });
       addable.clear();
       for (const b of adds) addable.add(b.getAttribute('data-rs-id')!);
+      // The page's buttons and links (the form's, any open window's, and the main area's), not the site's menus.
+      clickable.clear();
+      const pageControls: { id: string; label: string; kind: 'button' | 'submit' | 'link'; final: boolean }[] = [];
+      if (!opts?.linkedin) {
+        const area = [root, ...doc.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"], main, [role="main"]')];
+        const seen = new Set<Element>();
+        for (const scope of area)
+          for (const b of scope.querySelectorAll<HTMLElement>(
+            'button, a[href], [role="button"], input[type="submit"], input[type="button"]',
+          )) {
+            if (seen.has(b) || pageControls.length >= 40) continue;
+            seen.add(b);
+            if (!visible(b) || (b as HTMLButtonElement).disabled || b.getAttribute('aria-disabled') === 'true') continue;
+            if (b.closest('header, nav, footer, [role="navigation"], [role="contentinfo"]') || b.closest(MESSAGING)) continue;
+            const label = buttonText(b).slice(0, 80);
+            if (!label || addable.has(b.getAttribute('data-rs-id') ?? '')) continue;
+            const kind = b instanceof HTMLAnchorElement ? 'link' : (b as HTMLButtonElement).type === 'submit' ? 'submit' : 'button';
+            pageControls.push({ id: idFor(b), label, kind, final: buttonRole(label) === 'submit' });
+            clickable.add(b.getAttribute('data-rs-id')!);
+          }
+      }
       const frames = [...doc.querySelectorAll('iframe')]
         .filter(f => visible(f) && f.src && /^https?:/.test(f.src) && f.getBoundingClientRect().height > 150)
         .map(f => f.src)
@@ -933,6 +1010,7 @@ function create(): ApplyApi {
         frames,
         empty: !form.length && !actions.length,
         ...(actions.length ? { actions } : {}),
+        ...(pageControls.length ? { controls: pageControls } : {}),
         ...(opts?.linkedin ? { easyApplyOpen: true } : {}),
         ...(() => {
           const box = topChoiceBox(root);
@@ -1088,6 +1166,18 @@ function create(): ApplyApi {
       this.clear();
       next.el.click();
       return { clicked: next.label };
+    },
+    submitFinal() {
+      const root = lastRoot?.isConnected ? lastRoot : formRoot(document);
+      const send = buttons(root).find(b => b.role === 'submit');
+      if (!send) return { error: 'No button that sends the application was found.' };
+      if ((send.el as HTMLButtonElement).disabled || send.el.getAttribute('aria-disabled') === 'true')
+        return { error: 'The site’s Submit button is disabled: something required is still missing.' };
+      undo.splice(0);
+      this.clear();
+      send.el.scrollIntoView({ block: 'center' });
+      send.el.click();
+      return { clicked: send.label };
     },
     submitted() {
       const SENT =
@@ -1295,6 +1385,25 @@ function create(): ApplyApi {
       b.scrollIntoView({ block: 'center' });
       b.click();
       return true;
+    },
+    click(id, final = false) {
+      if (!clickable.has(id)) return { error: 'That button is no longer on the page.' };
+      const b = document.querySelector<HTMLElement>(`[data-rs-id="${esc(id)}"]`);
+      if (!b || !visible(b) || (b as HTMLButtonElement).disabled || b.getAttribute('aria-disabled') === 'true')
+        return { error: 'That button is no longer on the page, or it is disabled.' };
+      const label = buttonText(b);
+      // Sending the application is the person's own act, unless they chose hands-free and every check passed.
+      const sends =
+        buttonRole(label) === 'submit' || (looksFinal(b.closest('form') ?? document.body) && (b as HTMLButtonElement).type === 'submit');
+      if (sends && !final) return { error: `"${label}" would send the application: that is left to you.` };
+      // A link to another site (a job board's "apply with" partner, an ad) is never followed.
+      if (b instanceof HTMLAnchorElement && b.host && b.host !== location.host && !/apply|application|career|job/i.test(b.href))
+        return { error: 'That link leads to another site.' };
+      undo.splice(0);
+      this.clear();
+      b.scrollIntoView({ block: 'center' });
+      b.click();
+      return { clicked: label };
     },
     openNextJob() {
       const current = new URL(location.href).searchParams.get('currentJobId') ?? /\/jobs\/view\/(\d+)/.exec(location.pathname)?.[1] ?? '';
