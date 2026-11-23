@@ -29,6 +29,7 @@ import {
   localPlan,
   wantsThinking,
   navPrompt,
+  detailKeyFor,
   consentTick,
   DAILY_SOFT_CAP,
   type ApplyProfile,
@@ -113,6 +114,8 @@ export interface ApplySession {
   hops?: number;
   /** Hands-free mode pressed the final Submit on this application (never twice). */
   autoSent?: boolean;
+  /** Entries already opened for ChatGPT ("page|card label"), so each closed card is opened once and never in a loop. */
+  opened?: string[];
 }
 export const fileFromBase64Size = (data: string): number => Math.floor((data.length * 3) / 4);
 
@@ -878,7 +881,7 @@ async function fillStep(
   tabId: number,
   signal: AbortSignal,
   attempt: number,
-): Promise<{ advance: boolean; again?: boolean; moved?: boolean } | void> {
+): Promise<{ advance: boolean; again?: boolean; moved?: boolean; opened?: boolean } | void> {
   const tab = await chrome.tabs.get(tabId);
   const url = tab.url ?? '';
   const kind = pageKindFromUrl(url);
@@ -1110,6 +1113,7 @@ async function fillStep(
       ...(ai.add ? { add: ai.add } : {}),
       ...(ai.items ? { items: ai.items } : {}),
       ...(ai.next ? { next: ai.next } : {}),
+      ...(ai.open ? { open: ai.open } : {}),
       ...(ai.phase ? { phase: ai.phase } : {}),
     };
     // Questions the person already answered on an earlier application are filled, not asked again.
@@ -1203,6 +1207,36 @@ async function fillStep(
     // ChatGPT saw these lists and judged them complete: they are not asked about again on this step.
     await update(tabId, x => ({ ...x, added: [...(x.added ?? []), ...openLists.map(stepKey)] }));
   }
+  // Closed entries ChatGPT wants opened (an imported education card marked "Fields to fix"): open the first one not
+  // opened yet, then read the step again so its fields are filled. One at a time, as opening one may close another.
+  if (!linkedin && plan.open?.length && !plan.ask.length) {
+    const path = (() => {
+      try {
+        return new URL(url).pathname;
+      } catch {
+        return url;
+      }
+    })();
+    const done = new Set((await loadSession(tabId))?.opened ?? []);
+    const card = plan.open.find(o => !done.has(`${path}|${o.label}`));
+    if (card) {
+      const r = await inFrame(
+        tabId,
+        card.frame,
+        (id: unknown) => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.click(id as string),
+        [card.id],
+      ).catch(() => undefined);
+      await update(tabId, x => ({
+        ...x,
+        opened: [...(x.opened ?? []), `${path}|${card.label}`].slice(-60),
+        ...(r?.clicked ? { stage: 'reading' as const, message: `Opened \u201c${card.label.slice(0, 60)}\u201d to complete it…` } : {}),
+      }));
+      if (r?.clicked) {
+        await pause(1200, signal);
+        return { advance: false, again: true, opened: true };
+      }
+    }
+  }
   // Nothing on this page was ours to fill and the rules see no Next or Submit (a job page with a search bar, a page whose
   // apply button has an unusual label): ChatGPT decides what to press, instead of stopping with "nothing to fill".
   const didNothing = !plan.fill.length && !plan.files.length && !plan.ask.length && !plan.add?.length;
@@ -1231,8 +1265,9 @@ async function fillStep(
     }));
     return { advance: false, again: true };
   }
-  // The site's Next button, or else the one ChatGPT chose (a "Save and continue" link, an unusual label).
-  const viaAi = !page.hasNext && !!plan.next && !plan.next.final;
+  // ChatGPT's choice when it named one (it sees an open entry's own Save, which the page's Next would abandon), or
+  // else the site's Next button the rules found.
+  const viaAi = !!plan.next && !plan.next.final;
   const advance = (!!page.hasNext || viaAi) && !blocked;
   // What is still the person's: a required field left for them that hands-free cannot do (a signature, a declaration).
   const personal = page.form.filter(
@@ -1687,10 +1722,16 @@ async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
 /** Fills each step and moves on by itself; stops for the person's answers, a site error, or the final Submit. */
 async function autoRun(tabId: number, signal: AbortSignal, attempt: number, moveFirst = false): Promise<void> {
   if (moveFirst && !(await pressNext(tabId, signal))) return;
-  for (let i = 0, passes = 0; i < 25; i++) {
+  for (let i = 0, passes = 0, opens = 0; i < 25; i++) {
     const r = await fillStep(tabId, signal, i === 0 ? attempt : 1);
     // ChatGPT pressed a button on a page with no form (Apply, Apply manually): read the page it led to.
     if (r && 'moved' in r && r.moved) continue;
+    // An entry was opened for ChatGPT to complete: up to ten entries per application, then on with the step.
+    if (r?.opened && opens < 10) {
+      opens++;
+      i--;
+      continue;
+    }
     // New questions appeared on the same step: fill them (at most twice per step) before moving on.
     if (r?.again && passes < 3) {
       passes++;
@@ -1734,7 +1775,12 @@ async function answer(tabId: number, answers: { id: string; value: string; remem
   const remember = items.filter(x => x.a.remember && rememberable(x.f, x.a.value, s.job));
   if (remember.length) {
     const profile = await applyProfile();
-    for (const { a, f } of remember) profile.answers[questionKey(f.label)] = a.value.trim().slice(0, 2000);
+    for (const { a, f } of remember) {
+      profile.answers[questionKey(f.label)] = a.value.trim().slice(0, 2000);
+      // An address, PIN code or notice period typed here becomes a saved detail (Settings), used on every site.
+      const key = detailKeyFor(f.label);
+      if (key && !profile.details[key]?.trim()) profile.details[key] = a.value.trim().slice(0, 300);
+    }
     await write(PROFILE_KEY, profile);
   }
   const results: FillResult[] = [];
@@ -1792,6 +1838,9 @@ const detailsSchema = z
     phone: z.string().max(40),
     email: z.string().max(200),
     city: z.string().max(120),
+    address: z.string().max(300),
+    state: z.string().max(120),
+    pincode: z.string().max(20),
     currentCtc: z.string().max(80),
     expectedCtc: z.string().max(80),
     noticePeriod: z.string().max(80),

@@ -144,6 +144,10 @@ export interface ApplyProfile {
     phone?: string;
     email?: string;
     city?: string;
+    /** Home address (street, area), state and PIN or postal code, for forms that ask for a full address. */
+    address?: string;
+    state?: string;
+    pincode?: string;
     currentCtc?: string;
     expectedCtc?: string;
     noticePeriod?: string;
@@ -268,13 +272,14 @@ export function fillPrompt(input: {
     '3. Numbers the form asks for: years of experience counts full-time work only (internships only if the question says so), computed from the CV dates and rounded down; a numeric field gets digits only. Skill or proficiency ratings must match what the CV shows; do not claim a skill the background does not mention.',
     '3b. Yes/No screening questions about the applicant\u2019s experience or skills ("Do you have marketing experience?", "Have you worked with SQL?", "Are you comfortable working remotely?"): answer them yourself from the background, never ask. "Yes" when the background shows it in any form (a job, internship, project, case competition, coursework or certification counts), with why naming that evidence; "No" when nothing supports it, with confidence "low" so the applicant can check. Questions about willingness (remote work, relocation within the job\u2019s location, shifts, a stated internship duration) are "Yes" unless the details or earlier answers say otherwise.',
     '4. Dates: for a "date" field use YYYY-MM-DD. Phone, email, links and names: exactly as given in the background or details. "How did you hear about this job": choose the job board or site the page is on (for example LinkedIn or Internshala) if it is an option.',
-    '5. Files: for a CV or resume upload field return {"id","file":"cv"}. For a photo or picture upload return "photo" only if a photo is available. For any other upload (cover letter, transcript, portfolio file) put it in "ask".',
+    '5. Files: for a CV or resume upload field return {"id","file":"cv"}. For a photo or picture upload return "photo" only if a photo is available. Any other upload (cover letter, transcript, portfolio file): if it is optional, leave it out; only a REQUIRED one goes in "ask".',
     '6. If a REQUIRED field needs a fact you do not have (salary, notice period, a date, a link, a certificate number), put it in "ask" with one short question (and the options, if it is a choice). Do not guess. If an optional field needs a fact you do not have, leave it out. Open questions are not facts: write them (see the standard below) rather than asking.',
     '7. Fields with a "current" value that is already right: leave them out. Fix a current value only if it is clearly wrong.',
     `8. Fields marked "sensitive" (password, captcha, legal, signature) must be left out entirely - the applicant does them.${eeoRule}`,
     '9. Never decide to submit anything. You only fill fields and, where a list needs it, add entries (rule 10). The applicant\u2019s settings decide whether the final send happens.',
     '10. Lists. What each list holds, whatever its button says: Education / Qualifications ("Add a course", "Add a degree", "Add a qualification", "Add education", "Add a school") = every degree, diploma and school certificate in the background, highest or most recent first (for example a PGDM or MBA, a B.E. or B.Tech, then Class XII and Class X when the page mentions schooling or asks for all qualifications; a course is a programme of study, so a degree is a course). Experience ("Add a role", "Add experience", "Add a position") = jobs and internships, most recent first, not projects. Projects = named projects the background describes, including ones built at work. Certifications = certificates, licences and courses with a certificate. Languages and links = as stated in the background. Return each list in "lists" with every matching item (at most 6), each as an object with what such an entry usually asks, from the background only: {"name": short name, "title": job title, degree or course name, "organisation": company, school or university, "location", "type": "full-time", "part-time", "internship", "contract" or "freelance" for jobs, "field": subject or specialisation, "grade": grade or score if stated, "start": "YYYY-MM", "end": "YYYY-MM" or "" if current, "current": true or false, "description": one to three sentences on what the applicant did, with numbers, from the background, "skills": tools used, comma-separated, "url"}. Leave out what the background does not say. The extension adds the missing entries and types these details into them directly; if FORM FIELDS already contains entries of that list (fields whose "section" is like "Education › Course 1"), also fill those fields yourself, each entry from a different item in the order you listed them. Only items that really are in the background; a list with no matching items gets "items": []. For a month field use YYYY-MM; for a list of tools or skills give them comma-separated.',
     '11. The next move, when there are PAGE BUTTONS. Say in "phase" what this page is: "job" (a job description with an apply button, no form yet), "form" (application fields to complete), "review" (a summary of the answers before sending), "signin" (an account or login is needed before applying), "done" (the application is sent, a thank-you or confirmation), or "other" (an unrelated page, an error, or a job that is closed). Then in "next" name the ONE button to press after the fields are filled: the button that opens the application on a job page (for example "Apply", "Apply now", "I\u2019m interested"), the one that moves to the next step on a form ("Next", "Continue", "Save and continue"), or one that closes a pop-up blocking the form. Choose the send button ("sends": true, such as "Submit application") only when this step is the last one and the page is complete; set "final": true then. Never choose sign-in, register, "apply with" another site, social links, saving the job, sharing, or job alerts. If no button fits, leave "next" out.',
+    '12. Entries to open. Some forms show saved entries as closed cards or rows (an education or job imported from the CV, often marked "Fields to fix", "Incomplete", "Missing information" or in red), and their fields are not in FORM FIELDS until the card is opened. List in "open" the PAGE BUTTONS that open each entry needing attention (the card itself, or its "Edit" button), most important first; the extension opens them one at a time and asks you again with the entry\u2019s fields. Never a remove, delete or "×" button. When FORM FIELDS shows one open entry being edited (its own Save, Done, Update or OK button is on the page), fill it and choose that button as "next", not the page\u2019s Next.',
     '',
     'THE STANDARD FOR WRITTEN ANSWERS (any text or textarea that asks a question rather than a fact):',
     'Length. Obey any limit stated in the label, help text or placeholder ("in one or two sentences", "100 words", "max 500 characters") and the field\u2019s maxLength and minLength, strictly: maxLength counts characters including spaces, so aim for about 90% of it and never go over. Without a stated limit: a one-line text box gets one sentence; a textarea gets 70 to 140 words; a cover letter box gets 180 to 250 words in three short paragraphs. Shorter and sharper beats longer.',
@@ -295,7 +300,7 @@ export function fillPrompt(input: {
     'Confidence: "high" for facts copied from the source data and for answers built on direct, strong evidence; "medium" for computed or composed answers; "low" when the evidence is thin or the question is ambiguous, so the applicant checks it.',
     '',
     'Reply with ONLY one JSON object, no prose:',
-    '{"fill":[{"id": field id, "value": string or array of strings, "confidence": "high"|"medium"|"low", "why": at most 10 words}], "files":[{"id": field id, "file": "cv"|"photo"}], "ask":[{"id": field id, "question": short question for the applicant, "options": [optional list]}], "lists":[{"id": LIST BUTTON id, "items": [one object per matching item in the background, as in rule 10]}], "summary": one short line naming the role and company, or the form and step when there is no job (for example "MailerMen profile: Education"), "job": {"title": the role as the employer names it, "company": the hiring company (not the job board or recruiting agency, when the page says who the employer is)}, "phase": "job"|"form"|"review"|"signin"|"done"|"other", "next": {"id": PAGE BUTTONS id, "final": true only when it sends the application, "why": at most 10 words}}',
+    '{"open":[{"id": PAGE BUTTONS id that opens an entry needing attention, "why": at most 10 words}], "fill":[{"id": field id, "value": string or array of strings, "confidence": "high"|"medium"|"low", "why": at most 10 words}], "files":[{"id": field id, "file": "cv"|"photo"}], "ask":[{"id": field id, "question": short question for the applicant, "options": [optional list]}], "lists":[{"id": LIST BUTTON id, "items": [one object per matching item in the background, as in rule 10]}], "summary": one short line naming the role and company, or the form and step when there is no job (for example "MailerMen profile: Education"), "job": {"title": the role as the employer names it, "company": the hiring company (not the job board or recruiting agency, when the page says who the employer is)}, "phase": "job"|"form"|"review"|"signin"|"done"|"other", "next": {"id": PAGE BUTTONS id, "final": true only when it sends the application, "why": at most 10 words}}',
   ].join('\n');
 }
 
@@ -359,6 +364,11 @@ const reply = z.object({
     .default([]),
   summary: z.string().max(300).catch(''),
   phase: z.enum(['job', 'form', 'review', 'signin', 'done', 'other']).optional().catch(undefined),
+  open: z
+    .array(z.object({ id: z.string(), why: z.string().max(200).catch('') }))
+    .max(10)
+    .catch([])
+    .default([]),
   next: z
     .object({ id: z.string(), final: z.boolean().catch(false), why: z.string().max(200).catch('') })
     .optional()
@@ -392,6 +402,8 @@ export interface FillPlan {
   items?: { section: string; label: string; items: ListItem[] }[];
   /** What ChatGPT read the page as: a job page, a form step, the review before sending, a sign-in wall, the confirmation. */
   phase?: 'job' | 'form' | 'review' | 'signin' | 'done' | 'other';
+  /** Closed entries to open (a card marked "Fields to fix") so their fields can be filled, most important first. */
+  open?: { id: string; frame: number; label: string }[];
   /** The button ChatGPT chose to press once the fields are filled (only one the page really offered). */
   next?: { id: string; frame: number; label: string; final: boolean; why: string };
 }
@@ -543,6 +555,11 @@ export function planFromReply(
   if (items.length) plan.items = items;
   if (add.length) plan.add = add;
   if (parsed.phase) plan.phase = parsed.phase;
+  const opens = parsed.open
+    .map(o => controls.find(c => c.id === o.id))
+    .filter((c): c is PageControl => !!c && !c.final && !BAD_NEXT.test(c.label) && !/^(×|x|✕)$/i.test(c.label.trim()))
+    .map(c => ({ id: c.id, frame: c.frame, label: c.label }));
+  if (opens.length) plan.open = opens;
   // The next button: only one the page offered. Whether it sends is the page's word (its label), never ChatGPT's alone.
   const pick = parsed.next && controls.find(c => c.id === parsed.next!.id);
   if (pick && !BAD_NEXT.test(pick.label))
@@ -615,6 +632,9 @@ const DETAIL_FIELDS: [RegExp, keyof ApplyProfile['details']][] = [
     /^(your )?(current )?(city|location)( of residence)?$|\bcurrent (city|location)\b|where are you (currently )?(based|located|living)|\bcity of residence\b/i,
     'city',
   ],
+  [/^(home |residential |street |current |permanent )?address( line)?( 1)?$|\bstreet address\b|\baddress line 1\b/i, 'address'],
+  [/^(home |current )?(state|province|region)( or (province|region|union territory))?$/i, 'state'],
+  [/\b(pin ?code|postal code|post ?code|zip( code)?|pin)\b/i, 'pincode'],
   [/\bexpected (ctc|salary|compensation|pay|stipend)\b|salary expectation/i, 'expectedCtc'],
   [/\bcurrent (ctc|salary|compensation|pay)\b/i, 'currentCtc'],
   [/\bnotice period\b/i, 'noticePeriod'],
@@ -623,6 +643,12 @@ const DETAIL_FIELDS: [RegExp, keyof ApplyProfile['details']][] = [
   [/\brelocat/i, 'relocate'],
   [/\b(portfolio|github|website|personal site)\b/i, 'links'],
 ];
+/** The saved detail a question asks for (address, PIN code, notice period...), when it plainly asks for one. */
+export function detailKeyFor(label: string): keyof ApplyProfile['details'] | undefined {
+  if (ABOUT_SOMEONE_ELSE.test(label)) return undefined;
+  for (const [pattern, key] of DETAIL_FIELDS) if (pattern.test(label) && !(key === 'city' && NOT_HOME.test(label))) return key;
+  return undefined;
+}
 /**
  * Answers that need no ChatGPT: the person's saved answers (by question), their saved details (phone, email, notice
  * period...), their LinkedIn address, and the CV or photo for an upload field. Choice fields only take a value that is

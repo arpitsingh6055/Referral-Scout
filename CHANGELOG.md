@@ -3,6 +3,15 @@
 All versions below were built on 11 November 2026 on the `cleanup/linkedin-only` branch.
 What is and is not proven on the live site is recorded in `docs/live-verification.md`.
 
+## 0.56.2: entries marked "Fields to fix" are opened and completed; optional uploads are not asked
+- Oracle's application (and others like it) imports your CV into closed cards: one per degree and job, each marked "Fields to fix: 3" in red. Their fields are hidden until a card is opened, so nothing could fill them. Now:
+  - ChatGPT sees the cards as buttons and names the ones that need attention.
+  - The extension opens them one at a time and fills the fields that appear.
+  - When an entry is open with its own Save or Done button, ChatGPT's choice of that button wins over the page's Next, so the entry is saved rather than abandoned.
+  - Up to ten entries per application; each card is opened once; remove (×) buttons are never pressed.
+- An optional upload other than the CV (a cover letter on Oracle's first step) is left out instead of becoming a question that stops the run.
+- Home address, state and PIN / postal code are now saved details (Settings). An address or PIN code you type into the panel once is saved there and filled on later applications.
+
 ## 0.56.1: a job page is applied to, not reported as "nothing to fill"
 - On Indeed's results page, Fill read the search bar ("What", "Where") as the application. It found those fields already filled and stopped with "Nothing needed filling here". Two fixes:
   - A job board's search bar is never read as a form.

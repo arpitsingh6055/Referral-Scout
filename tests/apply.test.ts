@@ -22,6 +22,7 @@ import {
   entryPlan,
   navPrompt,
   consentTick,
+  detailKeyFor,
   BAD_NEXT,
   type FormField,
 } from '../src/shared/apply';
@@ -1307,6 +1308,56 @@ describe('the page agent (buttons ChatGPT may press)', () => {
     const [r] = await api.fill([{ id: f.id, kind: f.kind, value: 'Yes' }], []);
     expect(r).toEqual(expect.objectContaining({ ok: true }));
     expect(ctl.textContent).toContain('Yes');
+  });
+});
+
+describe('closed entries a form asks to fix (Oracle Recruiting, 24 Nov 2026)', () => {
+  it('lists the entry cards as buttons ChatGPT can open, and never the remove button', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    Element.prototype.scrollIntoView = function () {};
+    document.body.innerHTML = `<main><form><h2>Education</h2>
+      <div class="profile-item-tile" tabindex="0" id="t1"><span>Management</span><span>Core Institute of Management Technology</span>
+        <span>Fields to fix: 3</span><button aria-label="Remove Management">×</button></div>
+      <button type="button">ADD EDUCATION</button><button type="button">Next</button></form></main>`;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+    const snap = api.scan();
+    const card = snap.controls!.find(c => /Fields to fix/.test(c.label))!;
+    expect(card).toBeTruthy();
+    const plan = planFromReply(
+      { open: [{ id: card.id }, { id: snap.controls!.find(c => /Remove/i.test(c.label))?.id ?? 'x' }], phase: 'form' },
+      [],
+      emptyApplyProfile(),
+      false,
+      [],
+      snap.controls!.map(c => ({ ...c, frame: 0 })),
+    );
+    expect(plan.open).toEqual([{ id: card.id, frame: 0, label: card.label }]);
+    let opened = 0;
+    document.getElementById('t1')!.addEventListener('click', () => opened++);
+    expect(api.click(card.id).clicked).toBeTruthy();
+    expect(opened).toBe(1);
+  });
+  it('leaves an optional cover letter out instead of asking, and keeps a typed address as a saved detail', () => {
+    expect(
+      fillPrompt({
+        page: { url: 'x', title: 't', job: '', html: '', form: [], step: '', hasNext: false, hasSubmit: false, captcha: false },
+        background: '',
+        roles: [],
+        profile: emptyApplyProfile(),
+        name: 'A',
+        linkedinUrl: '',
+        photo: false,
+      }),
+    ).toContain('if it is optional, leave it out');
+    expect(detailKeyFor('Address Line 1')).toBe('address');
+    expect(detailKeyFor('Pin Code')).toBe('pincode');
+    expect(detailKeyFor('State')).toBe('state');
+    expect(detailKeyFor('Reference’s address')).toBeUndefined();
   });
 });
 

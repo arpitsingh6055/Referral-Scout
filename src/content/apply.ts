@@ -92,7 +92,7 @@ export interface ApplyApi {
     data: string;
   }): Promise<{ ok: boolean; note?: string; how: 'input' | 'drop' | 'none' }>;
 }
-const VERSION = 12;
+const VERSION = 13;
 const scope = globalThis as typeof globalThis & { __referralScoutApply?: ApplyApi };
 
 /* ---------- reading the page ---------- */
@@ -1005,7 +1005,7 @@ function create(): ApplyApi {
         const found: { b: HTMLElement; label: string; rank: number }[] = [];
         for (const scope of area)
           for (const b of scope.querySelectorAll<HTMLElement>(
-            'button, a[href], [role="button"], input[type="submit"], input[type="button"]',
+            'button, a[href], [role="button"], input[type="submit"], input[type="button"], [aria-expanded="false"], [tabindex="0"][class*="tile" i], [tabindex="0"][class*="card" i], [tabindex="0"][class*="item" i]',
           )) {
             if (seen.has(b) || found.length >= 400) continue;
             seen.add(b);
