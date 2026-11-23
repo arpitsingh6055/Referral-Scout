@@ -3,6 +3,13 @@
 All versions below were built on 11 November 2026 on the `cleanup/linkedin-only` branch.
 What is and is not proven on the live site is recorded in `docs/live-verification.md`.
 
+## 0.55.1: lists are completed, not described
+- On a step with only "Add a course" (MailerMen's empty Education step) ChatGPT replied that nothing needed filling. The prompt sent no page text for such a step (its title and instructions were dropped with the site header), framed the work as "go through every field" (there were none), and left lists to a cautious rule. Now:
+  - the step's own title, instructions and markup are sent ("Degrees, diplomas and schooling, highest first");
+  - the prompt says to complete the step, handles lists first, and says what each list holds whatever its button is called (a degree is a course);
+  - ChatGPT must name the matching items from your background for each list; the extension adds the missing entries and fills them, instead of trusting a bare number;
+  - when a list is left empty the panel says which list and why, never "Nothing needed filling here".
+
 ## 0.55.0: lists on a form (add a role, add education) are filled too
 - Profile and application forms often start with an empty list and only an "Add a role" (or "Add education", "Add a project") button. Before, Referral Scout found no fields and stopped ("No form fields were found"), or moved past the step. Now these buttons are given to ChatGPT with your background; it says how many entries your CV supports, Referral Scout presses the button that many times, and the new entries are filled in the next pass, each from a different job (most recent first).
 - Only "add an entry" buttons are ever pressed this way, checked again at the moment of pressing; never Save, Submit, Remove or Delete. Each list is extended once per step, at most six entries, so it cannot loop.

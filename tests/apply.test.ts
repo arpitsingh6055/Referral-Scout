@@ -1080,7 +1080,9 @@ describe('lists on a form (add a role, add education)', () => {
       photo: false,
     });
     expect(prompt).toContain('LIST BUTTONS');
-    expect(prompt).toContain('"add"');
+    expect(prompt).toContain('"lists"');
+    expect(prompt).toMatch(/LISTS FIRST/);
+    expect(prompt).toMatch(/a degree is a course/);
     const plan = planFromReply(
       {
         summary: '',
@@ -1098,9 +1100,59 @@ describe('lists on a form (add a role, add education)', () => {
       false,
       actions,
     );
-    expect(plan.add).toEqual([
-      { id: 'add1', frame: 0, label: 'Add a role', times: 2 },
-      { id: 'add1', frame: 0, label: 'Add a role', times: 6 },
-    ]);
+    // One entry per list (the largest request wins), capped at six; buttons the page did not offer are ignored.
+    expect(plan.add).toEqual([{ id: 'add1', frame: 0, label: 'Add a role', times: 6 }]);
   });
+});
+
+it('turns the items ChatGPT names for a list into entries to add (live case: "Add a course" on an empty Education step)', () => {
+  const actions = [{ id: 'rs7byw666', frame: 0, label: 'Add a course', section: 'Education', count: 0 }];
+  const plan = planFromReply(
+    {
+      summary: 'MailerMen profile: Education',
+      fill: [],
+      files: [],
+      ask: [],
+      lists: [
+        {
+          id: 'rs7byw666',
+          items: [
+            'PGDM, IMT Ghaziabad, 2026-2028',
+            'B.E. Mechanical, AIT Pune, 2019-2023',
+            'Class XII, APS Patiala, 2019',
+            'Class X, APS Patiala, 2017',
+          ],
+        },
+      ],
+    },
+    [],
+    emptyApplyProfile(),
+    false,
+    actions,
+  );
+  expect(plan.add).toEqual([{ id: 'rs7byw666', frame: 0, label: 'Add a course', times: 4 }]);
+  // A list that already shows two entries only gets the missing ones.
+  const two = planFromReply({ summary: '', lists: [{ id: 'rs7byw666', items: ['a', 'b', 'c'] }] }, [], emptyApplyProfile(), false, [
+    { ...actions[0]!, count: 2 },
+  ]);
+  expect(two.add).toEqual([{ id: 'rs7byw666', frame: 0, label: 'Add a course', times: 1 }]);
+});
+
+it('sends the step’s own title and instructions with an empty list, so ChatGPT knows what the list is for', async () => {
+  Element.prototype.getClientRects = function () {
+    return [{}] as unknown as DOMRectList;
+  };
+  document.body.innerHTML = `<header><nav>Jobs · Internships</nav></header><main>
+    <header><h1>Your qualifications</h1><p>Degrees, diplomas and schooling — highest first.</p></header>
+    <form><h2>Education</h2><p>Nothing here.</p><div><button type="button">Add a course</button><span>0 of 10</span></div>
+      <button type="submit">Save and continue</button></form></main>`;
+  delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+  vi.resetModules();
+  await import('../src/content/apply');
+  const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+  const snap = api.scan();
+  expect(snap.job).toContain('Degrees, diplomas and schooling');
+  expect(snap.job).not.toContain('Internships');
+  expect(snap.html).toContain('Add a course');
+  expect(snap.actions![0]).toMatchObject({ label: 'Add a course', section: 'Education', count: 0 });
 });

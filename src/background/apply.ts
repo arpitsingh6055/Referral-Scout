@@ -1032,7 +1032,8 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
     const thinking = wantsThinking(rest);
     const prompt =
       fillPrompt({ page, background: bg.text, roles: bg.roles, profile, name: bg.name, linkedinUrl: bg.url, photo: !!photo }) +
-      (attempt > 1 ? `\n(Attempt ${attempt}: answer afresh.)` : '');
+      // A new request after "Fill again" must not be mistaken for the earlier one (the request id is a hash of the text).
+      (attempt > 1 ? `\n(New request ${attempt}: work it out from scratch.)` : '');
     await update(tabId, s => ({
       ...s,
       stage: 'thinking',
@@ -1177,7 +1178,7 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
     summary: plan.summary || s.summary,
     message: advance
       ? `Step ${s.stepCount} done${plan.fill.length + plan.files.length ? '' : ' (already filled)'}. Moving on…`
-      : reviewMessage(plan, failed, page),
+      : reviewMessage(plan, failed, page, openLists),
     filled: [
       ...s.filled.filter(x => !plan.fill.some(f => f.id === x.id) && !(topTicked && x.id === 'top-choice')),
       ...(topTicked
@@ -1217,14 +1218,17 @@ async function fillStep(tabId: number, signal: AbortSignal, attempt: number): Pr
   }));
   return { advance };
 }
-function reviewMessage(plan: FillPlan, failed: number, page: PageSnapshot): string {
+function reviewMessage(plan: FillPlan, failed: number, page: PageSnapshot, lists: PageAction[] = []): string {
   const n = plan.fill.length + plan.files.length;
   const parts = [
     n
       ? `Filled ${n} field${n === 1 ? '' : 's'}.`
-      : page.hasSubmit && !page.hasNext
-        ? 'All steps are filled.'
-        : 'Nothing needed filling here.',
+      : lists.length
+        ? // A list was offered and nothing was added: say which, never "nothing needed filling".
+          `ChatGPT found nothing in your background for ${lists.map(l => `\u201c${l.label}\u201d`).join(', ')}. Add entries on the page if you want them, or press Fill again.`
+        : page.hasSubmit && !page.hasNext
+          ? 'All steps are filled.'
+          : 'Nothing needed filling here.',
   ];
   if (plan.ask.length) parts.push(`${plan.ask.length} need${plan.ask.length === 1 ? 's' : ''} your answer below.`);
   if (failed) parts.push(`${failed} could not be typed; fill ${failed === 1 ? 'it' : 'them'} on the page.`);

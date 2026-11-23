@@ -330,7 +330,10 @@ function jobText(doc: Document, form: Element): string {
       // A company or ATS page: the page text outside the form is the job description.
       const main = doc.querySelector('main, [role="main"], #content, .content, article') ?? doc.body;
       const copy = main.cloneNode(true) as Element;
-      copy.querySelectorAll('script, style, noscript, svg, nav, header, footer, form, [role="dialog"]').forEach(e => e.remove());
+      // The site's own header and navigation go; a page header inside the main area (the step's title and
+      // instructions, such as "Your qualifications: degrees, diplomas and schooling") stays.
+      copy.querySelectorAll('script, style, noscript, svg, nav, footer, form, [role="dialog"]').forEach(e => e.remove());
+      if (main === doc.body) copy.querySelectorAll('header').forEach(e => e.remove());
       if (main.contains(form) && form !== main) {
         /* the form itself was removed above */
       }
@@ -919,7 +922,9 @@ function create(): ApplyApi {
         url: location.href,
         title: doc.title,
         job: window === window.top ? jobText(doc, root) : '',
-        html: form.length ? cleanedHtml(root) : '',
+        // The step's own markup also goes along when it holds only list buttons: its headings and help text say what
+        // the list is for ("Degrees, diplomas and schooling, highest first").
+        html: form.length || actions.length ? cleanedHtml(root) : '',
         form,
         step: stepOf(doc, root),
         hasNext: found.some(b => b.role === 'next'),
