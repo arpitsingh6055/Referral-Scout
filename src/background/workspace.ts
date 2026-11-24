@@ -22,11 +22,12 @@ import {
 } from '../shared/persistence/campaign-store';
 import { CATALOGUE, completeness, makeFact, sections, statusOf, type CandidateFact, type FactSection } from '../shared/domain/facts';
 import {
+  conflicts,
   documentFor,
   emptyProfile,
+  requirementsFrom,
   unverified,
   yearsOfExperience,
-  conflicts,
   type CandidateProfile,
   type DocumentRecord,
   type EducationRecord,
@@ -41,6 +42,7 @@ import { defaultSurface, setDefaultSurface, type Surface } from './surfaces';
 import { getNetwork } from './network';
 import { cvFile, applyProfile } from './apply';
 import { parseCv, summarise, type ParseSummary } from '../shared/domain/cv';
+import { enqueueShortlisted, syncFromNetwork } from './bridge';
 import { all } from '../storage/database';
 import { trustedExtension } from '../validators/security';
 
@@ -54,17 +56,7 @@ export const profile = (): Promise<CandidateProfile> => getProfile();
  * rather than asked for separately, so the two can never disagree.
  */
 export async function requirements(p?: CandidateProfile): Promise<CandidateRequirements> {
-  const me = p ?? (await getProfile());
-  const years = yearsOfExperience(me.employment);
-  return {
-    authorisedIn: me.eligibility.authorisedIn,
-    ...(me.eligibility.needsSponsorship !== undefined ? { needsSponsorship: me.eligibility.needsSponsorship } : {}),
-    ...(years !== undefined ? { yearsExperience: years } : {}),
-    skills: me.skills.map(s => s.skill),
-    preferredLocations: me.preferences.locations,
-    preferredWorkModes: me.preferences.workModes as CandidateRequirements['preferredWorkModes'],
-    preferredEmploymentTypes: me.preferences.employmentTypes as CandidateRequirements['preferredEmploymentTypes'],
-  };
+  return requirementsFrom(p ?? (await getProfile())) as CandidateRequirements;
 }
 
 /**
@@ -156,7 +148,6 @@ export interface WorkspaceView {
 export async function workspaceView(): Promise<WorkspaceView> {
   // Bring across whatever the side panel's search and referral engine have found since last time, so these
   // screens are never empty while the person can plainly see results in the panel.
-  const { syncFromNetwork } = await import('./bridge');
   await syncFromNetwork().catch(() => undefined);
   const [me, facts, jobs, contacts, network, cv, gmail, surface] = await Promise.all([
     getProfile(),
@@ -445,7 +436,14 @@ export async function exportData(): Promise<string> {
   );
 }
 
-async function handle(req: WorkspaceRequest): Promise<WorkspaceView | { json: string }> {
+/** What an action did, in the person's words. Silence after a click reads as a broken button. */
+export interface WorkspaceResult {
+  view: WorkspaceView;
+  message?: string;
+}
+
+async function handle(req: WorkspaceRequest): Promise<WorkspaceResult | { json: string }> {
+  let message = '';
   switch (req.action) {
     case 'view':
       break;
@@ -521,14 +519,18 @@ async function handle(req: WorkspaceRequest): Promise<WorkspaceView | { json: st
         j ? { ...j, userJudgement: req.judgement, ...(req.reason ? { userReason: req.reason } : {}), updatedAt: Date.now() } : j,
       );
       break;
-    case 'requalify':
-      await requalify();
+    case 'requalify': {
+      const n = await requalify();
+      message = n
+        ? `Re-checked ${n} ${n === 1 ? 'job' : 'jobs'} against your profile.`
+        : 'There are no jobs to re-check yet. Search from the side panel first.';
       break;
+    }
     case 'enqueueShortlisted': {
-      const { enqueueShortlisted } = await import('./bridge');
       const report = await enqueueShortlisted();
       if (!report.added && report.skipped.length) throw new Error(`Nothing was added. ${report.skipped[0]}`);
       if (!report.added) throw new Error('Shortlist a job first — pick “Why?” on one and press Shortlist.');
+      message = `${report.added} ${report.added === 1 ? 'job' : 'jobs'} added to the application queue.`;
       break;
     }
     case 'suppressContact': {
@@ -539,13 +541,19 @@ async function handle(req: WorkspaceRequest): Promise<WorkspaceView | { json: st
     case 'surface':
       await setDefaultSurface(req.surface);
       break;
-    case 'importCv':
-      await importCv();
+    case 'importCv': {
+      const report = await importCv();
+      message = report.added
+        ? `Read your CV: ${report.education} qualifications, ${report.employment} roles, ${report.projects} projects and ${report.skills} skills. ${report.added} new ${report.added === 1 ? 'record was' : 'records were'} added, unverified — check them below.`
+        : 'Your CV was read, but everything in it is already in your profile.';
+      if (report.warnings.length) message += ` ${report.warnings.join(' ')}`;
       break;
+    }
     case 'export':
       return { json: await exportData() };
   }
-  return workspaceView();
+  const view = await workspaceView();
+  return message ? { view, message } : { view };
 }
 
 export function registerWorkspaceMessages(): void {
@@ -558,7 +566,7 @@ export function registerWorkspaceMessages(): void {
       return false;
     }
     void handle(parsed.data)
-      .then(data => respond({ ok: true, view: data }))
+      .then(data => respond('json' in data ? { ok: true, view: data } : { ok: true, view: data.view, message: data.message }))
       .catch((e: unknown) => respond({ ok: false, error: e instanceof Error ? e.message : 'Something went wrong.' }));
     return true;
   });

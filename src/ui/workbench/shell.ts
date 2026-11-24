@@ -8,6 +8,7 @@
 
 import './tokens.css';
 import './app.css';
+import * as api from './api';
 import { send, sendWorkspace, view, workspace, type CampaignView, type Request, type WorkspaceView } from './api';
 import { button, div, el, icon, isEditing, restoreForm, snapshotForm, text } from './dom';
 import { overview, overviewHeader } from './screens/overview';
@@ -99,6 +100,8 @@ let current: Route = 'overview';
 let state: CampaignView | null = null;
 let shop: WorkspaceView | null = null;
 let error = '';
+/** A short confirmation of what just happened, cleared on the next action. */
+let note = '';
 /** What the last render drew, so a refresh that changes nothing does not rebuild the page. */
 let drawn = '';
 /** State that arrived while the person was typing, applied once they stop. */
@@ -222,8 +225,11 @@ function render(force = false): void {
     },
     run: async request => {
       try {
-        if (request.kind === 'workspace') shop = await sendWorkspace(request);
-        else state = await send(request);
+        note = '';
+        if (request.kind === 'workspace') {
+          shop = await sendWorkspace(request);
+          note = api.lastMessage;
+        } else state = await send(request);
         // An action on one side can change the other — queueing a job, or a profile edit that re-qualifies the
         // shortlist — so both are re-read rather than guessing which moved.
         const [a, b] = await Promise.all([view(), workspace().catch(() => shop)]);
@@ -240,6 +246,7 @@ function render(force = false): void {
       if (route === current) return;
       current = route;
       error = '';
+      note = '';
       // pushState, not replaceState: moving between screens should be undoable with the browser's Back button.
       history.pushState({ route }, '', `#${route}`);
       render(true);
@@ -276,6 +283,7 @@ function render(force = false): void {
     text('div', 'crumb', state.campaign ? `Campaigns / ${state.campaign.name}` : 'Campaigns'),
     head,
     error ? div('banner banner-error', [icon('alert', 18), error]) : null,
+    note ? div('banner banner-note', [icon('check', 18), note]) : null,
     body,
   ]);
 
@@ -313,7 +321,13 @@ export async function mount(): Promise<void> {
   if (hash) current = hash;
   root.replaceChildren(div('empty', [text('div', 'empty-title', 'Loading your campaign…')]));
   try {
-    const [a, b] = await Promise.all([view(), workspace().catch(() => null)]);
+    const [a, b] = await Promise.all([
+      view(),
+      workspace().catch((e: unknown) => {
+        error = `Your profile and jobs could not be loaded: ${e instanceof Error ? e.message : 'unknown error'}`;
+        return null;
+      }),
+    ]);
     state = a;
     shop = b;
   } catch (e) {

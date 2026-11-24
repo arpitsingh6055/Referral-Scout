@@ -14,8 +14,13 @@ interface Reply<T> {
   ok: boolean;
   view?: T;
   data?: unknown;
+  /** What the action did, shown to the person so a click is never silent. */
+  message?: string;
   error?: string;
 }
+
+/** The last message the background sent back, read by the shell after an action. */
+export let lastMessage = '';
 
 async function ask<T>(request: unknown): Promise<Reply<T>> {
   const reply = (await chrome.runtime.sendMessage(request).catch(() => undefined)) as Reply<T> | undefined;
@@ -33,6 +38,7 @@ export async function send(request: CampaignRequest): Promise<CampaignView> {
 export async function sendWorkspace(request: WorkspaceRequest): Promise<WorkspaceView> {
   const reply = await ask<WorkspaceView>(request);
   if (!reply.view) throw new Error('Referral Scout returned nothing.');
+  lastMessage = reply.message ?? '';
   return reply.view;
 }
 

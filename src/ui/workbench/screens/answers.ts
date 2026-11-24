@@ -47,7 +47,7 @@ function row(fact: FactRow, ctx: Ctx): HTMLElement {
 
 export function answers(ctx: Ctx): HTMLElement {
   const w = ctx.workspace;
-  if (!w) return empty('Loading your answers…', 'One moment.');
+  if (!w) return empty('Your answers could not be loaded', 'The message above says why. Reload the extension, then reopen this page.');
 
   const page = div('stack');
   const verified = w.facts.filter(f => f.status === 'verified').length;

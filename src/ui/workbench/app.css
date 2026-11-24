@@ -946,3 +946,10 @@ details .inline input[type='checkbox'] {
 .card-link .pill {
   white-space: nowrap;
 }
+
+/* Confirmation of what an action actually did, so a click is never silent. */
+.banner-note {
+  background: var(--green-tint);
+  color: var(--green);
+  border: 1px solid color-mix(in srgb, var(--green) 40%, transparent);
+}

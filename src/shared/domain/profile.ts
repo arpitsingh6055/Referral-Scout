@@ -226,6 +226,33 @@ export function documentFor(profile: CandidateProfile, roleFamily?: string): Doc
   return cvs.find(d => d.isDefault) ?? cvs.find(d => d.kind === 'cv') ?? cvs[0];
 }
 
+/**
+ * The profile as the job matcher needs it. Experience is derived from the employment records rather than stored
+ * separately, so the two can never disagree.
+ */
+export interface MatchRequirements {
+  authorisedIn: string[];
+  needsSponsorship?: boolean;
+  yearsExperience?: number;
+  skills: string[];
+  preferredLocations: string[];
+  preferredWorkModes: string[];
+  preferredEmploymentTypes: string[];
+}
+
+export function requirementsFrom(profile: CandidateProfile, now = Date.now()): MatchRequirements {
+  const years = yearsOfExperience(profile.employment, now);
+  return {
+    authorisedIn: profile.eligibility.authorisedIn,
+    ...(profile.eligibility.needsSponsorship !== undefined ? { needsSponsorship: profile.eligibility.needsSponsorship } : {}),
+    ...(years !== undefined ? { yearsExperience: years } : {}),
+    skills: profile.skills.map(s => s.skill),
+    preferredLocations: profile.preferences.locations,
+    preferredWorkModes: profile.preferences.workModes,
+    preferredEmploymentTypes: profile.preferences.employmentTypes,
+  };
+}
+
 /* ---------- conflicts ---------- */
 export interface Conflict {
   key: string;
