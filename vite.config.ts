@@ -7,7 +7,11 @@ const manifestPlugin: Plugin = {
   }
 };
 
-export default defineConfig(({ mode }) => mode === "apply" ? {
+export default defineConfig(({ mode }) => mode === "preview" ? {
+  // A design-review build of the workbench with sample data. Never part of the extension package.
+  base: "./",
+  build: { outDir: "preview", emptyOutDir: true, target: "chrome120", rollupOptions: { input: { preview: "preview.html" }, output: { inlineDynamicImports: true, entryFileNames: "preview.js", assetFileNames: "preview[extname]" } } }
+} : mode === "apply" ? {
   publicDir: false,
   build: {
     emptyOutDir: false, target: "chrome120",
@@ -25,7 +29,7 @@ export default defineConfig(({ mode }) => mode === "apply" ? {
   build: {
     target: "chrome120",
     rollupOptions: {
-      input: { sidepanel: "sidepanel.html", "service-worker": "src/background/service-worker.ts" },
+      input: { sidepanel: "sidepanel.html", workbench: "workbench.html", "service-worker": "src/background/service-worker.ts" },
       output: { entryFileNames: "[name].js", chunkFileNames: "chunks/[name]-[hash].js" }
     }
   }

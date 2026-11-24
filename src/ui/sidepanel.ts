@@ -18,6 +18,10 @@ import { buildSaved, buildReferrals, jobChooser } from './jobs';
 import { buildPeople } from './people';
 import { buildActivity } from './activity';
 import { applyHome } from './apply';
+import { renderCampaignCard } from './side-panel/campaign-card';
+
+/** Where the compact campaign card is drawn; it survives redraws so the panel does not flicker. */
+const campaignHost = node('div', '', 'rs-campaign-host');
 
 /** The running build, so it is easy to tell whether the extension was reloaded after an update. */
 const version = (globalThis as { chrome?: typeof chrome }).chrome?.runtime?.getManifest?.().version ?? '';
@@ -29,6 +33,10 @@ function render(s: NetworkState): void {
   flags.uid = 0;
   const scroll = document.scrollingElement?.scrollTop ?? 0;
   page.replaceChildren();
+  // The campaign card sits above everything and draws itself only once a campaign exists, so the panel is
+  // unchanged for anyone who has not started one.
+  page.append(campaignHost);
+  void renderCampaignCard(campaignHost).catch(() => campaignHost.replaceChildren());
   if (!s.usageConsent) {
     page.append(consentGate());
     return;

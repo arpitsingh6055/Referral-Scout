@@ -2,7 +2,14 @@ import { readFile, access, readdir } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 const manifest = JSON.parse(await readFile('dist/manifest.json', 'utf8'));
 assert.equal(manifest.manifest_version, 3);
-assert.deepEqual(manifest.host_permissions, ['https://www.linkedin.com/*', 'https://linkedin.com/*', 'https://chatgpt.com/*']);
+assert.deepEqual(manifest.host_permissions, [
+  'https://www.linkedin.com/*',
+  'https://linkedin.com/*',
+  'https://chatgpt.com/*',
+  // Gmail is driven through the person's own signed-in tab rather than the Gmail API: its restricted read scopes
+  // would require a third-party security assessment before the extension could ship.
+  'https://mail.google.com/*',
+]);
 // Nothing broad is granted at install. Optional sites are asked for one at a time, when the person acts: the OpenAI API
 // when they save an API key, LinkedIn's image server when they choose to use their profile photo, and one job site's
 // address when they press "Fill this application" there (the pattern only allows asking; each site is its own grant).
@@ -18,6 +25,9 @@ for (const file of [
   ...manifest.content_scripts.flatMap(s => s.js),
   ...Object.values(manifest.icons ?? {}),
   'apply.js',
+  // The workbench is an extension-hosted page, not a separate web app: it must ship inside the package.
+  'workbench.html',
+  'workbench.js',
 ]) {
   await access(`dist/${file}`);
 }
