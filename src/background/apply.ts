@@ -263,6 +263,7 @@ function merge(
 /* ---------- the session ---------- */
 /** One fill per tab: each tab's application has its own record and its own run. */
 const sessionKey = (tabId: number) => `${SESSION_KEY}:${tabId}`;
+export const loadApplySession = (tabId: number): Promise<ApplySession | undefined> => loadSession(tabId);
 const loadSession = async (tabId: number | undefined): Promise<ApplySession | undefined> =>
   tabId === undefined ? undefined : await read<ApplySession>(sessionKey(tabId));
 const runs = new Map<number, AbortController>();
@@ -1619,7 +1620,13 @@ async function run(tabId: number, task: (signal: AbortSignal) => Promise<void>):
     if (runs.get(tabId) === controller) runs.delete(tabId);
   }
 }
+export const applyRunning = (tabId: number): boolean => isRunning(tabId);
 const signature = (p: { form: FormField[]; step: string }): string => `${p.step}|${p.form.map(f => f.label).join('|')}`;
+/**
+ * Starts the per-tab fill engine on one tab. The campaign runner calls this instead of the side panel's Fill button;
+ * everything below is unchanged, so the queue drives exactly the engine that is already known to work.
+ */
+export const startApplyOnTab = (tabId: number): Promise<void> => start(tabId);
 async function start(tabId: number, attempt = 1): Promise<void> {
   const tab = await chrome.tabs.get(tabId);
   const old = await loadSession(tabId);
