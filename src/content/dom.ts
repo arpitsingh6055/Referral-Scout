@@ -39,6 +39,7 @@ export function guard(signal: AbortSignal): void {
   if (find(selectors[site].challenge) || /checkpoint|challenge/.test(location.pathname))
     throw new Error('HALT: CAPTCHA or checkpoint detected');
   if (site === 'linkedin' && find(selectors.linkedin.login)) throw new Error('HALT: Signed out');
+  if (site === 'gmail' && find(selectors.gmail.login)) throw new Error('HALT: Signed out of Google');
   const notices = queryAll('[role="alert"], [role="alertdialog"], [role="status"]')
     .filter(visible)
     .map(e => (e as HTMLElement).innerText)
