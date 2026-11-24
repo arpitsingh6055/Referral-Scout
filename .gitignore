@@ -35,3 +35,7 @@ captures/
 
 coursera-quiz-ai-solver
 *.env
+Referral_Scout_Complete_Extension_Software_Specification.docx
+# Design-review build of the workbench; never part of the extension package
+preview/
+preview-workbench.html
