@@ -38,7 +38,9 @@ export function trustedExtension(sender: chrome.runtime.MessageSender, id: strin
             return false;
           }
         })()) &&
-      ['/options.html', '/sidepanel.html', '/onboarding.html', '/service-worker.js'].includes(url.pathname)
+      // Every extension page allowed to talk to the background. A page missing from this list is rejected
+      // silently, which looks to the person like the extension is not running at all.
+      ['/options.html', '/sidepanel.html', '/onboarding.html', '/workbench.html', '/service-worker.js'].includes(url.pathname)
     );
   } catch {
     return false;
