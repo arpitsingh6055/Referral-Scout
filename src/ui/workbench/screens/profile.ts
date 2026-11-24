@@ -284,6 +284,8 @@ export function profile(ctx: Ctx): HTMLElement {
   const country = input(p.identity.country ?? '');
   const address = input(p.identity.address ?? '');
   const postalCode = input(p.identity.postalCode ?? '');
+  const profileUrl = input(p.identity.profileUrl ?? '', { placeholder: 'https://www.linkedin.com/in/…' });
+  const portfolioLinks = input((p.identity.portfolioLinks ?? []).join(', '), { placeholder: 'https://github.com/…, https://…' });
 
   page.append(
     card('Identity and contact', {
@@ -298,6 +300,8 @@ export function profile(ctx: Ctx): HTMLElement {
           field('Country', country),
           field('Address', address),
           field('PIN / postal code', postalCode),
+          field('LinkedIn profile URL', profileUrl),
+          field('Portfolio or GitHub links (comma separated)', portfolioLinks),
         ]),
         div('inline', [
           button('Save', 'btn btn-primary', () =>
@@ -313,6 +317,11 @@ export function profile(ctx: Ctx): HTMLElement {
                 country: country.value.trim(),
                 address: address.value.trim(),
                 postalCode: postalCode.value.trim(),
+                profileUrl: profileUrl.value.trim(),
+                portfolioLinks: portfolioLinks.value
+                  .split(',')
+                  .map(link => link.trim())
+                  .filter(Boolean),
               },
             }),
           ),
@@ -320,6 +329,18 @@ export function profile(ctx: Ctx): HTMLElement {
       ],
     }),
   );
+
+  if (p.narrative.strengths || p.narrative.careerGoal) {
+    page.append(
+      card('Profile summary (from ChatGPT reconciliation)', {
+        sub: 'Prepared from your CV and LinkedIn sources to guide job matching and written answers.',
+        body: [
+          p.narrative.strengths ? div('rule-row', [div('', [text('div', 'rule-name', 'Key strengths'), text('div', 'rule-note', p.narrative.strengths)])]) : null,
+          p.narrative.careerGoal ? div('rule-row', [div('', [text('div', 'rule-name', 'Career goal'), text('div', 'rule-note', p.narrative.careerGoal)])]) : null,
+        ],
+      }),
+    );
+  }
 
   /* education */
   page.append(
@@ -572,30 +593,23 @@ export function profile(ctx: Ctx): HTMLElement {
               text('p', '', 'Read your own LinkedIn profile first so the CV is associated with the right candidate. You can skip the CV entirely and add it later.'),
             ]),
         w.cv.hasText
-          ? div('', [
-              div('note note-violet', [
-                text(
-                  'p',
-                  '',
-                  w.aiProfileDraft
-                    ? 'ChatGPT has prepared a draft. Review source conflicts and approve it before records are added.'
-                    : 'Your CV is saved as source evidence. ChatGPT will reconcile it with LinkedIn and prepare a draft; nothing is added automatically.',
-                ),
-              ]),
-              div('inline', [
-                w.cvName
-                  ? button('Delete CV', 'btn btn-danger', async () => {
-                      if (confirm('Delete your CV and its extracted text from this device?'))
-                        await ctx.runNetwork({ kind: 'network', action: 'deleteCv' });
-                    })
-                  : null,
-              ]),
+          ? div('note note-violet', [
+              text(
+                'p',
+                '',
+                w.aiProfileDraft
+                  ? 'ChatGPT has prepared a draft. Review source conflicts and approve it before records are added.'
+                  : 'Your CV is saved as source evidence. ChatGPT will reconcile it with LinkedIn and prepare a draft; nothing is added automatically.',
+              ),
             ])
           : null,
-        w.cvName && !w.cv.hasText
-          ? button('Delete CV', 'btn btn-danger', async () => {
-              if (confirm('Delete your CV from this device?')) await ctx.runNetwork({ kind: 'network', action: 'deleteCv' });
-            })
+        w.cvName || w.cv.hasText
+          ? div('inline', [
+              button('Delete CV', 'btn btn-danger', async () => {
+                if (confirm('Delete your CV and its extracted text from this device?'))
+                  await ctx.runNetwork({ kind: 'network', action: 'deleteCv' });
+              }),
+            ])
           : null,
       ],
     }),

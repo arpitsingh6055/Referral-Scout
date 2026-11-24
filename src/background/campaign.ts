@@ -289,6 +289,8 @@ export async function confirmSubmission(id: string, outcome: 'submitted' | 'not-
 /* ---------- the view the UI draws ---------- */
 export interface QueueRow {
   id: string;
+  jobId?: string;
+  url?: string;
   company: string;
   title: string;
   ats: string;
@@ -371,6 +373,8 @@ export async function campaignView(): Promise<CampaignView> {
         const p = progressOf(t);
         return {
           id: t.id,
+          jobId: t.jobId,
+          url: t.url,
           company: t.company,
           title: t.title,
           ats: t.ats,

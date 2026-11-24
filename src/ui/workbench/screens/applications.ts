@@ -83,12 +83,23 @@ export function applications(ctx: Ctx): HTMLElement {
       'Create a campaign and shortlist some jobs; they arrive here as application tasks.',
       button('Create a campaign', 'btn btn-primary', () => ctx.go('setup')),
     );
-  if (!queue.length)
+  if (!queue.length) {
+    const discoveredCount = ctx.workspace?.jobs.length ?? 0;
     return empty(
       'The queue is empty',
-      'Shortlist jobs from the Jobs screen, or paste a job link. Each one becomes a durable task that survives a browser restart.',
-      button('Find jobs on LinkedIn', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' })),
+      discoveredCount
+        ? `You have ${plural(discoveredCount, 'discovered job')} ready to review in Jobs. Shortlist the ones you want, then add them to the queue.`
+        : 'Shortlist jobs from the Jobs screen, or paste a job link. Each one becomes a durable task that survives a browser restart.',
+      discoveredCount
+        ? div('inline', [
+            button(`Review ${discoveredCount} discovered ${discoveredCount === 1 ? 'job' : 'jobs'}`, 'btn btn-primary', () =>
+              ctx.go('jobs'),
+            ),
+            button('Find more jobs', 'btn', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' })),
+          ])
+        : button('Find jobs on LinkedIn', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' })),
     );
+  }
 
   const page = div('stack');
   page.append(

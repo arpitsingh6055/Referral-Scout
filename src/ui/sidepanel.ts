@@ -678,6 +678,7 @@ async function refresh(): Promise<void> {
     document.scrollingElement?.scrollTo({ top: 0 });
   }
   if (JSON.stringify(current) !== flags.signature) render(current);
+  else if (campaignHost.isConnected) void renderCampaignCard(campaignHost).catch(() => undefined);
 }
 /* Work done in the background (a search, a draft, a send, a ChatGPT fallback) is announced as a notification too,
    not only written to the Activity tab. Actions the user just pressed already notify on their own. */

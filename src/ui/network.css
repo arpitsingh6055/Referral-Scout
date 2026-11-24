@@ -133,6 +133,10 @@ a:hover {
   font-weight: 700;
   font-size: 15px;
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   letter-spacing: -0.1px;
 }
 .pill {
@@ -2030,12 +2034,13 @@ button.pill:focus-visible {
 /* ---------- campaign card (side panel) ---------- */
 /* The narrow surface gets status, one primary action and a door into the workbench — never a desktop table. */
 .rs-campaign {
-  background: #fff;
-  border: 1px solid #e2e6f0;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 14px;
   padding: 14px;
   margin-bottom: 12px;
-  box-shadow: 0 1px 2px rgb(21 27 53 / 4%);
+  box-shadow: var(--shadow);
+  color: var(--text);
 }
 
 .rs-campaign-head {
@@ -2047,6 +2052,7 @@ button.pill:focus-visible {
 .rs-campaign-name {
   font-weight: 650;
   font-size: 15px;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2059,18 +2065,18 @@ button.pill:focus-visible {
   padding: 2px 10px;
   font-size: 11px;
   font-weight: 700;
-  background: #f1f3f8;
-  color: #65718a;
+  background: var(--surface-2);
+  color: var(--muted);
 }
 
 .rs-campaign-state.is-running {
-  background: #e4f5ee;
-  color: #159b69;
+  background: var(--ok-soft);
+  color: var(--ok);
 }
 
 .rs-campaign-state.is-attention {
-  background: #fcf3e4;
-  color: #cb851b;
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 
 .rs-campaign-chips {
@@ -2084,29 +2090,31 @@ button.pill:focus-visible {
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
-  background: #f5f4ff;
+  background: var(--primary-soft);
   border-radius: 999px;
   padding: 3px 10px;
   font-size: 11.5px;
-  color: #65718a;
+  color: var(--muted);
 }
 
 .rs-chip b {
   font-size: 13px;
-  color: #151b35;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 
 .rs-chip-amber {
-  background: #fcf3e4;
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 
 .rs-chip-amber b {
-  color: #cb851b;
+  color: var(--warn);
 }
 
 .rs-campaign-next {
   font-size: 12.5px;
-  color: #65718a;
+  color: var(--muted);
   margin: 0 0 10px;
 }
 

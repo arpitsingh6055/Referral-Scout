@@ -62,7 +62,7 @@ export function button(label: string, className: string, onClick: () => void | P
           b.setAttribute('aria-busy', 'true');
           window.dispatchEvent(
             new CustomEvent('referral-scout-action-start', {
-              detail: typeof attrs['data-progress'] === 'string' ? String(attrs['data-progress']) : 'Working… Your changes are being saved.',
+              detail: typeof attrs['data-progress'] === 'string' ? String(attrs['data-progress']) : 'Working…',
             }),
           );
           return Promise.resolve(result).finally(() => {
@@ -96,7 +96,7 @@ export function button(label: string, className: string, onClick: () => void | P
 export async function withActionFeedback<T>(message: string, work: () => Promise<T>): Promise<T> {
   if (actionInFlight > 0) throw new Error('Another Referral Scout action is still running. Please wait for it to finish.');
   actionInFlight += 1;
-  window.dispatchEvent(new CustomEvent('referral-scout-action-start', { detail: message }));
+  window.dispatchEvent(new CustomEvent('referral-scout-action-start', { detail: message || 'Working…' }));
   try {
     return await work();
   } finally {

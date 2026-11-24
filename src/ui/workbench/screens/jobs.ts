@@ -62,8 +62,9 @@ function evidenceList(job: JobRow): HTMLElement {
   );
 }
 
-function detail(job: JobRow, ctx: Ctx): HTMLElement {
+function detail(job: JobRow, ctx: Ctx, queuedRefs: Set<string>): HTMLElement {
   const blocked = job.tier === 'blocked';
+  const alreadyQueued = queuedRefs.has(job.id) || queuedRefs.has(job.url);
   return div('card', [
     div('card-head', [
       div('', [
@@ -123,26 +124,30 @@ function detail(job: JobRow, ctx: Ctx): HTMLElement {
         : button('Shortlist', 'btn btn-primary', () =>
             ctx.run({ kind: 'workspace', action: 'judgeJob', id: job.id, judgement: 'shortlisted' }),
           ),
-      button('Add to application queue', 'btn', () =>
-        ctx.run({
-          kind: 'campaign',
-          action: 'enqueue',
-          jobs: [
-            {
-              jobId: job.id,
-              url: job.url,
-              company: job.company,
-              title: job.title,
-              location: job.location,
-              fit: job.fit,
-              route: job.applyType === 'easy-apply' ? 'easy-apply' : job.applyType === 'ats' ? 'external' : 'unknown',
-              source: job.source,
-              ...(job.postedAt ? { postedAt: job.postedAt } : {}),
-            },
-          ],
-        }),
-      ),
-      button('Not for me', 'btn', () => ctx.run({ kind: 'workspace', action: 'judgeJob', id: job.id, judgement: 'rejected' })),
+      alreadyQueued
+        ? button('View in queue', 'btn', () => ctx.go('applications'))
+        : button('Add to application queue', 'btn', () =>
+            ctx.run({
+              kind: 'campaign',
+              action: 'enqueue',
+              jobs: [
+                {
+                  jobId: job.id,
+                  url: job.url,
+                  company: job.company,
+                  title: job.title,
+                  location: job.location,
+                  fit: job.fit,
+                  route: job.applyType === 'easy-apply' ? 'easy-apply' : job.applyType === 'ats' ? 'external' : 'unknown',
+                  source: job.source,
+                  ...(job.postedAt ? { postedAt: job.postedAt } : {}),
+                },
+              ],
+            }),
+          ),
+      job.judgement === 'rejected'
+        ? button('Restore job', 'btn', () => ctx.run({ kind: 'workspace', action: 'judgeJob', id: job.id, judgement: 'none' }))
+        : button('Not for me', 'btn', () => ctx.run({ kind: 'workspace', action: 'judgeJob', id: job.id, judgement: 'rejected' })),
       button('Open posting', 'btn', () => {
         window.open(job.url, '_blank', 'noopener');
       }),
@@ -150,8 +155,9 @@ function detail(job: JobRow, ctx: Ctx): HTMLElement {
   ]);
 }
 
-function row(job: JobRow, ctx: Ctx): HTMLElement {
+function row(job: JobRow, ctx: Ctx, queuedRefs: Set<string>): HTMLElement {
   const met = job.evidence.filter(e => e.state === 'met').length;
+  const inQueue = queuedRefs.has(job.id) || queuedRefs.has(job.url);
   return div('row row-queue', [
     div('row-title', [
       text('div', 'row-company', job.company),
@@ -162,7 +168,7 @@ function row(job: JobRow, ctx: Ctx): HTMLElement {
     div('', [pill(job.tier === 'blocked' ? 'Not eligible' : `Fit ${job.fit}`, TIER_TONE[job.tier] ?? 'grey')]),
     div('col-hide', [text('div', 'cell-muted', job.postedAt ? ago(job.postedAt) : 'date unknown')]),
     div('inline', [
-      job.judgement === 'shortlisted' ? pill('Shortlisted', 'green') : null,
+      inQueue ? pill('In queue', 'blue') : job.judgement === 'shortlisted' ? pill('Shortlisted', 'green') : job.judgement === 'rejected' ? pill('Dismissed', 'red') : null,
       button(openJob === job.id ? 'Hide' : 'Why?', 'btn btn-sm', () => {
         openJob = openJob === job.id ? null : job.id;
         ctx.redraw();
@@ -173,9 +179,11 @@ function row(job: JobRow, ctx: Ctx): HTMLElement {
 
 export function jobs(ctx: Ctx): HTMLElement {
   const all = ctx.workspace?.jobs ?? [];
+  const queuedUrls = new Set(ctx.view.queue.flatMap(q => [q.jobId, q.url].filter((v): v is string => !!v)));
   if (!all.length) {
     const page = div('stack');
     const search = ctx.workspace?.jobSearch;
+    const linkedinConnected = !!ctx.workspace?.connections.linkedin;
     if (search?.status === 'finding') {
       page.append(div('banner banner-progress', [
         icon('search', 18),
@@ -184,11 +192,15 @@ export function jobs(ctx: Ctx): HTMLElement {
       ]));
     }
     page.append(empty(
-      search?.status === 'choosing' ? 'No suitable jobs in this search' : 'No jobs discovered yet',
+      search?.status === 'choosing' ? 'No suitable jobs in this search' : linkedinConnected ? 'No jobs discovered yet' : 'Connect LinkedIn first',
       search?.status === 'choosing'
         ? 'The search finished without producing jobs to review. Try broadening the role or location in Campaign.'
-        : 'Start a LinkedIn Jobs search using the roles and location saved in Campaign. Referral Scout searches related titles, reads available descriptions and ranks them against your CV and LinkedIn background.',
-      button(search?.status === 'finding' ? 'Search is running' : 'Find jobs on LinkedIn', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' }), { disabled: search?.status === 'finding' }),
+        : linkedinConnected
+          ? 'Start a LinkedIn Jobs search using the roles and location saved in Campaign. Referral Scout searches related titles, reads available descriptions and ranks them against your CV and LinkedIn background.'
+          : 'Read your own LinkedIn profile in Candidate profile first so Referral Scout can verify your session before searching LinkedIn Jobs.',
+      linkedinConnected
+        ? button(search?.status === 'finding' ? 'Search is running' : 'Find jobs on LinkedIn', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' }), { disabled: search?.status === 'finding' })
+        : button('Open Candidate profile', 'btn btn-primary', () => ctx.go('profile')),
     ));
     return page;
   }
@@ -260,14 +272,14 @@ export function jobs(ctx: Ctx): HTMLElement {
       shown.length
         ? div(
             'rows',
-            shown.map(j => row(j, ctx)),
+            shown.map(j => row(j, ctx, queuedUrls)),
           )
         : text('p', 'cell-muted', 'Nothing in this view.'),
     ],
   });
 
   const side = selected
-    ? detail(selected, ctx)
+    ? detail(selected, ctx, queuedUrls)
     : card('Why a job is here', {
         body: [
           div('note note-violet', [

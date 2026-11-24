@@ -83,6 +83,18 @@ export function overview(ctx: Ctx): HTMLElement {
   page.append(card('Campaign progress', { sub: 'The two engines run independently; neither waits for the other.', body: [strip] }));
 
   const nextUp = queue.filter(q => q.state !== 'submitted' && q.state !== 'skipped').slice(0, 3);
+  const interactiveRow = (rowEl: HTMLElement, target: 'applications' | 'needs-you'): HTMLElement => {
+    rowEl.tabIndex = 0;
+    rowEl.setAttribute('role', 'button');
+    rowEl.addEventListener('click', () => ctx.go(target));
+    rowEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        ctx.go(target);
+      }
+    });
+    return rowEl;
+  };
   const queueCard = card('Application queue', {
     sub: 'Jobs are processed automatically; exceptions move to Needs you.',
     link: button(`View all ${counts.total}`, 'btn-link', () => ctx.go('applications')),
@@ -91,18 +103,21 @@ export function overview(ctx: Ctx): HTMLElement {
         ? div(
             'rows',
             nextUp.map(row =>
-              div('row row-compact', [
-                div('row-title', [
-                  text('div', 'row-company', row.company),
-                  text('div', 'cell-strong', row.title),
-                  text('div', 'cell-muted', `${row.stateLabel}${row.note ? ` · ${row.note}` : ''}`),
+              interactiveRow(
+                div('row row-compact row-clickable', [
+                  div('row-title', [
+                    text('div', 'row-company', row.company),
+                    text('div', 'cell-strong', row.title),
+                    text('div', 'cell-muted', `${row.stateLabel}${row.note ? ` · ${row.note}` : ''}`),
+                  ]),
+                  progress(
+                    row.percent,
+                    row.progressLabel,
+                    row.state === 'submitted' ? 'green' : row.state === 'needs-you' ? 'amber' : 'violet',
+                  ),
                 ]),
-                progress(
-                  row.percent,
-                  row.progressLabel,
-                  row.state === 'submitted' ? 'green' : row.state === 'needs-you' ? 'amber' : 'violet',
-                ),
-              ]),
+                'applications',
+              ),
             ),
           )
         : text('p', 'cell-muted', 'No applications are queued yet. Find jobs, review the matches and shortlist the roles you want to pursue.'),
@@ -119,13 +134,16 @@ export function overview(ctx: Ctx): HTMLElement {
             inbox
               .slice(0, 4)
               .map(item =>
-                div('row row-compact', [
-                  div('row-title', [
-                    text('div', 'cell-strong clamp', item.prompt),
-                    text('div', 'cell-muted', `${item.kindLabel} · ${plural(item.affected.length, 'application')}`),
+                interactiveRow(
+                  div('row row-compact row-clickable', [
+                    div('row-title', [
+                      text('div', 'cell-strong clamp', item.prompt),
+                      text('div', 'cell-muted', `${item.kindLabel} · ${plural(item.affected.length, 'application')}`),
+                    ]),
+                    pill(item.kindLabel, item.kind === 'submission-uncertain' ? 'red' : item.kind === 'written-review' ? 'blue' : 'amber'),
                   ]),
-                  pill(item.kindLabel, item.kind === 'submission-uncertain' ? 'red' : item.kind === 'written-review' ? 'blue' : 'amber'),
-                ]),
+                  'needs-you',
+                ),
               ),
           )
         : text('p', 'cell-muted', 'Nothing is waiting on you.'),
@@ -179,6 +197,8 @@ export const overviewHeader = (ctx: Ctx): { title: string; sub: string; status?:
   const c = ctx.view.campaign;
   if (!c) return { title: 'Referral Scout', sub: 'Set your target once and let the queues build themselves.', actions: [] };
   const running = c.status === 'running' || c.status === 'stopping';
+  const discovered = ctx.workspace?.jobs ?? [];
+  const shortlisted = discovered.filter(j => j.judgement === 'shortlisted').length;
   return {
     title: c.name,
     sub: `${c.targetRoles.join(' · ')} — ${c.location}`,
@@ -190,11 +210,18 @@ export const overviewHeader = (ctx: Ctx): { title: string; sub: string; status?:
           ? button('Searching for jobs…', 'btn btn-primary', () => ctx.go('jobs'), { disabled: true })
           : ctx.workspace?.jobSearch?.status === 'choosing'
             ? button('Review discovered jobs', 'btn btn-primary', () => ctx.go('jobs'))
-            : ctx.view.counts.queued === 0
-              ? button('Find jobs on LinkedIn', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' }))
-              : button('Start application queue', 'btn btn-primary', () =>
-                  ctx.run({ kind: 'campaign', action: 'control', control: c.status === 'paused' ? 'resume' : 'start' }),
-                ),
+            : ctx.view.counts.queued === 0 && shortlisted > 0
+              ? button(`Queue ${shortlisted} shortlisted`, 'btn btn-primary', async () => {
+                  await ctx.run({ kind: 'workspace', action: 'enqueueShortlisted' });
+                  ctx.go('applications');
+                })
+              : ctx.view.counts.queued === 0 && discovered.length > 0
+                ? button(`Review ${discovered.length} jobs`, 'btn btn-primary', () => ctx.go('jobs'))
+                : ctx.view.counts.queued === 0
+                  ? button('Find jobs on LinkedIn', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' }))
+                  : button('Start application queue', 'btn btn-primary', () =>
+                      ctx.run({ kind: 'campaign', action: 'control', control: c.status === 'paused' ? 'resume' : 'start' }),
+                    ),
     ],
   };
 };
