@@ -3,15 +3,29 @@ import { registerAiMessages, pruneAiJobs } from './network-ai';
 import { registerNetworkMessages } from './network-messages';
 import { registerApplyMessages } from './apply';
 import { networkTick, updateNetwork } from './network';
+import { registerCampaignMessages, migrateAnswerBank } from './campaign';
+import { registerGmailMessages } from './gmail';
+import { applySurfaceBehaviour, installMenus, registerSurfaceMessages, registerSurfaces } from './surfaces';
+import { registerWorkspaceMessages, seedProfile } from './workspace';
+import { registerRunner, ensureRunnerAlarm, recoverQueue, tick, abortAll } from './runner';
 registerNetworkMessages();
 registerAiMessages();
 registerApplyMessages();
+registerCampaignMessages();
+registerGmailMessages();
+registerRunner();
+registerSurfaces();
+registerSurfaceMessages();
+registerWorkspaceMessages();
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === 'network-tick') void networkTick();
 });
 async function initialize(): Promise<void> {
   await chrome.storage.sync.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
-  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  // The toolbar opens whichever surface the person chose; the full page is the default because it can show the
+  // queue, the evidence and the inbox at once without squeezing any of them.
+  await applySurfaceBehaviour();
+  await installMenus();
   await openDatabase();
   // Saved people, jobs and answers live in the browser's local database; this keeps the browser from clearing it to
   // free space (unlimitedStorage exempts the extension's storage from eviction).
@@ -22,11 +36,18 @@ async function initialize(): Promise<void> {
   await chrome.alarms.clear('cv-progress');
   chrome.power.releaseKeepAwake();
   if (!(await chrome.alarms.get('network-tick'))) await chrome.alarms.create('network-tick', { periodInMinutes: 1 });
+  // The application queue outlives this service worker. Anything the previous generation left mid-form is handed
+  // back before the runner claims anything new, so a restart can never leave two workers on one application.
+  await recoverQueue().catch(() => undefined);
+  await migrateAnswerBank().catch(() => undefined);
+  // The profile screen should open with what the person already told LinkedIn and the application settings.
+  await seedProfile().catch(() => undefined);
+  await ensureRunnerAlarm();
 }
 // After an install or update, tabs that were already open keep running the old content script, or none at all: the
 // browser injects the content script only on a fresh navigation. Put the current content script into those tabs now
 // so LinkedIn and ChatGPT work right away, without the person refreshing every open tab after a reload or update.
-const CONTENT_HOSTS = ['https://www.linkedin.com/*', 'https://linkedin.com/*', 'https://chatgpt.com/*'];
+const CONTENT_HOSTS = ['https://www.linkedin.com/*', 'https://linkedin.com/*', 'https://chatgpt.com/*', 'https://mail.google.com/*'];
 async function injectOpenTabs(): Promise<void> {
   const tabs = await chrome.tabs.query({ url: CONTENT_HOSTS }).catch(() => []);
   await Promise.all(
@@ -74,6 +95,8 @@ chrome.runtime.onInstalled.addListener(() => {
   );
 });
 chrome.runtime.onStartup.addListener(() => {
-  void initialize().then(() => networkTick());
+  // Tab ids start again after a restart, so every in-flight worker from the last session is already invalid.
+  abortAll();
+  void initialize().then(() => Promise.all([networkTick(), tick()]));
 });
 void initialize().catch(console.error);
