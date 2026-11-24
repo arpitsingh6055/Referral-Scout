@@ -53,6 +53,24 @@ const MENU_TAB = 'rs-open-tab';
 const MENU_PANEL = 'rs-open-panel';
 
 /**
+ * Menu installation runs once per service-worker generation.
+ *
+ * `initialize()` is reached from the module's own top level, from onInstalled and from onStartup, and on an
+ * install the first two overlap. Both would clear the menus and then both would create them, so the second
+ * create fails with a duplicate id. Memoising the promise means concurrent callers await the same run.
+ */
+let menus: Promise<void> | undefined;
+
+/** `create` reports failure through lastError; reading it in the callback is what stops the console warning. */
+const createMenu = (properties: chrome.contextMenus.CreateProperties): Promise<void> =>
+  new Promise(resolve =>
+    chrome.contextMenus.create(properties, () => {
+      void chrome.runtime.lastError;
+      resolve();
+    }),
+  );
+
+/**
  * Registers the toolbar click and the right-click menu. The menu is what makes the non-default surface reachable
  * without a trip into settings — whichever one the toolbar does not do, the menu does.
  */
@@ -68,11 +86,17 @@ export function registerSurfaces(): void {
   });
 }
 
-export async function installMenus(): Promise<void> {
-  if (!chrome.contextMenus) return;
-  await new Promise<void>(resolve => chrome.contextMenus.removeAll(() => resolve()));
-  chrome.contextMenus.create({ id: MENU_TAB, title: 'Open Referral Scout dashboard', contexts: ['action'] });
-  chrome.contextMenus.create({ id: MENU_PANEL, title: 'Open Referral Scout side panel', contexts: ['action'] });
+export function installMenus(): Promise<void> {
+  if (!chrome.contextMenus) return Promise.resolve();
+  menus ??= (async () => {
+    await new Promise<void>(resolve => chrome.contextMenus.removeAll(() => resolve()));
+    await createMenu({ id: MENU_TAB, title: 'Open Referral Scout dashboard', contexts: ['action'] });
+    await createMenu({ id: MENU_PANEL, title: 'Open Referral Scout side panel', contexts: ['action'] });
+  })().catch(() => {
+    // A failed install should not poison the memo: the next generation may well succeed.
+    menus = undefined;
+  });
+  return menus;
 }
 
 /** The side panel's "Open dashboard" button comes through here, so tab reuse works from both surfaces. */

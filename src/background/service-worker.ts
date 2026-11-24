@@ -20,7 +20,18 @@ registerWorkspaceMessages();
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === 'network-tick') void networkTick();
 });
-async function initialize(): Promise<void> {
+let starting: Promise<void> | undefined;
+
+/** Runs once per service-worker generation; onInstalled, onStartup and the module's own call share one run. */
+function initialize(): Promise<void> {
+  starting ??= start().catch(error => {
+    starting = undefined;
+    throw error;
+  });
+  return starting;
+}
+
+async function start(): Promise<void> {
   await chrome.storage.sync.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
   // The toolbar opens whichever surface the person chose; the full page is the default because it can show the
   // queue, the evidence and the inbox at once without squeezing any of them.
@@ -83,20 +94,24 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
 // Earlier versions paused here on every reload, which left a "Resume" button on a panel that had never been started.
 chrome.runtime.onInstalled.addListener(() => {
   void injectOpenTabs();
-  void initialize().then(() =>
-    updateNetwork(s => {
-      if (s.paused && /^Ready when you are\./.test(s.status)) {
-        delete s.paused;
-        delete s.resumeTo;
-        s.status = '';
-      }
-      return s;
-    }),
-  );
+  void initialize()
+    .then(() =>
+      updateNetwork(s => {
+        if (s.paused && /^Ready when you are\./.test(s.status)) {
+          delete s.paused;
+          delete s.resumeTo;
+          s.status = '';
+        }
+        return s;
+      }),
+    )
+    .catch(console.error);
 });
 chrome.runtime.onStartup.addListener(() => {
   // Tab ids start again after a restart, so every in-flight worker from the last session is already invalid.
   abortAll();
-  void initialize().then(() => Promise.all([networkTick(), tick()]));
+  void initialize()
+    .then(() => Promise.all([networkTick(), tick()]))
+    .catch(console.error);
 });
 void initialize().catch(console.error);
