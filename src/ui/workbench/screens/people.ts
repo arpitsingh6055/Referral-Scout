@@ -63,7 +63,7 @@ function row(contact: ContactRow, ctx: Ctx): HTMLElement {
 
 export function people(ctx: Ctx): HTMLElement {
   const w = ctx.workspace;
-  if (!w) return empty('Loading your contacts…', 'One moment.');
+  if (!w) return empty('Your contacts could not be loaded', 'The message above says why. Reload the extension, then reopen this page.');
   const all = w.contacts;
 
   if (!all.length)

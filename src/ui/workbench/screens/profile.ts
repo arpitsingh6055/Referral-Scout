@@ -185,7 +185,7 @@ function projectForm(record: Partial<ProjectRecord>, ctx: Ctx): HTMLElement {
 /* ---------- the screen ---------- */
 export function profile(ctx: Ctx): HTMLElement {
   const w = ctx.workspace;
-  if (!w) return empty('Loading your profile…', 'One moment.');
+  if (!w) return empty('Your profile could not be loaded', 'The message above says why. Reload the extension, then reopen this page.');
   const p = w.profile;
 
   const page = div('stack');

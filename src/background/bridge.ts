@@ -12,10 +12,19 @@
  */
 
 import { getNetwork } from './network';
-import { requirements } from './workspace';
-import { allContacts, allJobs, resolveCompany, saveContacts, saveJobs, activeCampaign } from '../shared/persistence/campaign-store';
+import { enqueueJobs } from './campaign';
+import {
+  activeCampaign,
+  allContacts,
+  allJobs,
+  getProfile,
+  resolveCompany,
+  saveContacts,
+  saveJobs,
+} from '../shared/persistence/campaign-store';
 import { canonicalJobUrl, dedupeKey, normalizeTitle, qualify, type Availability, type Job } from '../shared/domain/job';
 import { personKeyOf, type Contact, type ContactCategory, type Relationship } from '../shared/domain/outreach';
+import { requirementsFrom } from '../shared/domain/profile';
 import type { FoundJob } from '../shared/jobsearch';
 import type { NetworkContact } from '../shared/network';
 import { parseEmploymentType, parseSeniority, parseWorkMode, hashText } from '../connectors/job-sources';
@@ -71,7 +80,9 @@ export async function importJobs(now = Date.now()): Promise<{ added: number; upd
   const found = network?.jobSearch?.found ?? [];
   if (!found.length) return { added: 0, updated: 0 };
 
-  const [existing, reqs] = await Promise.all([allJobs(), requirements()]);
+  const [existing, profile] = await Promise.all([allJobs(), getProfile()]);
+  // The matcher's shape is the profile's own derived requirements; the cast narrows the open string unions.
+  const reqs = requirementsFrom(profile) as unknown as Parameters<typeof qualify>[1];
   const byUrl = new Map(existing.map(j => [canonicalJobUrl(j.canonicalUrl) ?? j.canonicalUrl, j]));
   const write: Job[] = [];
   let added = 0;
@@ -182,7 +193,6 @@ export async function syncFromNetwork(now = Date.now()): Promise<BridgeReport> {
 export async function enqueueShortlisted(): Promise<{ added: number; skipped: string[] }> {
   const campaign = (await activeCampaign()) ?? undefined;
   if (!campaign) throw new Error('Create a campaign first.');
-  const { enqueueJobs } = await import('./campaign');
   const jobs = await allJobs();
   const shortlisted = jobs.filter(j => j.userJudgement === 'shortlisted' && j.qualification?.tier !== 'blocked');
   if (!shortlisted.length) return { added: 0, skipped: [] };

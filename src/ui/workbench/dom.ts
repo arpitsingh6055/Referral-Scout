@@ -172,9 +172,14 @@ const slug = (s: string): string =>
     .replace(/^-|-$/g, '')
     .slice(0, 60);
 
+/**
+ * A key identifies the field, so it has to be as stable as the field is. A placeholder is prose — it gets
+ * reworded, and the key would change with it — so only an explicit key, a name or an accessible label is used.
+ * A control inside a labelled field gets the label instead, which is the usual case.
+ */
 function keyed<T extends HTMLElement>(node: T, attrs: Attrs): T {
   if (node.getAttribute(FIELD_KEY)) return node;
-  const derived = attrs['data-k'] ?? attrs['aria-label'] ?? attrs.name ?? attrs.placeholder;
+  const derived = attrs['data-k'] ?? attrs.name ?? attrs['aria-label'];
   if (derived) node.setAttribute(FIELD_KEY, slug(String(derived)));
   return node;
 }

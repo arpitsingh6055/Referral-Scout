@@ -19,7 +19,7 @@ function connection(name: string, connected: boolean, note: string, action?: HTM
 
 export function settings(ctx: Ctx): HTMLElement {
   const w = ctx.workspace;
-  if (!w) return empty('Loading settings…', 'One moment.');
+  if (!w) return empty('Settings could not be loaded', 'The message above says why. Reload the extension, then reopen this page.');
 
   const page = div('stack');
 

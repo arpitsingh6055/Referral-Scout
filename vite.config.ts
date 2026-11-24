@@ -28,9 +28,13 @@ export default defineConfig(({ mode }) => mode === "preview" ? {
   plugins: [manifestPlugin],
   build: {
     target: "chrome120",
+    // A service worker may not call import(): the HTML specification forbids it, and Vite's preload helper
+    // reaches for `document`, which a worker does not have. Both would only fail at runtime, so the worker's
+    // code is emitted without either.
+    modulePreload: false,
     rollupOptions: {
       input: { sidepanel: "sidepanel.html", workbench: "workbench.html", "service-worker": "src/background/service-worker.ts" },
-      output: { entryFileNames: "[name].js", chunkFileNames: "chunks/[name]-[hash].js" }
+      output: { entryFileNames: "[name].js", chunkFileNames: "chunks/[name]-[hash].js", inlineDynamicImports: false }
     }
   }
 });
