@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.56.3: progress you can follow, actions that cannot double-fire, and honest partial saves
+- LinkedIn profile import now reports its actual background milestones to the dashboard: opening the profile, checking the signed-in identity, reading profile details, and saving locally.
+- Import success is only shown after the response contains a verified LinkedIn profile and capture timestamp. If the profile record saves but the Candidate profile view cannot refresh, the dashboard says so and gives the recovery step.
+- Asynchronous buttons now change their label, show a spinner, expose `aria-busy`, and prevent duplicate mutating actions while work is in flight. Navigation remains available during long actions.
+- CV uploads use the same visible action feedback and duplicate-action guard from both Get started and Candidate profile.
+- Campaign creation/update no longer hides a partially completed save behind a generic failure. The campaign remains available and the dashboard lists which secondary preference/rules sync needs attention.
+- Candidate Profile and Settings show when the LinkedIn profile was last captured, and clarify that a saved profile record is not proof of a currently active LinkedIn session.
+- The first-run hero is shorter so the actionable setup cards appear sooner on typical laptop viewports.
+
 All versions below were built on 11 November 2026 on the `cleanup/linkedin-only` branch.
 What is and is not proven on the live site is recorded in `docs/live-verification.md`.
 
@@ -371,3 +380,13 @@ The product is now built around jobs, not general outreach.
 ## 0.9.0
 - Every LinkedIn reader rebuilt against the live site: by role, label and text instead of class names.
 - Removed 43 unreachable source files from the retired Gmail tool, Jobs mode and 14 of 16 storage tables.
+
+## 0.57.0 — 2026-11-25
+
+- Important background milestones now appear as floating notifications in the dashboard and side panel, with OS notifications when no visible extension surface can show the event.
+- Dashboard job discovery actions now invoke the LinkedIn search pipeline directly; application-queue start is clearly separated and labelled.
+- Overview and Jobs show live search/ranking progress and a finish-with-current-results action.
+- ChatGPT fit ranking now runs against full LinkedIn/CV evidence without requiring a manually selected specialisation.
+- Fit score and rationale are retained in canonical job records; unassessed results are labelled honestly instead of showing a false zero.
+- Matching also uses employment technologies and project skills; stale AI scores are hidden after profile version changes.
+- Jobs defaults to All results and no longer warns that there is no evidence when LinkedIn/CV source material is already present.
