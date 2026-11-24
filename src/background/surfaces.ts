@@ -1,13 +1,10 @@
 /**
  * Where the product opens.
  *
- * The full-page workbench is the default surface: it is the one that can show a queue table, a match explanation
- * and an inbox side by side without squeezing them, and it is easier to read for the long stretches this work
- * actually takes. The side panel stays available for quick control while the person is on LinkedIn, because
- * that is the moment a narrow strip beside the page beats a separate tab.
- *
- * Both read the same background state, so neither is a cut-down copy of the other — they are two views of one
- * campaign, and whichever is open is correct.
+ * Fresh installs open the side panel first because it is the natural extension entry point. The panel stays
+ * intentionally small: its first-run screen explains the next action and hands longer setup to the full dashboard.
+ * The dashboard owns profile preparation, CV review, campaigns and detailed work; both surfaces share the same
+ * background storage, and the user can change the toolbar default at any time.
  */
 
 import { read, write } from '../storage/state';
@@ -17,12 +14,12 @@ export type Surface = 'tab' | 'panel';
 const SURFACE_KEY = 'default-surface';
 const WORKBENCH = 'workbench.html';
 
-export const defaultSurface = async (): Promise<Surface> => (await read<Surface>(SURFACE_KEY)) ?? 'tab';
+export const defaultSurface = async (): Promise<Surface> => (await read<Surface>(SURFACE_KEY)) ?? 'panel';
 
 export async function setDefaultSurface(surface: Surface): Promise<void> {
   await write(SURFACE_KEY, surface);
   // The toolbar click behaviour has to match the choice, or the setting would be a label with nothing behind it.
-  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: surface === 'panel' }).catch(() => undefined);
+  await chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: surface === 'panel' })?.catch?.(() => undefined);
 }
 
 export const workbenchUrl = (route = ''): string => chrome.runtime.getURL(`${WORKBENCH}${route ? `#${route}` : ''}`);
@@ -117,5 +114,5 @@ export function registerSurfaceMessages(): void {
 }
 
 export async function applySurfaceBehaviour(): Promise<void> {
-  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: (await defaultSurface()) === 'panel' }).catch(() => undefined);
+  await chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: (await defaultSurface()) === 'panel' })?.catch?.(() => undefined);
 }

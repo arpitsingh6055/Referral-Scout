@@ -1,7 +1,7 @@
 /**
- * Usage recording. Only ever runs after the person has accepted the consent gate (see the setup screen). It records
- * the person once: a stable per-install uid, their display name, and their LinkedIn id. Nothing else is collected or
- * sent. Until USAGE_ENDPOINT is set it does nothing, so a build without the endpoint sends no data.
+ * Optional usage reporting. It runs only after the person explicitly opts in. It records one stable per-install uid,
+ * display name and LinkedIn handle per account so the developer can count users. Profile/CV contents, jobs, contacts
+ * and messages are not part of this usage record.
  */
 import { read, write } from '../storage/state';
 

@@ -30,7 +30,7 @@ import type { NetworkContact } from '../shared/network';
 import { parseEmploymentType, parseSeniority, parseWorkMode, hashText } from '../connectors/job-sources';
 
 /* ---------- jobs ---------- */
-function toJob(found: FoundJob, now: number): Job {
+function toJob(found: FoundJob, now: number, profileVersion: number): Job {
   const url = found.url;
   return {
     id: `job:linkedin:${found.id || hashText(url)}`,
@@ -53,6 +53,10 @@ function toJob(found: FoundJob, now: number): Job {
     // The ranking step writes one reason per job rather than a requirement list, so that is what there is to
     // match against. It is thin evidence and the Jobs screen says so rather than inventing bullet points.
     requirements: found.matched?.length ? [...found.matched] : [],
+    ...(typeof found.fit === 'number' && found.fitSource === 'chatgpt' ? { aiFit: Math.max(0, Math.min(100, Math.round(found.fit))) } : {}),
+    ...(typeof found.fit === 'number' && found.fitSource === 'specialization' ? { profileFit: Math.max(0, Math.min(100, Math.round(found.fit))) } : {}),
+    ...(found.fitSource ? { fitSource: found.fitSource, fitProfileVersion: profileVersion } : {}),
+    ...(found.why ? { aiWhy: found.why } : {}),
     responsibilities: [],
     applyType: 'unknown',
     applyUrl: url,
@@ -92,7 +96,7 @@ export async function importJobs(now = Date.now()): Promise<{ added: number; upd
     if (!raw.url || !raw.company) continue;
     const key = canonicalJobUrl(raw.url) ?? raw.url;
     const previous = byUrl.get(key);
-    const fresh = toJob(raw, now);
+    const fresh = toJob(raw, now, profile.profileVersion);
     const job: Job = previous
       ? {
           ...previous,
@@ -106,6 +110,19 @@ export async function importJobs(now = Date.now()): Promise<{ added: number; upd
         }
       : fresh;
     job.qualification = qualify(job, reqs, now);
+    // The AI ranking has read the full CV, LinkedIn background and job description. Preserve that assessment;
+    // the local keyword matcher is only a fallback when the ChatGPT session is unavailable.
+    const rankedFit = fresh.aiFit ?? fresh.profileFit;
+    if (typeof rankedFit === 'number' && job.qualification) {
+      const q = job.qualification;
+      q.fit = rankedFit;
+      q.fitEvidence = (fresh.requirements ?? []).map(requirement => ({
+        requirement,
+        state: 'met' as const,
+        matchedWith: fresh.fitSource === 'chatgpt' ? 'ChatGPT profile assessment' : 'Profile evidence',
+      }));
+      q.tier = q.eligibility === 'ineligible' ? 'blocked' : q.fit >= 70 && q.preferenceFit >= 60 && q.freshness !== 'stale' ? 'strong' : q.fit >= 45 ? 'possible' : 'weak';
+    }
     write.push(job);
     if (previous) updated++;
     else added++;

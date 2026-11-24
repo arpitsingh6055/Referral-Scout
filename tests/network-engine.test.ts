@@ -872,7 +872,7 @@ it('runs the shortlist past ChatGPT once and takes out the listings it rejects, 
         found: [
           found('111111', 'Product Intern', 'Acme'),
           found('222222', 'Sales Intern', 'Sellco'),
-          found('333333', 'Product Management Course with Placement', 'SkillMill', true),
+          found('333333', 'Product Management Course Intern', 'SkillMill', true),
         ],
       },
     },
@@ -895,7 +895,7 @@ it('runs the shortlist past ChatGPT once and takes out the listings it rejects, 
   expect(saved.jobSearch!.status).toBe('choosing');
   expect(saved.jobSearch!.found.map(j => j.company).sort()).toEqual(['Acme', 'Sellco']);
   expect(saved.jobSearch!.dropped).toEqual([
-    { title: 'Product Management Course with Placement', company: 'SkillMill', why: 'Paid course, not a job' },
+    { title: 'Product Management Course Intern', company: 'SkillMill', why: 'Paid course, not a job' },
   ]);
   expect(saved.status).toMatch(/ChatGPT removed 1 advert or poor match/);
 });

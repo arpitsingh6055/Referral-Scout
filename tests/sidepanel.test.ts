@@ -65,12 +65,14 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-it('shows the three-step welcome screen before a profile is read, and reads it on one click', async () => {
-  await open({ profile: null as never });
+it('uses the side panel as a clear first-run launcher and hands profile setup to the dashboard', async () => {
+  await open({ profile: null as never, targetSet: false, usageConsent: false });
   expect(document.querySelectorAll('.step')).toHaveLength(3);
-  byText('button', 'Read my LinkedIn profile')!.click();
-  await vi.waitFor(() => expect($('.tabs')).not.toBeNull());
-  expect(sent.map(r => r.action)).toContain('import');
+  expect(byText('button', 'Open setup dashboard')).toBeTruthy();
+  expect(byText('button', 'Open LinkedIn sign-in')).toBeTruthy();
+  byText('button', 'Open setup dashboard')!.click();
+  await vi.waitFor(() => expect(sent.map(r => r.action)).toContain('open-tab'));
+  expect(sent.map(r => r.action)).not.toContain('consent');
 });
 
 it('starts a job search in one click: saves the settings first, then starts, then shows a success notification', async () => {
@@ -147,7 +149,7 @@ it('switches tabs without losing what the user typed', async () => {
   roles.dispatchEvent(new Event('input', { bubbles: true }));
   byText('.tab', 'Activity')!.click();
   expect($<HTMLElement>('.tab[aria-selected=true]')!.textContent).toContain('Activity');
-  $<HTMLElement>('[aria-label="Settings"]')!.click();
+  $<HTMLElement>('[aria-label="Outreach settings"]')!.click();
   expect($<HTMLTextAreaElement>('textarea')!.value).toBe('Data Analytics internship');
 });
 
@@ -204,24 +206,13 @@ it('when paused, Resume is the main action and the live tracker is hidden; while
   expect($('.live')).not.toBeNull();
 });
 
-it('asks what the person is looking for during setup instead of assuming a role, and saves the answer', async () => {
+it('keeps first-run role selection in the guided dashboard instead of opening a second form in the side panel', async () => {
   await open({ targetSet: false });
   expect($('.tabs')).toBeNull();
-  expect($<HTMLTextAreaElement>('textarea')!.value).toBe('');
-  byText('button', 'Continue')!.click();
-  await vi.waitFor(() => expect(byText('.toast.error', 'Type the role you are looking for')).toBeTruthy());
-  const role = $<HTMLTextAreaElement>('textarea')!,
-    place = $<HTMLInputElement>('input')!;
-  role.value = 'Operations intern';
-  place.value = 'Bengaluru';
-  byText('button', 'Continue')!.click();
-  await vi.waitFor(() =>
-    expect(sent.find(r => r.action === 'save')).toMatchObject({
-      target: 'Operations intern',
-      location: 'Bengaluru',
-      settings: { roles: ['Operations intern'] },
-    }),
-  );
+  expect($('.hero')).toBeTruthy();
+  expect(byText('button', 'Open setup dashboard')).toBeTruthy();
+  expect(document.querySelector('textarea')).toBeNull();
+  expect(byText('button', 'Continue')).toBeFalsy();
 });
 
 it('tracks outcomes: a pipeline row per company, one-press marks on a person, and "I applied" on the job', async () => {
@@ -262,35 +253,23 @@ it('tracks outcomes: a pipeline row per company, one-press marks on a person, an
   await vi.waitFor(() => expect(sent.find(r => r.action === 'outcome')).toMatchObject({ outcome: 'replied' }));
 });
 
-it('offers an API key as an option in Settings, shows only its last characters once saved, and never the key', async () => {
+it('routes AI-key management to dashboard Settings rather than duplicating connection forms in the side panel', async () => {
   await open();
-  expect(byText('details.acc summary', 'ChatGPT connection')!.textContent).toContain('website (default)');
-  await open({ api: { model: 'some-model', ending: 'WXYZ' } });
-  expect(byText('details.acc', 'ChatGPT connection')!.textContent).toContain('model some-model, key ending in WXYZ');
+  expect(byText('details.acc summary', 'AI connection')!.textContent).toContain('ChatGPT website (default)');
+  expect(byText('button', 'Manage AI connection in dashboard')).toBeTruthy();
   expect(document.querySelector('input[type=password]')).toBeNull();
-  expect(byText('button', 'Remove the key')).toBeTruthy();
 });
 
-it('ends setup on Home, not Settings, and suggests the CV and a message check there', async () => {
+it('routes CV management to Candidate profile instead of exposing a second upload flow in the side panel', async () => {
   await open();
-  $<HTMLElement>('[aria-label="Settings"]')!.click(); // the panel was last on Settings, as after "Delete everything"
-  state = { ...state, targetSet: false };
-  byText('button', 'Save changes')!.click();
-  await vi.waitFor(() => expect(byText('button', 'Continue')).toBeTruthy());
-  $<HTMLTextAreaElement>('textarea')!.value = 'Sales intern';
-  state = { ...state, targetSet: true };
-  byText('button', 'Continue')!.click();
-  await vi.waitFor(() => expect($<HTMLElement>('.tab[aria-selected=true]')?.textContent).toContain('Home'));
-  expect(byText('.tip', 'Add your CV')).toBeTruthy();
-  expect(byText('.tip', 'Use your OpenAI API key')).toBeTruthy();
-  byText('.tip button', 'Add CV')!.click();
-  expect($<HTMLElement>('[aria-label="Settings"]')!.getAttribute('aria-selected')).toBe('true');
-  expect((byText('details.acc', 'Your CV') as HTMLDetailsElement).open).toBe(true);
+  expect(byText('details.acc summary', 'Your CV')).toBeTruthy();
+  expect(byText('button', 'Manage CV in dashboard')).toBeTruthy();
+  expect(document.querySelector('input[type=file]')).toBeNull();
 });
 
 it('goes back to Home after Save changes in Settings', async () => {
   await open();
-  $<HTMLElement>('[aria-label="Settings"]')!.click();
+  $<HTMLElement>('[aria-label="Outreach settings"]')!.click();
   byText('button', 'Save changes')!.click();
   await vi.waitFor(() => expect(byText('.toast', 'Changes saved.')).toBeTruthy());
   expect($<HTMLElement>('.tab[aria-selected=true]')!.textContent).toContain('Home');
@@ -529,12 +508,9 @@ it('shows a way forward under Needs you, a preview of what will be sent, and nev
   expect($<HTMLTextAreaElement>('textarea')!.disabled).toBe(false);
 });
 
-it('blocks the app behind a plain consent gate: no welcome or tabs until accepted, and Accept records consent', async () => {
-  await open({ usageConsent: false });
-  expect($('.hero h1')!.textContent).toContain('Before you start');
-  expect(byText('.lede', 'your LinkedIn account is recorded as a user')).toBeTruthy();
-  expect(byText('details.inline summary', 'What exactly is recorded?')).toBeTruthy(); // shown, not hidden
-  expect(byText('button', 'Read my LinkedIn profile')).toBeFalsy();
-  byText('button', 'Accept and continue')!.click();
-  await vi.waitFor(() => expect(sent.map(r => r.action)).toContain('consent'));
+it('does not block the extension when optional usage reporting is off', async () => {
+  await open({ usageConsent: false, profile: null as never, targetSet: false });
+  expect($('.hero h1')!.textContent).toContain('Start with your profile');
+  expect(byText('button', 'Open setup dashboard')).toBeTruthy();
+  expect(byText('button', 'Accept and continue')).toBeFalsy();
 });

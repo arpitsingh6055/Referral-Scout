@@ -32,6 +32,20 @@ export function overview(ctx: Ctx): HTMLElement {
     );
 
   const page = div('stack');
+  const discovery = ctx.workspace?.jobSearch;
+  if (discovery?.status === 'finding') {
+    page.append(card('Job discovery is running', {
+      sub: discovery.ranking
+        ? `Reviewing ${discovery.ranking.done} of ${discovery.ranking.total} job descriptions against your profile.`
+        : `Found ${discovery.found} jobs so far; checked ${discovery.cursor} of ${discovery.totalTerms || 'several'} related search titles.`,
+      body: [button('View live search progress', 'btn btn-primary', () => ctx.go('jobs'))],
+    }));
+  } else if (discovery?.status === 'choosing') {
+    page.append(card('Your jobs are ready to review', {
+      sub: `${discovery.found} results are ready. Review the match reasoning and choose which roles to pursue.`,
+      body: [button('Review discovered jobs', 'btn btn-primary', () => ctx.go('jobs'))],
+    }));
+  }
 
   page.append(
     div('grid metrics', [
@@ -91,7 +105,7 @@ export function overview(ctx: Ctx): HTMLElement {
               ]),
             ),
           )
-        : text('p', 'cell-muted', 'Nothing in the queue yet. Shortlist a few jobs and press Start.'),
+        : text('p', 'cell-muted', 'No applications are queued yet. Find jobs, review the matches and shortlist the roles you want to pursue.'),
     ],
   });
 
@@ -171,10 +185,16 @@ export const overviewHeader = (ctx: Ctx): { title: string; sub: string; status?:
     status: statusPill(c.status, ctx.view.inboxCounts.open),
     actions: [
       running
-        ? button('Pause', 'btn', () => ctx.run({ kind: 'campaign', action: 'control', control: 'pause' }))
-        : button('Start', 'btn btn-primary', () =>
-            ctx.run({ kind: 'campaign', action: 'control', control: c.status === 'paused' ? 'resume' : 'start' }),
-          ),
+        ? button('Pause application queue', 'btn', () => ctx.run({ kind: 'campaign', action: 'control', control: 'pause' }))
+        : ctx.workspace?.jobSearch?.status === 'finding'
+          ? button('Searching for jobs…', 'btn btn-primary', () => ctx.go('jobs'), { disabled: true })
+          : ctx.workspace?.jobSearch?.status === 'choosing'
+            ? button('Review discovered jobs', 'btn btn-primary', () => ctx.go('jobs'))
+            : ctx.view.counts.queued === 0
+              ? button('Find jobs on LinkedIn', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' }))
+              : button('Start application queue', 'btn btn-primary', () =>
+                  ctx.run({ kind: 'campaign', action: 'control', control: c.status === 'paused' ? 'resume' : 'start' }),
+                ),
     ],
   };
 };

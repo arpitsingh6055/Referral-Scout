@@ -29,6 +29,7 @@ export interface FoundJob {
   matched?: string[] | undefined;
   /** ChatGPT's 0-100 fit score against the seeker's qualifications/specialisation (used for ordering). */
   fit?: number | undefined;
+  fitSource?: 'chatgpt' | 'specialization' | undefined;
   /** Main reason for the score: "degree" (asks for their qualification), "experience" (their work fits), "domain" (their field fits). */
   basis?: 'degree' | 'experience' | 'domain' | undefined;
   /** ChatGPT's one-line reason for the fit score, shown under the job so the ranking can be checked. */

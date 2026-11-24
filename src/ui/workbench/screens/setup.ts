@@ -7,6 +7,8 @@
  */
 
 import { button, card, div, field, input, pill, select, text } from '../dom';
+import { send, sendNetwork, sendWorkspace } from '../api';
+import { defaultSettings } from '../../../shared/network';
 import type { Ctx } from '../shell';
 
 export function setup(ctx: Ctx): HTMLElement {
@@ -47,33 +49,77 @@ export function setup(ctx: Ctx): HTMLElement {
 
   const save = button(existing ? 'Save campaign' : 'Create campaign', 'btn btn-primary', async () => {
     const targetRoles = roles.value
-      .split(',')
+      .split(/[\n;,]+/)
       .map(r => r.trim())
       .filter(Boolean);
     if (!targetRoles.length || !location.value.trim()) {
       ctx.fail('Give at least one target role and a location.');
       return;
     }
-    if (!existing)
-      await ctx.run({
+    try {
+      await send({
         kind: 'campaign',
-        action: 'create',
+        action: existing ? 'update' : 'create',
         name: name.value.trim() || `${targetRoles[0]} search`,
         targetRoles,
         location: location.value.trim(),
         employmentType: employment.value,
       });
-    await ctx.run({
-      kind: 'campaign',
-      action: 'rules',
-      minFit: Number(minFit.value),
-      dailyTarget: Number(dailyTarget.value),
-      weeklyBudget: Number(weeklyBudget.value),
-      maxPerCompany: Number(maxPerCompany.value),
-      submitPolicy: submitPolicy.value as 'review' | 'auto',
-      concurrency: Number(concurrency.value) === 2 ? 2 : 1,
-    });
-    ctx.go('overview');
+      const warnings: string[] = [];
+      try {
+        await send({
+          kind: 'campaign',
+          action: 'rules',
+          minFit: Number(minFit.value),
+          dailyTarget: Number(dailyTarget.value),
+          weeklyBudget: Number(weeklyBudget.value),
+          maxPerCompany: Number(maxPerCompany.value),
+          submitPolicy: submitPolicy.value as 'review' | 'auto',
+          concurrency: Number(concurrency.value) === 2 ? 2 : 1,
+        });
+      } catch {
+        warnings.push('The campaign target was saved, but its automation rules were not. Reopen Campaign settings to check them.');
+      }
+      const preferredEmployment = employment.value === 'any'
+        ? ['internship', 'full-time', 'part-time', 'contract']
+        : [employment.value];
+      const legacyEmployment = employment.value === 'internship' || employment.value === 'full-time'
+        ? employment.value
+        : 'any';
+      try {
+        await sendWorkspace({
+          kind: 'workspace',
+          action: 'preferences',
+          targetRoleFamilies: targetRoles,
+          locations: [location.value.trim()],
+          employmentTypes: preferredEmployment,
+        });
+      } catch {
+        warnings.push('Candidate profile search preferences could not be synchronised. Review Candidate profile before using matching.');
+      }
+      // The older referral engine shares these target settings. Keep one source of truth: the Campaign screen.
+      try {
+        const previous = await sendNetwork({ kind: 'network', action: 'status' });
+        const parsedWeekly = Number(weeklyBudget.value);
+        const weeklyInvites =
+          Number.isFinite(parsedWeekly) && parsedWeekly > 0 ? Math.round(parsedWeekly) : (previous.settings?.weeklyInvites ?? null);
+        await sendNetwork({
+          kind: 'network',
+          action: 'save',
+          target: targetRoles[0]!,
+          location: location.value.trim(),
+          template: previous.template,
+          settings: { ...(previous.settings ?? defaultSettings), roles: targetRoles, employmentType: legacyEmployment, weeklyInvites },
+        });
+      } catch {
+        warnings.push('Referral Scout could not synchronise the side-panel referral preferences. Check them before starting outreach.');
+      }
+      await ctx.refresh();
+      ctx.go('overview');
+      ctx.inform(warnings.length ? `Campaign saved with follow-up needed: ${warnings.join(' ')}` : 'Campaign settings saved across the job and referral workflows.');
+    } catch (error) {
+      ctx.fail(error instanceof Error ? error.message : 'The campaign could not be saved. Please try again.');
+    }
   });
 
   const form = card(existing ? 'Campaign' : 'Create campaign', {
@@ -120,14 +166,14 @@ export function setup(ctx: Ctx): HTMLElement {
       ]),
       div('rule-row', [
         div('', [text('div', 'rule-name', 'Gmail outcome sync'), text('div', 'rule-note', 'Match replies to applications and contacts')]),
-        pill('Not connected', 'grey'),
+        pill(ctx.workspace?.connections.gmail ? 'Connected' : 'Not connected', ctx.workspace?.connections.gmail ? 'green' : 'grey'),
       ]),
       div('rule-row', [
         div('', [
           text('div', 'rule-name', 'Automatic outreach'),
           text('div', 'rule-note', 'Use the weekly budget and contact order without asking each time'),
         ]),
-        pill('Off', 'grey'),
+        pill(ctx.workspace?.outreachAutomatic ? 'On' : 'Off', ctx.workspace?.outreachAutomatic ? 'green' : 'grey'),
       ]),
       div('note note-amber', [
         text(

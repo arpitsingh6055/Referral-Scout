@@ -33,22 +33,83 @@ export const div = (className: string, children: (Node | string | null | undefin
 export const text = (tag: keyof HTMLElementTagNameMap, className: string, content: string): HTMLElement =>
   el(tag as 'div', { class: className, text: content });
 
+let actionInFlight = 0;
+
 export function button(label: string, className: string, onClick: () => void | Promise<void>, attrs: Attrs = {}): HTMLButtonElement {
-  const b = el('button', { class: className, type: 'button', ...attrs }, [label]);
+  const allowDuringAction = attrs['data-allow-during-action'] === true;
+  const b = el('button', { class: className, type: 'button', ...attrs });
+  // Keep the label as its own text node so an icon added by a screen can remain beside it while the action runs.
+  const labelNode = document.createTextNode(label);
+  b.append(labelNode);
+  if (actionInFlight > 0 && !allowDuringAction) {
+    b.classList.add('action-locked');
+    b.setAttribute('aria-disabled', 'true');
+  }
   b.addEventListener('click', () => {
-    // A button that fires twice can send a second application. Disabling while the work runs is the cheap guard.
-    if (b.disabled) return;
+    // A button that fires twice can send a second application. One in-flight action at a time avoids duplicate
+    // writes when a screen redraws while a save or connection check is still running. Navigation remains available.
+    if (b.disabled || (actionInFlight > 0 && !allowDuringAction)) return;
     b.disabled = true;
-    void Promise.resolve(onClick()).finally(() => {
-      b.disabled = false;
-    });
+    actionInFlight += 1;
+    let asynchronous = false;
+    void Promise.resolve()
+      .then(() => {
+        const result = onClick();
+        if (result && typeof (result as Promise<void>).then === 'function') {
+          asynchronous = true;
+          const busyLabel = typeof attrs['data-busy-label'] === 'string' ? String(attrs['data-busy-label']) : 'Working…';
+          labelNode.nodeValue = busyLabel;
+          b.setAttribute('aria-busy', 'true');
+          window.dispatchEvent(
+            new CustomEvent('referral-scout-action-start', {
+              detail: typeof attrs['data-progress'] === 'string' ? String(attrs['data-progress']) : 'Working… Your changes are being saved.',
+            }),
+          );
+          return Promise.resolve(result).finally(() => {
+            labelNode.nodeValue = label;
+            b.removeAttribute('aria-busy');
+            actionInFlight = Math.max(0, actionInFlight - 1);
+            if (actionInFlight === 0) window.dispatchEvent(new CustomEvent('referral-scout-action-end'));
+          });
+        }
+        return result;
+      })
+      .catch(error => {
+        // A rejected async click must become visible product feedback, never an unhandled console-only failure.
+        const message = error instanceof Error ? error.message : 'That action could not be completed. Please try again.';
+        window.dispatchEvent(new CustomEvent('referral-scout-action-error', { detail: message }));
+      })
+      .finally(() => {
+        if (!asynchronous) {
+          actionInFlight = Math.max(0, actionInFlight - 1);
+          if (actionInFlight === 0) window.dispatchEvent(new CustomEvent('referral-scout-action-end'));
+        }
+        b.disabled = false;
+        b.removeAttribute('aria-busy');
+        labelNode.nodeValue = label;
+      });
   });
   return b;
+}
+
+/** Runs non-button work (for example, a file chooser) through the same visible action and duplicate-action guard. */
+export async function withActionFeedback<T>(message: string, work: () => Promise<T>): Promise<T> {
+  if (actionInFlight > 0) throw new Error('Another Referral Scout action is still running. Please wait for it to finish.');
+  actionInFlight += 1;
+  window.dispatchEvent(new CustomEvent('referral-scout-action-start', { detail: message }));
+  try {
+    return await work();
+  } finally {
+    actionInFlight = Math.max(0, actionInFlight - 1);
+    if (actionInFlight === 0) window.dispatchEvent(new CustomEvent('referral-scout-action-end'));
+  }
 }
 
 /* ---------- icons ---------- */
 const PATHS: Record<string, string> = {
   home: 'M3 10.2 12 3l9 7.2V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z',
+  search: 'M10.8 18a7.2 7.2 0 1 0 0-14.4 7.2 7.2 0 0 0 0 14.4M16 16l5 5',
+  users: 'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7M2 20c0-3.3 3.1-5.5 7-5.5s7 2.2 7 5.5M17 11.5a3 3 0 1 0 0-6M18 20c0-2.1-.7-3.8-1.9-5',
   list: 'M4 5h16M4 10h16M4 15h16M4 20h10',
   target: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18m0 5a4 4 0 1 0 0 8 4 4 0 0 0 0-8',
   briefcase: 'M3 8h18v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zM9 8V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3',

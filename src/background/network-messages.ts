@@ -16,7 +16,6 @@ import {
   networkRequest,
   networkProfileSchema,
   profileUrl,
-  networkKey,
   suggestedTarget,
   defaultSettings,
   type NetworkState,
@@ -45,13 +44,28 @@ import {
   saveApiConfig,
 } from './network-ai';
 import { validatedDossier } from '../shared/dossier';
-import { clearApplyData, saveCvFile, CV_FILE_KEY } from './apply';
+import { saveCvFile, CV_FILE_KEY } from './apply';
+import { clearAllLocalData } from './reset';
+import { activeCampaign, changeCampaign } from '../shared/persistence/campaign-store';
 
 const authorization = z.object({ kind: z.literal('network.authorize'), id: z.uuid(), claim: z.boolean() });
+
+/** Progress is sent to open extension pages; the background operation remains authoritative. */
+function reportImportProgress(message: string): void {
+  try {
+    void chrome.runtime
+      .sendMessage({ kind: 'ui.progress', scope: 'network-import', message })
+      .catch(() => undefined);
+  } catch {
+    // No dashboard is open. The import still runs and its final result is returned to the caller.
+  }
+}
 async function importProfile(): Promise<void> {
   const signal = new AbortController().signal;
+  reportImportProgress('Opening your own LinkedIn profile in Referral Scout’s work tab…');
   // linkedin.com/in/me/ always redirects to the signed-in person's own profile, so no menu has to be opened or guessed.
   const tab = await networkTab('https://www.linkedin.com/in/me/', signal);
+  reportImportProgress('Checking which LinkedIn account is signed in…');
   const { url: identity } = z
     .object({ url: z.string().refine(v => profileUrl(v) === v) })
     .parse(await networkCommand(tab, { action: 'identity' }, signal));
@@ -60,13 +74,16 @@ async function importProfile(): Promise<void> {
     throw new Error(
       'Different LinkedIn account detected. Export or clear this account’s saved outreach before switching; CVs are owner-scoped.',
     );
+  reportImportProgress('Reading your LinkedIn profile details…');
   const profile = networkProfileSchema.parse(await networkCommand(tab, { action: 'profile', url: identity }, signal));
+  reportImportProgress('Saving the verified profile on this device…');
   await updateNetwork(s => ({
     ...s,
     profile,
     profileCapturedAt: Date.now(),
     ownerVerifiedAt: Date.now(),
-    ...(s.profile?.url === profile.url ? {} : { dossier: '', dossierSavedAt: 0 }),
+    dossier: '',
+    dossierSavedAt: 0,
     contacts: s.contacts.map(p => {
       if (p.messagedAt) return p;
       const { invitationNote: oldNote, ...rest } = p;
@@ -77,12 +94,6 @@ async function importProfile(): Promise<void> {
     location: s.profile ? s.location : profile.location.split(',').pop()?.trim() || 'India',
     status: 'Your LinkedIn profile is saved. Next: say what you are looking for.',
   }));
-}
-async function clearAllNetwork(): Promise<void> {
-  await remove('meta', networkKey);
-  await clearApplyData();
-  await clearAiJobs();
-  await remove('meta', 'network-tab');
 }
 function statusView(s: NetworkState): NetworkState {
   // Polls are metadata only. Exact CV/profile text is read by the background
@@ -348,13 +359,13 @@ export function registerNetworkMessages(): void {
         await pauseNetwork();
         return statusView(await getNetwork());
       }
-      if (req.action === 'clear') await pauseNetwork();
       const signal = new AbortController().signal;
       // Only reading your own profile needs the LinkedIn tab to itself. Everything else (approving, editing, skipping,
       // saving, a ChatGPT rewrite in its own window) runs alongside whatever outreach is doing and never waits for it.
       let accepted = false;
       const exclusive = req.action === 'import';
       const owner = crypto.randomUUID();
+      if (exclusive) reportImportProgress('Checking that LinkedIn is available for a profile refresh…');
       if (exclusive && !(await acquire(owner)))
         throw new Error('Outreach is in the middle of a LinkedIn step. Your profile will be readable in a few seconds; try again.');
       const timer = setInterval(() => {
@@ -363,13 +374,20 @@ export function registerNetworkMessages(): void {
       try {
         const current = await getNetwork();
         if (req.action === 'consent') await updateNetwork(s => ({ ...s, usageConsent: true, usageConsentAt: Date.now() }));
+        if (req.action === 'revokeConsent')
+          await updateNetwork(s => {
+            const next = { ...s, usageConsent: false };
+            delete next.usageConsentAt;
+            return next;
+          });
         if (req.action === 'import') {
           if (current.active) throw new Error('Pause outreach before refreshing your profile.');
-          if (!(await getNetwork()).usageConsent) throw new Error('Accept the usage notice first.');
+          reportImportProgress('Preparing a safe profile refresh…');
+          // Profile reading is core functionality. Usage reporting is optional and must never gate access.
           await importProfile();
           await clearAiJobs();
           const me = (await getNetwork()).profile;
-          if (me) await pingUsage(me.url, me.name); // only reached once consent is set; records the handle once
+          if (me && (await getNetwork()).usageConsent) await pingUsage(me.url, me.name);
         }
         if (req.action === 'save') {
           if (/\{(?!firstName\}|target\})[^}]*\}/.test(req.template))
@@ -391,6 +409,30 @@ export function registerNetworkMessages(): void {
             targetSet: true,
             status: 'Settings saved.',
           }));
+          // Keep the dashboard campaign aligned when outreach settings change in the side panel.
+          const campaign = await activeCampaign().catch(() => undefined);
+          if (campaign) {
+            const nextRoles = settings.roles.length ? settings.roles : campaign.targetRoles;
+            const nextBudget =
+              typeof settings.weeklyInvites === 'number' ? Math.min(500, Math.max(0, settings.weeklyInvites)) : campaign.referral.weeklyBudget;
+            const changed =
+              campaign.location !== req.location ||
+              campaign.referral.weeklyBudget !== nextBudget ||
+              JSON.stringify(campaign.targetRoles) !== JSON.stringify(nextRoles);
+            if (changed) {
+              await changeCampaign(campaign.id, c =>
+                c
+                  ? {
+                      ...c,
+                      targetRoles: nextRoles,
+                      location: req.location,
+                      referral: { ...c.referral, weeklyBudget: nextBudget },
+                      updatedAt: Date.now(),
+                    }
+                  : c,
+              );
+            }
+          }
         }
         if (req.action === 'saveCv') {
           if (current.active) throw new Error('Pause outreach before changing your CV.');
@@ -600,7 +642,8 @@ export function registerNetworkMessages(): void {
           }
         };
         if (req.action === 'findJobs') {
-          if (!current.profile) throw new Error('Read your LinkedIn profile first.');
+          if (!current.profile) throw new Error('Read your LinkedIn profile first. Open Candidate profile, sign in to LinkedIn, then choose “Read profile”.');
+          if (current.jobSearch?.status === 'finding') throw new Error('Your LinkedIn job search is already running. Check Activity or Jobs for progress.');
           await updateNetwork(s => ({
             ...s,
             jobSearch: { status: 'finding', cursor: 0, found: [], startedAt: Date.now() },
@@ -910,8 +953,7 @@ export function registerNetworkMessages(): void {
             return s;
           });
         if (req.action === 'clear') {
-          await clearAllNetwork();
-          await saveApiConfig(null);
+          await clearAllLocalData();
         }
         accepted = true;
         return statusView(await getNetwork());

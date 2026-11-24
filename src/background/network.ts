@@ -38,8 +38,6 @@ import {
   type referralJobInput,
 } from '../shared/referral';
 import {
-  reviewFromReply,
-  reviewPrompt,
   employmentIntent,
   employmentMismatch,
   companyPlanPrompt,
@@ -103,7 +101,35 @@ export async function getNetwork(): Promise<NetworkState> {
   if (cv && 'data' in cv) delete (cv as typeof cv & { data?: unknown }).data;
   return { ...old, cv, settings: settingsOf(old) };
 }
+function announceImportantStatus(previous: string | undefined, next: string | undefined): void {
+  if (!next || next === previous) return;
+  const important = /your linkedin profile is saved|jobs found at|no matching jobs were found|your turn:|message is ready for your approval|messages are ready for your approval|could not|not signed in|different linkedin account|failed|interrupted|needs your attention/i.test(next);
+  if (!important) return;
+  const title = /jobs found at/i.test(next) || /no matching jobs/i.test(next)
+    ? 'Job search update'
+    : /your linkedin profile is saved/i.test(next)
+      ? 'LinkedIn profile imported'
+      : /your turn:|approval|attention/i.test(next)
+        ? 'Referral Scout needs you'
+        : 'Referral Scout update';
+  try {
+    const tone = /could not|failed|interrupted|not signed in|different linkedin/i.test(next)
+      ? 'error'
+      : /no matching jobs/i.test(next) ? 'info' : 'success';
+    const message = { kind: 'ui.toast', tone, title, message: next };
+    const system = (): void => {
+      // Only important milestones reach the operating system, and only when no extension surface acknowledged
+      // the floating toast. This avoids duplicate notifications while the person is actively using the product.
+      if (chrome.notifications?.create) void chrome.notifications.create(`referral-scout-${Date.now()}`, {
+        type: 'basic', iconUrl: chrome.runtime.getURL('icons/icon128.png'), title, message: next.slice(0, 240), priority: 1,
+      }).catch(() => undefined);
+    };
+    void chrome.runtime.sendMessage(message).then(response => { if (!(response as { shown?: boolean } | undefined)?.shown) system(); }).catch(system);
+  } catch { /* Tests and restricted browser contexts may not expose notification APIs. */ }
+}
+
 export async function updateNetwork(fn: (s: NetworkState) => NetworkState): Promise<NetworkState> {
+  const previous = await read<NetworkState>(networkKey).catch(() => undefined);
   const state = await mutate<NetworkState>(networkKey, old => {
     const base = old ?? emptyNetwork();
     base.actions = (base.actions ?? []).filter(a => Date.now() - a.at < 35 * DAY); // limits only look back 7 days
@@ -149,6 +175,7 @@ export async function updateNetwork(fn: (s: NetworkState) => NetworkState): Prom
     return next;
   });
   void showTurn(state);
+  announceImportantStatus(previous?.status, state.status);
   return state;
 }
 /** How many things are waiting for the person: approvals, people needing attention, a question, companies to choose. */
@@ -195,6 +222,14 @@ export async function pauseNetwork(reason = 'Paused. Your saved people and progr
       .then(() => chrome.tabs.sendMessage(tab, { kind: 'network.cancel' }))
       .catch(() => undefined);
   await closeWorkWindow().catch(() => undefined); // nothing runs while paused, so the background window goes away too
+}
+/** Aborts and awaits any active outreach/search tick and resets badge state before wiping local data. */
+export async function resetNetworkRuntime(): Promise<void> {
+  await pauseNetwork('Deleting local data…');
+  await running?.catch(() => undefined);
+  again = false;
+  worked = false;
+  await showTurn(emptyNetwork());
 }
 export async function currentRun(revision: number, signal: AbortSignal): Promise<NetworkState> {
   signal.throwIfAborted();
@@ -486,7 +521,7 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
     const drop = new Map<string, string>();
     let why = '';
 
-    if (specs.length && list.length) {
+    if (list.length) {
       // Deep qualification ranking. Employment type is settled first (deterministic) so a batch never spends ChatGPT
       // on a wrong-type role. Then the FULL descriptions are read in small batches, each batch both removing adverts
       // and scoring fit; more batches are pulled, best-scored jobs first, until enough jobs are prioritised.
@@ -607,61 +642,38 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
           const byKeyword = matchSpecializations(`${job.title}\n${descriptions[job.id] ?? ''}`, specs);
           // ChatGPT's score weighs the whole background against the whole description, so it is trusted as given.
           // The keyword match only stands in when ChatGPT did not score this job (unavailable, or it skipped it).
-          let fit = r ? r.fit : 0;
+          let fit: number | undefined = r?.fit;
           let basis = r && r.basis !== 'none' ? r.basis : undefined;
           if (!r && byKeyword.length) {
             fit = 75;
             basis = 'degree';
           }
           const quals = [...new Set([...(r?.quals ?? []), ...byKeyword])];
-          job.fit = fit;
+          if (fit !== undefined) job.fit = fit;
+          else delete job.fit;
+          if (r) job.fitSource = 'chatgpt';
+          else if (byKeyword.length) job.fitSource = 'specialization';
+          else delete job.fitSource;
           if (basis) job.basis = basis;
           if (quals.length) job.matched = quals;
           if (r?.why) job.why = r.why;
           else if (byKeyword.length) job.why = `The description asks for ${byKeyword.join(', ')}`;
-          if (fit >= PRIORITY_FIT) {
+          if (fit !== undefined && fit >= PRIORITY_FIT) {
             job.prioritized = true;
             prioritized += 1;
           }
         }
       }
-    } else if (list.length > 1) {
-      // No qualifications chosen: the cheap advert/quality review over the whole list, from titles only, as before.
-      await note(s, `Checking ${list.length} jobs with ChatGPT to remove adverts and poor matches (up to 2 minutes)…`);
-      try {
-        const got = reviewFromReply(
-          extractJson(
-            await askChatGpt(
-              reviewPrompt(list, roles, s.location, s.settings?.employmentType),
-              signal,
-              'LEGACY',
-              s.profile!.url,
-              '',
-              planLimits('Checking the job list'),
-            ),
-          ),
-          list.map(j => j.id),
-        );
-        for (const [id, w] of got) drop.set(id, w);
-      } catch (error) {
-        why = error instanceof Error ? error.message : String(error);
-        if (signal.aborted) throw error;
-      }
-      if (intent !== 'any')
-        for (const j of list) {
-          const reason = employmentMismatch(j.title, intent);
-          if (reason && !drop.has(j.id)) drop.set(j.id, reason);
-        }
     }
 
     const kept = list.filter(x => !drop.has(x.id));
-    if (specs.length) {
-      // Prioritised first, then by fit score, then by organic score. Re-tick the top of the new order.
-      kept.sort((a, b) => Number(!!b.prioritized) - Number(!!a.prioritized) || (b.fit ?? 0) - (a.fit ?? 0) || b.score - a.score);
-      kept.forEach((j, i) => {
-        j.picked = i < PRETICKED && (!!j.prioritized || j.score > 0);
-      });
-    }
+    // Always order and preselect the best organic candidates, even when no manual specialisation was chosen.
+    // ChatGPT still ranks against the full CV/LinkedIn evidence; if it is unavailable, the transparent title score
+    // is only a provisional ordering, never presented as an assessed fit.
+    kept.sort((a, b) => Number(!!b.prioritized) - Number(!!a.prioritized) || (b.fit ?? -1) - (a.fit ?? -1) || b.score - a.score);
+    kept.forEach((j, i) => {
+      j.picked = i < PRETICKED && (!!j.prioritized || j.score > 0);
+    });
     await updateNetwork(c => {
       const j = c.jobSearch;
       if (!j || j.status !== 'finding') return c;
