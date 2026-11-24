@@ -30,6 +30,20 @@ let section: string = 'identity';
 function row(fact: FactRow, ctx: Ctx): HTMLElement {
   const box = input(fact.value, { placeholder: fact.selfDeclared ? 'Yours to declare' : 'Not saved yet', 'aria-label': fact.label });
   const status = STATUS[fact.status] ?? STATUS.empty!;
+  const saveValue = (): Promise<void> | void => {
+    const value = box.value.trim();
+    if (!value) {
+      ctx.fail('Enter a value before saving, or choose Clear to remove it.');
+      return;
+    }
+    return ctx.run({ kind: 'workspace', action: 'saveFact', key: fact.key, value });
+  };
+  box.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void saveValue();
+    }
+  });
   return div('row row-queue', [
     div('', [text('div', 'cell-strong', fact.label), text('div', 'cell-muted', SCOPE_NOTE[fact.scope] ?? fact.scope)]),
     div('', [box]),
@@ -39,7 +53,7 @@ function row(fact: FactRow, ctx: Ctx): HTMLElement {
     ]),
     div(''),
     div('inline', [
-      button('Save', 'btn btn-sm', () => ctx.run({ kind: 'workspace', action: 'saveFact', key: fact.key, value: box.value.trim() })),
+      button('Save', 'btn btn-sm', saveValue),
       fact.value ? button('Clear', 'btn btn-sm', () => ctx.run({ kind: 'workspace', action: 'clearFact', key: fact.key })) : null,
     ]),
   ]);

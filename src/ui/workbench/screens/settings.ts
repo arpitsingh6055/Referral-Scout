@@ -75,14 +75,19 @@ export function settings(ctx: Ctx): HTMLElement {
             'Used for AI-assisted writing through your own signed-in ChatGPT browser session. Open ChatGPT and sign in there; there is no separate Referral Scout password.',
             [
               button('Open ChatGPT', 'btn btn-sm', () => ctx.openExternal('https://chatgpt.com/')),
-              button('Test ChatGPT', 'btn btn-sm', async () => {
-                try {
-                  await testChatGpt();
-                  ctx.inform('ChatGPT is working in this browser session.');
-                } catch (error) {
-                  ctx.fail(error instanceof Error ? error.message : 'ChatGPT could not be reached.');
-                }
-              }),
+              button(
+                'Test ChatGPT',
+                'btn btn-sm',
+                async () => {
+                  try {
+                    await testChatGpt();
+                    ctx.inform('ChatGPT is working in this browser session.');
+                  } catch (error) {
+                    ctx.fail(error instanceof Error ? error.message : 'ChatGPT could not be reached.');
+                  }
+                },
+                { 'data-busy-label': 'Testing…', 'data-progress': 'Sending a quick test prompt to your ChatGPT session…' },
+              ),
             ],
           ),
           div('rule-row', [
@@ -102,26 +107,40 @@ export function settings(ctx: Ctx): HTMLElement {
             w.connections.gmail ? 'Available' : 'Optional',
             w.connections.gmail ? 'green' : 'grey',
             'Uses your signed-in Gmail tab to create drafts and look for relevant replies. Gmail is not needed for job search.',
-            [button(w.connections.gmail ? 'Re-check Gmail' : 'Connect Gmail', 'btn btn-sm', async () => {
-              try {
-                await sendGmail({ kind: 'gmail', action: 'connect' });
-                await ctx.refresh();
-                ctx.inform('Gmail was opened. Sign in there if needed, then return here.');
-              } catch (error) {
-                ctx.fail(error instanceof Error ? error.message : 'Gmail could not be reached. Open Gmail in a tab and try again.');
-              }
-            })],
+            [
+              button(
+                w.connections.gmail ? 'Re-check Gmail' : 'Connect Gmail',
+                'btn btn-sm',
+                async () => {
+                  try {
+                    await sendGmail({ kind: 'gmail', action: 'connect' });
+                    await ctx.refresh();
+                    ctx.inform('Gmail was opened. Sign in there if needed, then return here.');
+                  } catch (error) {
+                    ctx.fail(error instanceof Error ? error.message : 'Gmail could not be reached. Open Gmail in a tab and try again.');
+                  }
+                },
+                { 'data-busy-label': 'Checking Gmail…', 'data-progress': 'Checking your Gmail tab connection…' },
+              ),
+            ],
           ),
           w.connections.gmail
-            ? div('inline', [button('Sync relevant replies', 'btn', async () => {
-                try {
-                  const report = await sendGmail<{ scanned: number; matched: number; events: number }>({ kind: 'gmail', action: 'sync' });
-                  ctx.inform(`Read ${report.scanned} conversations, matched ${report.matched}, recorded ${report.events}.`);
-                  await ctx.refresh();
-                } catch (error) {
-                  ctx.fail(error instanceof Error ? error.message : 'Gmail could not be read.');
-                }
-              })])
+            ? div('inline', [
+                button(
+                  'Sync relevant replies',
+                  'btn',
+                  async () => {
+                    try {
+                      const report = await sendGmail<{ scanned: number; matched: number; events: number }>({ kind: 'gmail', action: 'sync' });
+                      ctx.inform(`Read ${report.scanned} conversations, matched ${report.matched}, recorded ${report.events}.`);
+                      await ctx.refresh();
+                    } catch (error) {
+                      ctx.fail(error instanceof Error ? error.message : 'Gmail could not be read.');
+                    }
+                  },
+                  { 'data-busy-label': 'Syncing replies…', 'data-progress': 'Scanning Gmail conversations for relevant replies…' },
+                ),
+              ])
             : null,
           connection(
             'CV document',
@@ -205,19 +224,24 @@ export function settings(ctx: Ctx): HTMLElement {
           metric('activity', 'Events', counts.events),
         ]),
         div('inline', [
-          button('Export a backup', 'btn', async () => {
-            try {
-              const json = await exportData();
-              const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `referral-scout-backup-${new Date().toISOString().slice(0, 10)}.json`;
-              a.click();
-              setTimeout(() => URL.revokeObjectURL(url), 10_000);
-            } catch (error) {
-              ctx.fail(error instanceof Error ? error.message : 'The backup could not be written.');
-            }
-          }),
+          button(
+            'Export a backup',
+            'btn',
+            async () => {
+              try {
+                const json = await exportData();
+                const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `referral-scout-backup-${new Date().toISOString().slice(0, 10)}.json`;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(url), 10_000);
+              } catch (error) {
+                ctx.fail(error instanceof Error ? error.message : 'The backup could not be written.');
+              }
+            },
+            { 'data-busy-label': 'Exporting…', 'data-progress': 'Preparing your JSON backup file…' },
+          ),
           button(
             ctx.busyAction === 'workspace:clear' ? 'Deleting…' : 'Delete everything',
             'btn btn-danger',

@@ -54,23 +54,30 @@ function itemCard(item: InboxRow, ctx: Ctx): HTMLElement {
     details.querySelector('summary')!.textContent = `Apply to ${plural(item.affected.length, 'application')}`;
     details.append(chooser.node);
     body.append(details);
-    action.append(
-      box,
-      button('Save', 'btn btn-primary btn-sm', async () => {
-        const value = box.value.trim();
-        if (!value) return;
-        await ctx.run({
-          kind: 'campaign',
-          action: 'resolve',
-          exceptionId: item.id,
-          value,
-          applyTo: chooser.selected(),
-          // A fact the person typed once is worth keeping; a per-job decision is not saved globally.
-          saveToBank: item.resolution === 'answer',
-          then: 'resume',
-        });
-      }),
-    );
+    const submitAnswer = async (): Promise<void> => {
+      const value = box.value.trim();
+      if (!value) {
+        ctx.fail('Enter an answer before saving.');
+        return;
+      }
+      await ctx.run({
+        kind: 'campaign',
+        action: 'resolve',
+        exceptionId: item.id,
+        value,
+        applyTo: chooser.selected(),
+        // A fact the person typed once is worth keeping; a per-job decision is not saved globally.
+        saveToBank: item.resolution === 'answer',
+        then: 'resume',
+      });
+    };
+    box.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        void submitAnswer();
+      }
+    });
+    action.append(box, button('Save', 'btn btn-primary btn-sm', submitAnswer));
   } else if (item.resolution === 'confirm') {
     body.append(
       div('note note-amber', [

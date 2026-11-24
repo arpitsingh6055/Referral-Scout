@@ -124,8 +124,8 @@ export function notify(kind: ToastKind, message: string): void {
   } else alertBox.hidden = true;
 }
 export const withHint = (m: string): string =>
-  /cannot be verified|uncertain|did not return the required|Recover reply/i.test(m) && !/Stuck\?/.test(m)
-    ? `${m} Your reply may already be in ChatGPT: open Setup, then "Personalise with ChatGPT", then "Stuck? Recover a ChatGPT reply".`
+  /cannot be verified|uncertain|did not return the required|Recover reply/i.test(m) && !/chatgpt\.com/i.test(m)
+    ? `${m} Check that you are signed in at chatgpt.com and retry from the dashboard.`
     : m;
 export const aiSteps: [string, string][] = [
   ['queued', 'Preparing the ChatGPT task'],

@@ -241,17 +241,40 @@ function actionProgress(action: string): string {
     update: 'Updating your campaign…',
     rules: 'Saving your automation rules…',
     preferences: 'Saving your preferences…',
+    eligibility: 'Saving your eligibility details…',
+    identity: 'Saving your identity and contact details…',
+    education: 'Saving education record…',
+    employment: 'Saving work experience and re-checking jobs…',
+    project: 'Saving project and re-checking jobs…',
+    skills: 'Saving skills and re-checking jobs…',
+    removeRecord: 'Removing record and re-checking jobs…',
+    saveFact: 'Saving answer to your Answer Bank…',
+    clearFact: 'Clearing answer from your Answer Bank…',
+    judgeJob: 'Updating your job shortlist decision…',
+    requalify: 'Re-checking discovered jobs against your profile…',
+    enqueueShortlisted: 'Adding shortlisted jobs to your application queue…',
+    suppressContact: 'Marking contact as do-not-contact…',
+    surface: 'Updating default toolbar surface…',
     testAi: 'Checking your ChatGPT connection…',
-    testApi: 'Testing the optional API connection…',
+    testApi: 'Testing your OpenAI API key…',
+    saveApi: 'Saving your OpenAI API key…',
+    clearApi: 'Removing your OpenAI API key…',
+    deleteCv: 'Deleting your CV from this device…',
     processProfileWithChatGPT: 'Asking ChatGPT to reconcile your CV and LinkedIn evidence… Nothing is being added to your profile yet.',
     approveAiProfileDraft: 'Adding the approved ChatGPT suggestions to your candidate profile…',
     start: 'Starting the application queue…',
+    control: 'Updating application queue state…',
+    enqueue: 'Adding job to the application queue…',
+    retry: 'Putting application back in the queue…',
+    skip: 'Skipping application…',
+    confirm: 'Recording your submission confirmation…',
+    resolve: 'Saving your answer and resuming affected applications…',
     findJobs: 'Starting LinkedIn Jobs search and preparing related role titles…',
     finishJobSearch: 'Finishing the current search and preparing the jobs for review…',
     pause: 'Pausing the workflow…',
     clear: 'Deleting all local data from this device…',
   };
-  return labels[action] ?? 'Working… Your changes are being saved.';
+  return labels[action] ?? 'Working…';
 }
 
 /**
@@ -405,12 +428,21 @@ function render(force = false): void {
     div('page-actions', [header.status, ...(header.actions ?? [])].filter(Boolean) as HTMLElement[]),
   ]);
 
+  const dismissBanner = (kind: 'error' | 'note'): HTMLButtonElement => {
+    const close = button('×', 'banner-dismiss', () => {
+      if (kind === 'error') error = '';
+      else note = '';
+      render(true);
+    }, { 'aria-label': kind === 'error' ? 'Dismiss error' : 'Dismiss notice', 'data-allow-during-action': true });
+    return close;
+  };
+
   const page = el('main', { class: 'page' }, [
     text('div', 'crumb', state.campaign ? `Campaigns / ${state.campaign.name}` : 'Campaigns'),
     head,
     busyMessage ? el('div', { class: 'banner banner-progress', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' }, [icon('clock', 18), text('span', 'progress-copy', busyMessage)]) : null,
-    error ? div('banner banner-error', [icon('alert', 18), error]) : null,
-    note ? div('banner banner-note', [icon('check', 18), note]) : null,
+    error ? div('banner banner-error', [icon('alert', 18), el('span', { class: 'banner-copy' }, [error]), dismissBanner('error')]) : null,
+    note ? div('banner banner-note', [icon('check', 18), el('span', { class: 'banner-copy' }, [note]), dismissBanner('note')]) : null,
     body,
   ]);
 

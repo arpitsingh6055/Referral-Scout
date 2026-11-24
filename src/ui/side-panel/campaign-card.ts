@@ -10,8 +10,11 @@
 
 import type { CampaignView } from '../../background/campaign';
 import type { CampaignRequest } from '../../background/campaign';
+import { errorText } from '../render';
+import { notify } from '../core';
 
 const WORKBENCH = 'workbench.html';
+let lastCampaignSignature = '';
 
 function el(tag: string, className: string, text = ''): HTMLElement {
   const node = document.createElement(tag);
@@ -21,7 +24,9 @@ function el(tag: string, className: string, text = ''): HTMLElement {
 }
 
 async function ask(request: CampaignRequest): Promise<CampaignView | null> {
-  const reply = (await chrome.runtime.sendMessage(request).catch(() => undefined)) as { ok?: boolean; view?: CampaignView } | undefined;
+  const reply = (await chrome.runtime.sendMessage(request).catch(() => undefined)) as
+    { ok?: boolean; view?: CampaignView; error?: string } | undefined;
+  if (reply && !reply.ok && reply.error) throw new Error(reply.error);
   return reply?.ok && reply.view ? reply.view : null;
 }
 
@@ -36,8 +41,11 @@ export const openWorkbench = (hash = ''): void => {
  * Draws the card into `host`, replacing whatever was there. Returns quietly if the background has no campaign or
  * cannot be reached: the rest of the panel must keep working either way.
  */
-export async function renderCampaignCard(host: HTMLElement): Promise<void> {
-  const view = await ask({ kind: 'campaign', action: 'view' });
+export async function renderCampaignCard(host: HTMLElement, force = false): Promise<void> {
+  const view = await ask({ kind: 'campaign', action: 'view' }).catch(() => null);
+  const sig = JSON.stringify(view);
+  if (!force && host.childElementCount > 0 && sig === lastCampaignSignature) return;
+  lastCampaignSignature = sig;
   // Before a campaign exists there is still somewhere to go: without this the dashboard would have no entry
   // point at all, which is exactly how the new workbench stayed invisible in the first build.
   if (!view?.campaign) {
@@ -104,7 +112,9 @@ export async function renderCampaignCard(host: HTMLElement): Promise<void> {
     : running
       ? 'Pause application queue'
       : hasQueuedApplications
-        ? campaign.status === 'paused' ? 'Resume application queue' : 'Start application queue'
+        ? campaign.status === 'paused'
+          ? 'Resume application queue'
+          : 'Start application queue'
         : 'Find jobs';
   primary.addEventListener('click', () => {
     if (inboxCounts.open) {
@@ -116,9 +126,16 @@ export async function renderCampaignCard(host: HTMLElement): Promise<void> {
       return;
     }
     primary.disabled = true;
-    void ask({ kind: 'campaign', action: 'control', control: running ? 'pause' : campaign.status === 'paused' ? 'resume' : 'start' }).then(
-      () => renderCampaignCard(host),
-    );
+    const control = running ? 'pause' : campaign.status === 'paused' ? 'resume' : 'start';
+    void ask({ kind: 'campaign', action: 'control', control })
+      .then(() => {
+        notify('success', running ? 'Application queue paused.' : 'Application queue started.');
+        return renderCampaignCard(host, true);
+      })
+      .catch(error => notify('error', errorText(error)))
+      .finally(() => {
+        primary.disabled = false;
+      });
   });
 
   const open = document.createElement('button');
