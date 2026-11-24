@@ -95,6 +95,12 @@ export function link(text: string, url: string, className = ''): HTMLAnchorEleme
   a.rel = 'noopener noreferrer';
   return a;
 }
+/** Open the full workbench at a specific step, reusing an existing dashboard tab. */
+export async function openDashboard(route = 'overview'): Promise<void> {
+  const reply = (await chrome.runtime.sendMessage({ kind: 'surface', action: 'open-tab', route })) as { ok?: boolean };
+  if (!reply?.ok) throw new Error('The dashboard could not be opened. Try the Referral Scout toolbar menu.');
+}
+
 export async function request(data: NetworkRequest): Promise<NetworkState> {
   const reply = (await chrome.runtime.sendMessage(data)) as { ok: boolean; data?: NetworkState; error?: string };
   if (!reply?.ok || !reply.data) throw new Error(reply?.error || 'The extension did not respond. Reload it and retry.');

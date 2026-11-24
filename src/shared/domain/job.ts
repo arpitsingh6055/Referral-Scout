@@ -104,6 +104,12 @@ export interface Job {
   description?: string;
   descriptionHash?: string;
   requirements: string[];
+  /** Fit returned by the signed-in ChatGPT ranking pass, when available. */
+  aiFit?: number;
+  profileFit?: number;
+  fitSource?: 'chatgpt' | 'specialization';
+  fitProfileVersion?: number;
+  aiWhy?: string;
   responsibilities: string[];
 
   applyType: ApplyType;

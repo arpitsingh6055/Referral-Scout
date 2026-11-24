@@ -2,9 +2,8 @@
  * Side panel: the "Fill this application" card on Home (shown when the active tab has one job or its application
  * open) and the "Application details" section in Settings.
  */
-import { node, button, notify, flags, accordion, field, choice, rerender, request, ui } from './core';
+import { node, button, notify, flags, accordion, field, choice, rerender, request, ui, openDashboard } from './core';
 import { errorText } from './render';
-import { completeCvText } from './cv-text';
 import type { ApplyRequest, Detect, ApplySession } from '../background/apply';
 import { DAILY_SOFT_CAP, looksLikeRedirect, questionKey, type ApplyProfile } from '../shared/apply';
 
@@ -24,53 +23,9 @@ const toBase64 = (bytes: Uint8Array): string => {
   for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(out);
 };
-const MAX_FILE = 8 * 1024 * 1024;
-/** Reads a CV on this device, keeps its text for ChatGPT and the file itself for application upload fields. */
-export async function uploadCv(file: File): Promise<void> {
-  if (file.size > 30_000_000) throw new Error('The CV is larger than 30 MB. Save a smaller PDF or DOCX first.');
-  const buffer = await file.arrayBuffer();
-  // Encode first: reading a PDF hands its bytes to a worker and empties this buffer.
-  const data = file.size <= MAX_FILE ? toBase64(new Uint8Array(buffer)) : '';
-  const extracted = await completeCvText(buffer.slice(0), file.name),
-    pages = (extracted.match(/^\[Page \d+\]/gm) || []).length;
-  const saved = await request({
-    kind: 'network',
-    action: 'saveCv',
-    name: file.name,
-    type: file.type || (/\.pdf$/i.test(file.name) ? 'application/pdf' : 'application/octet-stream'),
-    text: extracted,
-    ...(pages ? { pages } : {}),
-    ...(data ? { file: data } : {}),
-  });
-  rerender(saved);
-  notify(
-    data ? 'success' : 'error',
-    data
-      ? `CV saved: ${extracted.length.toLocaleString()} characters, and the file is kept on this device for application forms.`
-      : 'CV text saved, but the file is over 8 MB so it cannot be attached to applications. Save a smaller PDF and upload it again.',
-  );
-  await refreshCard(true);
-}
-function cvPicker(label = 'Upload CV'): HTMLElement {
-  const wrap = node('label', '', 'btn sm');
-  const input = node('input');
-  input.type = 'file';
-  input.hidden = true;
-  input.accept = '.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-  wrap.append(document.createTextNode(label), input);
-  input.addEventListener('change', () => {
-    const f = input.files?.[0];
-    if (!f || flags.busy) return;
-    flags.busy = true;
-    notify('info', 'Reading your CV on this device…');
-    void uploadCv(f)
-      .catch(e => notify('error', `The CV could not be read: ${errorText(e)}`))
-      .finally(() => {
-        flags.busy = false;
-        input.value = '';
-      });
-  });
-  return wrap;
+/** CV ownership and upload live in Candidate profile in the dashboard, not in a second side-panel flow. */
+function manageCvButton(label = 'Manage CV in dashboard'): HTMLElement {
+  return button(label, () => openDashboard('profile'), 'btn sm');
 }
 
 /* ---------- the Home card ---------- */
@@ -316,10 +271,10 @@ function draw(d: Detect): void {
     card.append(
       node(
         'p',
-        'Applications need your CV file. Upload it once: it stays on this device and is attached only to forms you fill.',
+        'Applications need your CV file. Add it once in Candidate profile in the dashboard; it stays on this device and is attached only to forms you choose to fill.',
         'card-sub',
       ),
-      cvPicker('Upload your CV'),
+      manageCvButton('Add CV in dashboard'),
     );
     return;
   }
@@ -937,7 +892,7 @@ export function buildApplySettings(): HTMLElement {
     cvRow.append(
       node('span', 'CV file', 'field-label'),
       node('p', d.cv ? `${d.cv.name} · ${Math.round(d.cv.size / 1024)} KB` : 'Not uploaded yet. Applications need it.', 'fine'),
-      cvPicker(d.cv ? 'Replace CV' : 'Upload CV'),
+      manageCvButton(d.cv ? 'Replace CV in dashboard' : 'Upload CV in dashboard'),
     );
     slot.append(cvRow);
     // Photo

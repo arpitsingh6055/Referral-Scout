@@ -142,7 +142,10 @@ it('starting a job search lifts a pause; a refused request does not', async () =
   expect((await ok({ action: 'findJobs' })).jobSearch).toMatchObject({ status: 'finding', cursor: 0, found: [] });
   await vi.waitFor(async () => expect((await getNetwork()).paused).toBeUndefined());
   await updateNetwork(s => ({ ...s, profile: null as never, paused: true }));
-  expect(await send({ action: 'findJobs' })).toMatchObject({ ok: false, error: 'Read your LinkedIn profile first.' });
+  expect(await send({ action: 'findJobs' })).toMatchObject({
+    ok: false,
+    error: 'Read your LinkedIn profile first. Open Candidate profile, sign in to LinkedIn, then choose “Read profile”.',
+  });
   await new Promise(r => setTimeout(r, 30));
   expect((await getNetwork()).paused).toBe(true);
 });
@@ -488,8 +491,10 @@ it('settings can be saved while reaching out is on', async () => {
   expect(saved).toMatchObject({ target: 'Sales intern', active: true });
 });
 
-it('will not read a profile until the usage notice is accepted, then records consent', async () => {
+it('lets the user opt in to usage reporting and revoke that choice independently', async () => {
   await seed();
-  expect(await send({ action: 'import' })).toMatchObject({ ok: false, error: 'Accept the usage notice first.' });
   expect(await ok({ action: 'consent' })).toMatchObject({ usageConsent: true });
+  const revoked = await ok({ action: 'revokeConsent' });
+  expect(revoked.usageConsent).toBe(false);
+  expect(revoked.usageConsentAt).toBeUndefined();
 });

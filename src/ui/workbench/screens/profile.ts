@@ -8,7 +8,8 @@
  * the person needs to be able to tell the two apart before it is typed into a real application.
  */
 
-import { button, card, div, empty, field, icon, input, metric, pill, plural, text } from '../dom';
+import { ago, button, card, div, el, empty, field, icon, input, metric, pill, plural, text, withActionFeedback } from '../dom';
+import { uploadCvForWorkbench } from '../cv-upload';
 import type { Ctx } from '../shell';
 import type { EducationRecord, EmploymentRecord, ProjectRecord } from '../../../shared/domain/profile';
 
@@ -217,6 +218,62 @@ export function profile(ctx: Ctx): HTMLElement {
         `Two sources disagree about your ${w.conflicts.map(c => c.label.toLowerCase()).join(' and ')}. Open the records below and correct the wrong one — a form will ask for this.`,
       ]),
     );
+
+  /* LinkedIn connection and profile read stay available in the dashboard, not only in the side panel. */
+  page.append(
+    card('LinkedIn profile', {
+      sub: w.connections.linkedin
+        ? `Your profile was last captured ${w.linkedinProfileCapturedAt ? ago(w.linkedinProfileCapturedAt) : 'previously'} from the LinkedIn session in this browser. Refresh it when your LinkedIn details change.`
+        : 'Sign in on LinkedIn in this browser, then read your profile here. Referral Scout never asks for your password.',
+      body: [
+        div('inline', [
+          pill(w.connections.linkedin ? 'Profile read' : 'Not read yet', w.connections.linkedin ? 'green' : 'amber'),
+          w.connections.linkedin ? text('span', 'cell-muted', `Last available profile: ${w.linkedinProfileName || p.identity.fullName || 'LinkedIn member'}`) : null,
+        ]),
+        div('inline', w.connections.linkedin
+          ? [
+              button(ctx.busyAction === 'network:import' ? 'Reading profile…' : 'Refresh LinkedIn profile', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'import' }), { disabled: ctx.busyAction === 'network:import', 'aria-busy': ctx.busyAction === 'network:import' }),
+              button('Open LinkedIn', 'btn', () => ctx.openExternal('https://www.linkedin.com/')),
+            ]
+          : [
+              button('Open LinkedIn to sign in', 'btn btn-primary', () => ctx.openExternal('https://www.linkedin.com/login')),
+              button(ctx.busyAction === 'network:import' ? 'Reading profile…' : "I've signed in — read profile", 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'import' }), { disabled: ctx.busyAction === 'network:import', 'aria-busy': ctx.busyAction === 'network:import' }),
+            ]),
+        ctx.busyAction === 'network:import'
+          ? text('p', 'field-help', 'This can take a little while. Referral Scout is reading your own profile in a separate work tab; you can keep this dashboard open.')
+          : null,
+      ],
+    }),
+  );
+
+  /* ChatGPT is the reconciliation layer: source captures never become candidate records until the user approves. */
+  if (w.connections.linkedin && w.cv.hasText) {
+    const draft = w.aiProfileDraft;
+    page.append(card('ChatGPT profile review', {
+      sub: 'Your CV takes priority when it disagrees with LinkedIn. Nothing is added to your candidate profile until you approve this draft.',
+      body: [
+        draft
+          ? div('stack', [
+              pill('Draft ready · not saved to profile', 'amber'),
+              text('p', 'field-help', `${draft.identity.fullName || 'Candidate'} · ${draft.education.length} education records · ${draft.employment.length} roles · ${draft.projects.length} projects · ${draft.skills.length} skills`),
+              draft.conflicts.length ? div('note note-amber', [text('strong', '', `${draft.conflicts.length} source discrepancies found`), ...draft.conflicts.slice(0, 5).map(c => text('p', 'field-help', `${c.field}: CV — ${c.cvValue || 'not stated'} · LinkedIn — ${c.linkedinValue || 'not stated'}. ${c.resolution}`))]) : text('p', 'field-help', 'No explicit CV/LinkedIn conflicts were detected.'),
+              draft.missingInformation.length ? text('p', 'field-help', `Needs your input: ${draft.missingInformation.slice(0, 5).join('; ')}`) : null,
+              ...draft.education.slice(0, 3).map(e => text('p', 'field-help', `Education: ${e.qualification || e.level} · ${e.institution} · ${e.startDate || 'date not stated'}–${e.endDate || 'date not stated'}`)),
+              ...draft.employment.slice(0, 3).map(e => text('p', 'field-help', `Experience: ${e.title} · ${e.employer} · ${e.startDate || 'date not stated'}–${e.current ? 'Present' : e.endDate || 'date not stated'}`)),
+              ...draft.skills.slice(0, 12).map(skill => pill(skill, 'grey')),
+              div('inline', [
+                button(ctx.busyAction === 'workspace:approveAiProfileDraft' ? 'Creating profile suggestions…' : 'Approve and create profile suggestions', 'btn btn-primary', () => ctx.run({ kind: 'workspace', action: 'approveAiProfileDraft' }), { disabled: ctx.busyAction === 'workspace:approveAiProfileDraft', 'aria-busy': ctx.busyAction === 'workspace:approveAiProfileDraft' }),
+                button('Reprocess sources', 'btn', () => ctx.run({ kind: 'workspace', action: 'processProfileWithChatGPT' }), { disabled: !!ctx.busyAction, 'aria-busy': ctx.busyAction === 'workspace:processProfileWithChatGPT' }),
+              ]),
+              text('p', 'field-help', 'Approved records remain marked as AI suggestions. Verify dates, grades, titles and achievements before using them in applications.'),
+            ])
+          : div('stack', [
+              text('p', 'field-help', 'LinkedIn and CV are saved as separate source evidence. Ask ChatGPT to reconcile them into a structured draft before anything enters your candidate profile.'),
+              button(ctx.busyAction === 'workspace:processProfileWithChatGPT' ? 'ChatGPT is reconciling…' : w.cv.imported ? 'Reconcile updated CV + LinkedIn' : 'Ask ChatGPT to reconcile CV + LinkedIn', 'btn btn-primary', () => ctx.run({ kind: 'workspace', action: 'processProfileWithChatGPT' }), { disabled: ctx.busyAction === 'workspace:processProfileWithChatGPT', 'aria-busy': ctx.busyAction === 'workspace:processProfileWithChatGPT' }),
+            ]),
+      ],
+    }));
+  }
 
   /* identity */
   const fullName = input(p.identity.fullName ?? '');
@@ -474,21 +531,45 @@ export function profile(ctx: Ctx): HTMLElement {
   );
 
   /* documents */
+  const cvFile = el('input', {
+    type: 'file',
+    accept: '.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    class: 'setup-file',
+    'aria-label': 'Choose CV file',
+  });
+  cvFile.id = 'profile-cv-file';
+  cvFile.addEventListener('change', () => {
+    const file = cvFile.files?.[0];
+    if (!file) return;
+    cvFile.disabled = true;
+    void withActionFeedback(`Reading ${file.name} and saving it on this device…`, async () => {
+      const message = await uploadCvForWorkbench(file);
+      await ctx.refresh();
+      ctx.inform(message);
+    })
+      .catch(error => ctx.fail(error instanceof Error ? error.message : 'The CV could not be read.'))
+      .finally(() => {
+        cvFile.disabled = false;
+        cvFile.value = '';
+      });
+  });
   page.append(
     card('Documents', {
-      sub: 'The CV attached to applications, and what can be read out of it.',
+      sub: 'Upload your CV here. The file is stored in this browser and attached only to applications you choose to fill.',
       body: [
         w.cvName
           ? div('row row-compact', [
-              div('', [text('div', 'cell-strong', w.cvName), text('div', 'cell-muted', 'Attached to applications that ask for a CV.')]),
+              div('', [text('div', 'cell-strong', w.cvName), text('div', 'cell-muted', 'Saved in this browser · used when an application asks for a CV.')]),
               pill('Saved', 'green'),
             ])
-          : div('note note-amber', [
-              text(
-                'p',
-                '',
-                'No CV saved yet. Upload one in the side panel settings — applications need the file itself, not just the text.',
-              ),
+          : div('note note-amber', [text('p', '', 'No CV saved yet. Add a PDF or DOCX to improve job matching and application autofill. This is optional.')]),
+        w.connections.linkedin
+          ? div('inline', [
+              el('label', { class: 'btn', for: 'profile-cv-file' }, [w.cvName ? 'Replace CV' : 'Upload CV']),
+              cvFile,
+            ])
+          : div('note note-violet', [
+              text('p', '', 'Read your own LinkedIn profile first so the CV is associated with the right candidate. You can skip the CV entirely and add it later.'),
             ]),
         w.cv.hasText
           ? div('', [
@@ -496,17 +577,25 @@ export function profile(ctx: Ctx): HTMLElement {
                 text(
                   'p',
                   '',
-                  w.cv.imported
-                    ? 'Your CV has already been read into the records above. Reading it again adds anything new and leaves what you have confirmed alone.'
-                    : 'Your CV can be read into education, experience, projects and skills. Everything it finds arrives unverified for you to check — nothing is overwritten.',
+                  w.aiProfileDraft
+                    ? 'ChatGPT has prepared a draft. Review source conflicts and approve it before records are added.'
+                    : 'Your CV is saved as source evidence. ChatGPT will reconcile it with LinkedIn and prepare a draft; nothing is added automatically.',
                 ),
               ]),
               div('inline', [
-                button(w.cv.imported ? 'Read my CV again' : 'Read my CV into these records', 'btn btn-primary', () =>
-                  ctx.run({ kind: 'workspace', action: 'importCv' }),
-                ),
+                w.cvName
+                  ? button('Delete CV', 'btn btn-danger', async () => {
+                      if (confirm('Delete your CV and its extracted text from this device?'))
+                        await ctx.runNetwork({ kind: 'network', action: 'deleteCv' });
+                    })
+                  : null,
               ]),
             ])
+          : null,
+        w.cvName && !w.cv.hasText
+          ? button('Delete CV', 'btn btn-danger', async () => {
+              if (confirm('Delete your CV from this device?')) await ctx.runNetwork({ kind: 'network', action: 'deleteCv' });
+            })
           : null,
       ],
     }),
@@ -517,7 +606,7 @@ export function profile(ctx: Ctx): HTMLElement {
 
 export const profileHeader = (ctx: Ctx): { title: string; sub: string; actions: HTMLElement[] } => ({
   title: 'Candidate profile',
-  sub: 'The records behind every answer the product gives on your behalf.',
+  sub: 'Review the information Referral Scout uses before it matches jobs or prepares applications.',
   actions: [button('Answer Bank', 'btn', () => ctx.go('answers'))],
 });
 

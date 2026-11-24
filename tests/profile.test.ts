@@ -6,6 +6,7 @@ import {
   emptyProfile,
   isVerified,
   latestEducation,
+  requirementsFrom,
   touch,
   unverified,
   yearsOfExperience,
@@ -125,6 +126,21 @@ describe('versioning', () => {
   it('bumps the version on every edit, so an application can name what it filled from', () => {
     const p = emptyProfile(NOW);
     expect(touch(p, NOW + 1).profileVersion).toBe(p.profileVersion + 1);
+  });
+});
+
+
+describe('matching evidence', () => {
+  it('uses technologies and project skills as profile evidence even when the Skills list is empty', () => {
+    const profile = {
+      ...emptyProfile(NOW),
+      employment: [employment({ id: 'work', technologies: ['Kubernetes', 'Python'] })],
+      projects: [{
+        id: 'project', name: 'Deployment automation', skills: ['Product analytics'], links: [], outcomes: [],
+        provenance: unverified('cv', NOW),
+      }],
+    };
+    expect(requirementsFrom(profile).skills).toEqual(['Kubernetes', 'Python', 'Product analytics']);
   });
 });
 

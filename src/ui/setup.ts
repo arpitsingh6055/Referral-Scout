@@ -1,149 +1,62 @@
-/** Setup and Settings screens: welcome, the target question, messages, limits, the API key and the CV. */
-import { errorText } from './render';
-import { defaultSettings, introduction, renderNote, type NetworkState, type OutreachSettings, SAFE, riskNotes } from '../shared/network';
-import { buildApplySettings, uploadCv } from './apply';
+/** Side-panel launcher and legacy outreach controls; profile, CV and provider connections are managed in the dashboard. */
+import { introduction, renderNote, type NetworkState, type OutreachSettings, SAFE, riskNotes } from '../shared/network';
+import { buildApplySettings } from './apply';
 import { qualificationPicker } from './qualifications';
-import { node, csv, optional, pad, request, notify, withProgress, button, act, field, choice, accordion, bubble, flags, ui } from './core';
+import { node, csv, optional, pad, request, button, act, field, choice, accordion, bubble, flags, ui, openDashboard } from './core';
 
 /* ---------- screens ---------- */
-export function consentGate(): HTMLElement {
-  // A clear, hard gate: the one line of what is recorded is shown in full, not hidden. Accept to continue.
-  const hero = node('section', '', 'hero'),
-    more = node('details', '', 'inline'),
-    declined = node('p', '', 'fine');
-  more.append(
-    node('summary', 'What exactly is recorded?'),
-    node(
-      'p',
-      'Only your LinkedIn profile handle (the part of your profile address after /in/), sent once when you first read your profile, so the developer can count who uses the extension. No messages, no contacts, no job data, nothing else leaves your device for this.',
-      'field-help',
-    ),
-  );
-  hero.append(
-    node('div', 'RS', 'mark'),
-    node('p', 'Referral Scout', 'eyebrow'),
-    node('h1', 'Before you start'),
-    node(
-      'p',
-      'To use Referral Scout, you agree that your LinkedIn account is recorded as a user of the extension — your profile handle, and nothing else.',
-      'lede',
-    ),
-    more,
-    button(
-      'Accept and continue',
-      async () => {
-        await act({ kind: 'network', action: 'consent' }, 'Thanks. Read your LinkedIn profile to begin.');
-      },
-      'btn primary block',
-    ),
-    button(
-      'Not now',
-      async () => {
-        declined.textContent = 'That is fine, but the extension needs this to run, so there is nothing more it can do until you accept.';
-      },
-      'btn block',
-    ),
-    declined,
-  );
-  return hero;
-}
-export function welcome(): HTMLElement {
-  const hero = node('section', '', 'hero');
+export function welcome(s?: NetworkState): HTMLElement {
+  const hero = node('section', '', 'hero onboard-launch');
+  const hasProfile = !!s?.profile;
+  const hasTarget = !!s?.targetSet;
   const steps = node('ol', '', 'steps');
-  for (const [i, title, text] of [
-    ['1', 'Read your profile', 'Once, from your own LinkedIn page. It stays on this device.'],
-    ['2', 'Pick the companies', 'We search LinkedIn jobs for your role and similar titles. You choose which companies to go after.'],
-    ['3', 'Get referrals', 'At each company we find the people whose referral counts and reach out slowly, a few a day.'],
+  for (const [i, title, detail, done] of [
+    ['1', 'Read your LinkedIn profile', 'Use your existing LinkedIn sign-in. Referral Scout never asks for your password.', hasProfile],
+    ['2', 'Add your CV and review it', 'Optional, but helpful for matching and application forms.', false],
+    ['3', 'Choose your target role', 'Set the role, location and work type in the dashboard.', hasTarget],
   ] as const) {
-    const li = node('li', '', 'step'),
-      body = node('div');
-    body.append(node('strong', title), node('span', text));
-    li.append(node('b', i, 'n'), body);
+    const li = node('li', '', `step${done ? ' is-done' : ''}`);
+    const body = node('div');
+    body.append(node('strong', title), node('span', detail));
+    li.append(node('b', done ? '✓' : i, 'n'), body);
     steps.append(li);
   }
   hero.append(
     node('div', 'RS', 'mark'),
     node('p', 'Referral Scout', 'eyebrow'),
-    node('h1', 'Find jobs. Get referred.'),
-    node('p', 'The right people at the right companies, asked politely, at a pace LinkedIn is comfortable with.', 'lede'),
-    steps,
-    button(
-      'Read my LinkedIn profile',
-      async () => {
-        await act({ kind: 'network', action: 'import' }, 'Profile saved. One more question: what are you looking for?');
-      },
-      'btn primary block',
-    ),
+    node('h1', hasProfile && hasTarget ? 'Your workspace is ready.' : hasProfile || hasTarget ? 'Finish setting up your workspace.' : 'Start with your profile.'),
     node(
       'p',
-      'Sign in to LinkedIn first. LinkedIn restricts automated activity: defaults are deliberately slow and conservative, but you use this at your own risk.',
-      'fine',
+      hasProfile && hasTarget
+        ? 'Your profile and search goal are in place. Open the dashboard to review matches and manage your applications.'
+        : hasProfile
+          ? 'Your LinkedIn profile has been read. Open the dashboard to add your CV if useful, choose your target and manage everything in one place.'
+          : hasTarget
+            ? 'Your search goal is saved. Read your LinkedIn profile in the dashboard to personalise matching and prepare applications.'
+            : 'The side panel is your quick-launch space. The full dashboard guides you through LinkedIn, your CV, preferences and the job search.',
+      'lede',
     ),
+    steps,
+    button(
+      'Open setup dashboard',
+      async () => openDashboard('welcome'),
+      'btn primary block',
+    ),
+    button(
+      'Open LinkedIn sign-in',
+      async () => {
+        await chrome.tabs.create({ url: 'https://www.linkedin.com/login', active: true });
+      },
+      'btn block',
+    ),
+    node('p', 'Profile and CV data stay in this browser. Optional usage counting is off unless you choose to enable it in the dashboard.', 'fine'),
   );
   return hero;
 }
 
-/* Second step of setup: the person says what they want. Nothing is assumed for them. */
+/* Legacy entry point retained for callers from older builds; setup now lives in the full dashboard. */
 export function askTarget(s: NetworkState): HTMLElement {
-  const hero = node('section', '', 'hero ask'),
-    form = node('div', '', 'card');
-  const roles = field({
-    label: 'Role you want',
-    value: '',
-    multiline: true,
-    rows: 2,
-    help: 'One per line if you have more than one. Similar job titles are added for you.',
-  });
-  const place = field({ label: 'Where', value: '', help: 'A country or a city. Leave empty to search everywhere.' });
-  // Pre-filled from the profile and shown as one line, so onboarding stays short.
-  const quals = qualificationPicker(s, true);
-  roles.input.placeholder = 'For example: Product Management internship';
-  place.input.placeholder = 'For example: India, or Bengaluru';
-  for (const f of [roles, place])
-    f.input.addEventListener('input', () => {
-      flags.dirty = true;
-    });
-  form.append(roles.wrap, place.wrap, quals.wrap);
-  hero.append(
-    node('div', 'RS', 'mark'),
-    node('p', 'Step 2 of 2', 'eyebrow'),
-    node('h1', `Hi ${s.profile!.name.split(/\s+/)[0] ?? ''}, what are you looking for?`),
-    node('p', 'This is what LinkedIn jobs are searched for. You can change it any time from Home.', 'lede'),
-    form,
-    button(
-      'Continue',
-      async () => {
-        const list = roles.input.value
-          .split(/[\n;,]+/)
-          .map(x => x.trim())
-          .filter(Boolean);
-        if (!list.length) {
-          roles.input.focus();
-          throw new Error('Type the role you are looking for, for example "Product Management internship".');
-        }
-        flags.dirty = false;
-        ui.tab = 'home'; // setup always ends on Home, wherever the panel was before
-        await act(
-          {
-            kind: 'network',
-            action: 'save',
-            target: list[0]!,
-            location: place.input.value.trim(),
-            template: s.template,
-            settings: {
-              ...(s.settings ?? defaultSettings),
-              roles: list,
-              specializations: quals.values(),
-              specializationsChosen: quals.confirmed(),
-            },
-          },
-          'Saved. Press Find jobs and referrals when you are ready.',
-        );
-      },
-      'btn primary block',
-    ),
-  );
-  return hero;
+  return welcome(s);
 }
 
 /* ---------- setup tab ---------- */
@@ -152,14 +65,6 @@ export function buildSetup(
   settings: OutreachSettings,
 ): { panel: HTMLElement; save: () => Promise<void>; aiMode: HTMLSelectElement } {
   const panel = node('div');
-  const roles = field({
-    label: 'Roles you are looking for',
-    value: settings.roles.join('\n'),
-    multiline: true,
-    rows: 2,
-    help: 'One per line, for example "Product Management internship".',
-  });
-  const location = field({ label: 'Where', value: s.location, help: 'A country or city. Leave generic for the widest search.' });
   const quals = qualificationPicker(s, false);
   const noteTemplate = field({
     label: 'Invitation note',
@@ -180,22 +85,24 @@ export function buildSetup(
   const me = s.profile!.name,
     sample = { name: 'Priya Sharma', companyName: 'Acme', category: 'recruiter' };
   const refresh = (): void => {
-    const role = roles.input.value.split(/[\n;,]+/)[0]?.trim() || s.target;
+    const role = settings.roles[0] || s.target;
     const note = renderNote({ noteTemplate: noteTemplate.input.value || settings.noteTemplate }, role, sample, me);
     noteSlot.replaceChildren(bubble('Preview for Priya, a recruiter at Acme', note, note.length > 200, `${note.length}/200`));
     followSlot.replaceChildren(
       bubble('Preview for Priya at Acme', introduction({ template: template.input.value || s.template, target: role }, sample, me)),
     );
   };
-  for (const f of [roles, noteTemplate, template]) f.input.addEventListener('input', refresh);
+  for (const f of [noteTemplate, template]) f.input.addEventListener('input', refresh);
   refresh();
 
   const who = node('section', '', 'card');
   who.append(
-    node('h2', 'What you are looking for', 'card-title'),
-    node('p', 'This drives the job search. Similar job titles are added for you.', 'card-sub'),
+    node('h2', 'Campaign targeting', 'card-title'),
+    node('p', 'Target roles and location are managed in the dashboard Campaign screen so job search and referrals stay aligned.', 'card-sub'),
+    node('div', `${settings.roles.join(', ') || s.target || 'No target role saved'} · ${s.location || 'No location saved'}`, 'cell-strong'),
+    button('Edit campaign in dashboard', () => openDashboard('setup'), 'btn sm primary'),
+    quals.wrap,
   );
-  who.append(roles.wrap, location.wrap, quals.wrap);
   const wordsAcc = accordion('words', 'Your messages', 'invitation and follow-up'),
     words = wordsAcc.body;
   words.append(
@@ -282,14 +189,9 @@ export function buildSetup(
   const chatGpt = buildChatGpt(s),
     api = buildApi(s);
   async function save(): Promise<void> {
-    const nextRoles = roles.input.value
-      .split(/[\n;,]+/)
-      .map(x => x.trim())
-      .filter(Boolean);
-    if (!nextRoles.length) throw new Error('Enter at least one role you are looking for.');
     const next: OutreachSettings = {
       ...settings,
-      roles: nextRoles,
+      roles: [...settings.roles],
       aiMode: aiMode.input.value as OutreachSettings['aiMode'],
       noteTemplate: noteTemplate.input.value.trim() || settings.noteTemplate,
       weeklyInvites: optional(weekly.input.value),
@@ -309,8 +211,8 @@ export function buildSetup(
     await request({
       kind: 'network',
       action: 'save',
-      target: nextRoles[0]!,
-      location: location.input.value,
+      target: settings.roles[0] || s.target,
+      location: s.location,
       template: template.input.value,
       settings: next,
     });
@@ -352,127 +254,32 @@ export function buildSetup(
   return { panel, save, aiMode: aiMode.input };
 }
 
-/* Optional: an OpenAI API key instead of the ChatGPT website. The key itself is never sent back to this panel. */
+/* AI account configuration is centralised in the dashboard Settings. */
 export function buildApi(s: NetworkState): HTMLElement {
-  const { box, body } = accordion('api', 'ChatGPT connection', s.api ? 'API key' : 'website (default)');
+  const { box, body } = accordion('api', 'AI connection', s.api ? `API key · ${s.api.model}` : 'ChatGPT website (default)');
   body.append(
     node(
       'p',
-      'By default the ChatGPT website is used in a background tab and there is nothing to set up. If you have an OpenAI API key, answers come straight from the API instead: faster, and no ChatGPT tab is opened. OpenAI bills API use to your account. The key stays on this device and is left out of exports.',
+      'The ChatGPT website is the default and only needs you to sign in at chatgpt.com. An optional OpenAI API key can be managed in dashboard Settings.',
       'card-sub',
     ),
-  );
-  if (s.api) {
-    body.append(
-      node('p', `Using the API: model ${s.api.model}, key ending in ${s.api.ending}.`, 'field-label'),
-      button(
-        'Test the key',
-        () => withProgress('Asking the OpenAI API for a one-word answer', () => act({ kind: 'network', action: 'testApi' })),
-        'btn sm primary',
-      ),
-      button(
-        'Remove the key',
-        async () => {
-          if (confirm('Remove the API key from this device and go back to the ChatGPT website?'))
-            await act({ kind: 'network', action: 'clearApi' });
-        },
-        'btn sm ghost danger',
-      ),
-    );
-    return box;
-  }
-  const key = field({ label: 'OpenAI API key', value: '', type: 'password', help: 'Created in your OpenAI account under API keys.' });
-  const model = field({
-    label: 'Model',
-    value: '',
-    help: 'The model name exactly as OpenAI lists it for your account. Model names change, so none is filled in for you.',
-  });
-  for (const f of [key, model])
-    f.input.addEventListener('input', () => {
-      flags.dirty = true;
-    });
-  (key.input as HTMLInputElement).autocomplete = 'off';
-  body.append(
-    key.wrap,
-    model.wrap,
-    button(
-      'Save the key',
-      async () => {
-        if (key.input.value.trim().length < 20) throw new Error('Paste the whole API key.');
-        if (model.input.value.trim().length < 2) throw new Error('Type the model name.');
-        // Access to api.openai.com is asked for only now, when a key is actually saved.
-        const permissions = (globalThis as { chrome?: typeof chrome }).chrome?.permissions;
-        if (permissions?.request && !(await permissions.request({ origins: ['https://api.openai.com/*'] })))
-          throw new Error('Access to api.openai.com was not allowed, so the key was not saved.');
-        flags.dirty = false;
-        await act({ kind: 'network', action: 'saveApi', key: key.input.value.trim(), model: model.input.value.trim() });
-      },
-      'btn sm primary',
-    ),
+    button('Manage AI connection in dashboard', () => openDashboard('settings'), 'btn sm primary'),
   );
   return box;
 }
 
-/* optional ChatGPT personalisation: CV, dossier and recovery */
+/* CV management is centralised in Candidate profile in the full dashboard. */
 export function buildChatGpt(s: NetworkState): HTMLElement {
-  const { box, body } = accordion('chatgpt', 'Your CV', s.cv ? 'added' : 'needed to fill applications');
+  const { box, body } = accordion('chatgpt', 'Your CV', s.cv ? 'saved' : 'not added');
   body.append(
     node(
       'p',
-      'Needed to fill job applications: the file is attached to upload fields and ChatGPT answers the form from it. Outreach also uses it when you choose “Rewrite with ChatGPT”.',
+      s.cv
+        ? `Your CV (${s.cv.name}) is saved on this device. Open Candidate profile to replace it, review extracted details or delete it.`
+        : 'Add and manage your CV in Candidate profile. It is optional for browsing jobs, and useful for matching and application forms.',
       'card-sub',
     ),
+    button('Manage CV in dashboard', () => openDashboard('profile'), 'btn sm primary'),
   );
-  const cv = node('input', '', 'input');
-  cv.type = 'file';
-  cv.accept = '.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-  const cvField = node('div', '', 'field');
-  cvField.append(
-    node(
-      'span',
-      s.cv ? `CV: ${s.cv.name} · ${(s.cv.characterCount ?? 0).toLocaleString()} characters` : 'Your CV (PDF or DOCX)',
-      'field-label',
-    ),
-    cv,
-    node('p', 'Read and kept on this device only. It is attached only to application forms you choose to fill.', 'field-help'),
-  );
-  cv.addEventListener('change', () => {
-    if (flags.busy) return;
-    const file = cv.files?.[0];
-    if (!file) return;
-    flags.busy = true;
-    cv.disabled = true;
-    flags.spoke = false;
-    notify('info', 'Reading your CV on this device…');
-    void uploadCv(file)
-      .catch(e => notify('error', `The CV could not be read: ${errorText(e)}`))
-      .finally(() => {
-        flags.busy = false;
-        cv.disabled = false;
-        cv.value = '';
-      });
-  });
-  body.append(cvField);
-  if (s.cv) {
-    const preview = node('pre', '', 'source-preview');
-    body.append(
-      button(
-        'View CV text',
-        async () => {
-          preview.textContent = (await request({ kind: 'network', action: 'ownerData' })).cv?.text || 'No CV text available.';
-        },
-        'btn sm',
-      ),
-      button(
-        'Delete CV',
-        async () => {
-          if (confirm('Delete your CV (text and file) from this device? Applications cannot be filled without it.'))
-            await act({ kind: 'network', action: 'deleteCv' }, 'CV deleted.');
-        },
-        'btn sm ghost danger',
-      ),
-      preview,
-    );
-  }
   return box;
 }

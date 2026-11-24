@@ -1,6 +1,7 @@
 /** Activity screen: the log, plus the troubleshooting and data tools shown under Settings. */
 import { type NetworkState } from '../shared/network';
-import { node, ago, request, notify, button, act, flags } from './core';
+import { node, ago, request, notify, button, act, flags, ui } from './core';
+import { refreshCard } from './apply';
 
 /* ---------- activity tab ---------- */
 export function buildActivity(s: NetworkState): HTMLElement {
@@ -80,9 +81,22 @@ export function buildActivity(s: NetworkState): HTMLElement {
       'Delete everything',
       async () => {
         if (
-          confirm('Delete your profile, CV, dossier, contacts and task history from this device? This does not undo anything on LinkedIn.')
-        )
+          confirm(
+            'Delete all local data — your profile, CV, campaigns, jobs, contacts, Answer Bank, API key and history — from this device? This does not undo anything on LinkedIn or Gmail.',
+          )
+        ) {
           await act({ kind: 'network', action: 'clear', confirm: true }, 'All local data deleted.');
+          try {
+            localStorage.removeItem('rs-apply-setup-skipped');
+          } catch {
+            // Ignore storage restrictions.
+          }
+          ui.open.clear();
+          ui.done = null;
+          ui.filter = 'all';
+          ui.filterChosen = false;
+          void refreshCard(true).catch(() => undefined);
+        }
       },
       'btn ghost danger',
     ),

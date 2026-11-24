@@ -11,13 +11,13 @@ import {
   dueReminders,
   staleRequests,
 } from '../shared/network';
-import { type Tab, ui, page, toaster, node, icon, ago, request, notify, button, act, flags, onRedraw, accordion } from './core';
+import { type Tab, ui, page, toaster, node, icon, ago, request, notify, button, act, flags, onRedraw, accordion, openDashboard } from './core';
 import { runStatus, usage, journey, meter, tick, live, readyToContact } from './live';
-import { consentGate, welcome, askTarget, buildSetup } from './setup';
+import { welcome, buildSetup } from './setup';
 import { buildSaved, buildReferrals, jobChooser } from './jobs';
 import { buildPeople } from './people';
 import { buildActivity } from './activity';
-import { applyHome } from './apply';
+import { applyHome, refreshCard } from './apply';
 import { renderCampaignCard } from './side-panel/campaign-card';
 
 /** Where the compact campaign card is drawn; it survives redraws so the panel does not flicker. */
@@ -35,21 +35,19 @@ function render(s: NetworkState): void {
   page.replaceChildren();
   // The campaign card sits above everything and draws itself only once a campaign exists, so the panel is
   // unchanged for anyone who has not started one.
+  if (!s.profile || (!s.targetSet && !s.contacts.length && !(s.referralJobs ?? []).length && !s.jobSearch)) {
+    ui.tab = 'home';
+    ui.open.clear();
+    ui.done = null;
+    ui.filter = 'all';
+    ui.filterChosen = false;
+    flags.dirty = false;
+    campaignHost.replaceChildren();
+    page.append(welcome(s));
+    return;
+  }
   page.append(campaignHost);
   void renderCampaignCard(campaignHost).catch(() => campaignHost.replaceChildren());
-  if (!s.usageConsent) {
-    page.append(consentGate());
-    return;
-  }
-  if (!s.profile) {
-    ui.tab = 'home';
-    page.append(welcome());
-    return;
-  }
-  if (!s.targetSet && !s.contacts.length && !(s.referralJobs ?? []).length && !s.jobSearch) {
-    page.append(askTarget(s));
-    return;
-  }
   const status = runStatus(s),
     settings = s.settings ?? defaultSettings,
     search = s.jobSearch,
@@ -76,7 +74,7 @@ function render(s: NetworkState): void {
     };
   people.append(peopleList);
   for (const [tab, title, sub] of [
-    ['setup', 'Settings', `What you are looking for, your messages and your limits.${version ? ` Version ${version}.` : ''}`],
+    ['setup', 'Outreach settings', `Your messages, qualification signals and outreach limits.${version ? ` Version ${version}.` : ''}`],
     ['referrals', 'Jobs', 'The companies you chose and who can refer you at each.'],
     ['people', 'People', 'Everyone queued, invited or contacted.'],
     ['saved', 'Saved', 'Jobs and people you remembered on LinkedIn.'],
@@ -129,8 +127,8 @@ function render(s: NetworkState): void {
   }
   const gear = node('button', '', 'icon-btn');
   gear.type = 'button';
-  gear.title = 'Settings';
-  gear.setAttribute('aria-label', 'Settings');
+  gear.title = 'Outreach settings';
+  gear.setAttribute('aria-label', 'Outreach settings');
   gear.append(icon('settings'));
   gear.addEventListener('click', () => setTab(ui.tab === 'setup' ? 'home' : 'setup', true));
   tabButtons.set('setup', gear);
@@ -143,7 +141,12 @@ function render(s: NetworkState): void {
     setTab('home');
     (document.querySelector('.home-turn') ?? document.querySelector('.todos'))?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
   });
-  top.append(node('div', 'RS', 'mark'), node('span', 'Referral Scout', 'name'), pill, gear);
+  const dashboard = node('button', 'Dashboard', 'dashboard-link');
+  dashboard.type = 'button';
+  dashboard.addEventListener('click', () => {
+    void openDashboard('overview').catch(e => notify('error', errorText(e)));
+  });
+  top.append(node('div', 'RS', 'mark'), node('span', 'Referral Scout', 'name'), dashboard, pill, gear);
   const openPeople = (filter: string): void => {
     ui.filter = filter;
     refreshPeople();
@@ -155,9 +158,11 @@ function render(s: NetworkState): void {
   const hello = node('div', '', 'view-head'),
     target = node('div', '', 'target'),
     targetText = node('div'),
-    change = node('button', 'Edit', 'btn sm');
+    change = node('button', 'Edit campaign', 'btn sm');
   change.type = 'button';
-  change.addEventListener('click', () => setTab('setup', true));
+  change.addEventListener('click', () => {
+    void openDashboard('setup').catch(e => notify('error', errorText(e)));
+  });
   targetText.append(
     node('span', 'You are looking for', 'target-label'),
     node('b', `${settings.roles[0] ?? s.target}${settings.roles.length > 1 ? ` +${settings.roles.length - 1} more` : ''}`, 'target-role'),
@@ -513,7 +518,7 @@ function render(s: NetworkState): void {
       'Use your OpenAI API key',
       'Optional. If you have one, answers come straight from the API: faster, and no ChatGPT tab is opened. Without it the ChatGPT website is used.',
       'Set up',
-      () => openSetting('api', 'ChatGPT connection'),
+      () => openSetting('api', 'AI connection'),
     ]);
   if (tips.length) {
     const tipsBox = accordion('tips', stage < 0 ? 'Before you start (optional)' : 'Make your messages stronger', String(tips.length)),
@@ -677,12 +682,16 @@ async function refresh(): Promise<void> {
 /* Work done in the background (a search, a draft, a send, a ChatGPT fallback) is announced as a notification too,
    not only written to the Activity tab. Actions the user just pressed already notify on their own. */
 let announcedUpTo = -1;
+const broadcastMessages: string[] = [];
 function announce(s: NetworkState): void {
   const log = s.log ?? [],
     newest = log.at(-1)?.at ?? 0;
   if (announcedUpTo >= 0)
-    for (const entry of log.filter(e => e.at > announcedUpTo).slice(-3))
-      toaster.show(entry.kind === 'ok' ? 'success' : entry.kind === 'warn' ? 'error' : 'info', entry.text);
+    for (const entry of log.filter(e => e.at > announcedUpTo).slice(-3)) {
+      const alreadyFloated = broadcastMessages.indexOf(entry.text);
+      if (alreadyFloated >= 0) broadcastMessages.splice(alreadyFloated, 1);
+      else toaster.show(entry.kind === 'ok' ? 'success' : entry.kind === 'warn' ? 'error' : 'info', entry.text);
+    }
   announcedUpTo = Math.max(announcedUpTo, newest);
 }
 const showLoadError = (e: unknown): void => {
@@ -695,3 +704,28 @@ const timer = setInterval(() => {
 addEventListener('pagehide', () => clearInterval(timer), { once: true });
 
 onRedraw(render);
+
+
+// Important milestones are broadcast by the service worker so the side panel and dashboard share one feedback model.
+chrome.runtime?.onMessage?.addListener((message: unknown, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id || !message || typeof message !== 'object') return false;
+  const payload = message as { kind?: unknown; message?: unknown; tone?: unknown; title?: unknown };
+  if (payload.kind === 'ui.cleared') {
+    announcedUpTo = -1;
+    flags.dirty = false;
+    try {
+      localStorage.removeItem('rs-apply-setup-skipped');
+    } catch {
+      // Ignore storage restrictions.
+    }
+    sendResponse({ shown: document.visibilityState === 'visible' });
+    void refresh().catch(showLoadError);
+    void refreshCard(true).catch(() => undefined);
+    return false;
+  }
+  if (payload.kind !== 'ui.toast' || typeof payload.message !== 'string') return false;
+  broadcastMessages.push(payload.message);
+  toaster.show(payload.tone === 'error' ? 'error' : payload.tone === 'info' ? 'info' : 'success', `${typeof payload.title === 'string' ? `${payload.title}: ` : ''}${payload.message}`);
+  sendResponse({ shown: document.visibilityState === 'visible' });
+  return false;
+});

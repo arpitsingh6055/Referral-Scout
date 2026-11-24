@@ -134,7 +134,12 @@ export async function saveCvFile(file: { name: string; type: string; data: strin
 async function clearSessions(): Promise<void> {
   for (const item of await all('meta')) if (item.id.startsWith(`${SESSION_KEY}:`)) await remove('meta', item.id);
 }
+export function abortAllApply(): void {
+  for (const runController of runs.values()) runController.abort();
+  runs.clear();
+}
 export async function clearApplyData(): Promise<void> {
+  abortAllApply();
   for (const key of [SESSION_KEY, PROFILE_KEY, CV_FILE_KEY, PHOTO_KEY, HISTORY_KEY]) await remove('meta', key);
   for (const item of await all('meta')) if (item.id.startsWith(`${SESSION_KEY}:`)) await remove('meta', item.id);
 }
@@ -1954,7 +1959,7 @@ export function registerApplyMessages(): void {
       if (req.action === 'start') {
         const s = await getNetwork();
         if (!s.profile) throw new Error('Set up Referral Scout with your LinkedIn profile first.');
-        if (!(await cvFile())) throw new Error('Upload your CV in Settings first: applications need the file itself.');
+        if (!(await cvFile())) throw new Error('Upload your CV in Candidate profile in the dashboard first; applications need the file itself.');
         const old = await loadSession(tabId);
         await start(req.tabId, req.again && old?.tabId === req.tabId ? 2 + Math.floor(Math.random() * 1000) : 1);
       }

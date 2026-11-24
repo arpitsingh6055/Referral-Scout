@@ -9,9 +9,9 @@
   --text: #1a1f29;
   --muted: #586273;
   --faint: #8892a2;
-  --primary: #0b57d0;
-  --primary-hover: #0842a0;
-  --primary-soft: #e4edfd;
+  --primary: #6547f5;
+  --primary-hover: #5034d7;
+  --primary-soft: #f0edff;
   --on-primary: #fff;
   --ok: #146c2e;
   --ok-soft: #e2f4e7;
@@ -19,8 +19,8 @@
   --warn-soft: #fff1d6;
   --bad: #b3261e;
   --bad-soft: #fce8e6;
-  --hero-a: #0b57d0;
-  --hero-b: #3d7ff2;
+  --hero-a: #5034d7;
+  --hero-b: #8066ff;
   --r: 16px;
   --r-sm: 12px;
   --shadow: 0 1px 2px rgba(20, 30, 50, 0.05), 0 1px 3px rgba(20, 30, 50, 0.05);
@@ -42,18 +42,18 @@
     --text: #e8edf5;
     --muted: #a3afc0;
     --faint: #75839a;
-    --primary: #8ab4f8;
-    --primary-hover: #a8c7fa;
-    --primary-soft: #1c2c47;
-    --on-primary: #062e6f;
+    --primary: #a593ff;
+    --primary-hover: #c0b4ff;
+    --primary-soft: #221f3d;
+    --on-primary: #1a123b;
     --ok: #6dd58c;
     --ok-soft: #14301f;
     --warn: #f4bf5e;
     --warn-soft: #352a12;
     --bad: #f28b82;
     --bad-soft: #3a2120;
-    --hero-a: #123c8c;
-    --hero-b: #2459b8;
+    --hero-a: #4530a8;
+    --hero-b: #6a51d8;
     --shadow: none;
   }
 }
@@ -1151,7 +1151,8 @@ pre.source-preview:empty {
   position: fixed;
   left: 12px;
   right: 12px;
-  bottom: calc(var(--nav-h) + 12px);
+  top: 12px;
+  bottom: auto;
   z-index: 50;
   display: flex;
   flex-direction: column;
@@ -2116,4 +2117,76 @@ button.pill:focus-visible {
 
 .rs-campaign-actions .btn {
   flex: 1;
+}
+
+/* First-run side-panel launcher: explain the next step, then hand detailed setup to the dashboard. */
+.dashboard-link {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--primary);
+  border-radius: 999px;
+  padding: 6px 11px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dashboard-link:hover {
+  background: var(--primary-soft);
+}
+.onboard-launch {
+  margin: 12px 0 20px;
+  padding: 24px 18px 18px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: linear-gradient(155deg, var(--surface), color-mix(in srgb, var(--primary-soft) 58%, var(--surface)));
+  box-shadow: var(--shadow);
+}
+.onboard-launch .mark {
+  margin: 0 0 12px;
+}
+.onboard-launch .eyebrow {
+  margin-bottom: 7px;
+}
+.onboard-launch h1 {
+  max-width: 16ch;
+  font-size: 27px;
+  line-height: 1.12;
+}
+.onboard-launch .lede {
+  max-width: 42ch;
+  margin: 9px 0 18px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.onboard-launch .steps {
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.onboard-launch .step {
+  grid-template-columns: 28px minmax(0, 1fr);
+  padding: 11px;
+  box-shadow: none;
+}
+.onboard-launch .step.is-done {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+}
+.onboard-launch .step b.n {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+}
+.onboard-launch .step span {
+  font-size: 11px;
+}
+.onboard-launch .btn {
+  margin-top: 8px;
+}
+.onboard-launch .fine {
+  margin-top: 14px;
+  line-height: 1.5;
 }

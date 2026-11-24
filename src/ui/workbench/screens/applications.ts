@@ -87,7 +87,7 @@ export function applications(ctx: Ctx): HTMLElement {
     return empty(
       'The queue is empty',
       'Shortlist jobs from the Jobs screen, or paste a job link. Each one becomes a durable task that survives a browser restart.',
-      button('Go to jobs', 'btn btn-primary', () => ctx.go('jobs')),
+      button('Find jobs on LinkedIn', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' })),
     );
 
   const page = div('stack');
@@ -155,7 +155,7 @@ export function applications(ctx: Ctx): HTMLElement {
         div('inline', [
           running
             ? button('Pause queue', 'btn', () => ctx.run({ kind: 'campaign', action: 'control', control: 'pause' }))
-            : button('Start queue', 'btn btn-primary', () =>
+            : button('Start application queue', 'btn btn-primary', () =>
                 ctx.run({ kind: 'campaign', action: 'control', control: campaign.status === 'paused' ? 'resume' : 'start' }),
               ),
           running ? button('Stop after current', 'btn', () => ctx.run({ kind: 'campaign', action: 'control', control: 'drain' })) : null,

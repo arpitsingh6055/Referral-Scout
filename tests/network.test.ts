@@ -225,7 +225,7 @@ it('rejects look-alike profile addresses and judges relevance from the headline'
   expect(relevance('Software intern', 'Product Management')).toBeNull();
 });
 
-it('finds the signed-in person through linkedin.com/in/me/ and reads that profile in the same tab', async () => {
+it('finds the signed-in person through linkedin.com/in/me/ without requiring usage-reporting opt-in', async () => {
   vi.stubGlobal('chrome', {
     runtime: { id: 'abc', getURL: (p: string) => `chrome-extension://abc/${p}`, onMessage: { addListener: vi.fn() } },
     tabs: { sendMessage: vi.fn() },
@@ -233,7 +233,7 @@ it('finds the signed-in person through linkedin.com/in/me/ and reads that profil
   vi.mocked(networkCommand).mockResolvedValueOnce({ url: profile.url }).mockResolvedValueOnce(profile);
   registerNetworkMessages();
   const listener = vi.mocked(chrome.runtime.onMessage.addListener).mock.calls[0]![0];
-  await updateNetwork(s => ({ ...s, usageConsent: true })); // the gate is accepted before a profile is read
+  await updateNetwork(s => ({ ...s, usageConsent: false })); // profile reading remains available with reporting turned off
   const reply = await new Promise(resolve =>
     listener(
       { kind: 'network', action: 'import' },

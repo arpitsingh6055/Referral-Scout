@@ -8,8 +8,10 @@
 
 import './tokens.css';
 import './app.css';
+import { createToaster } from '../toast';
 import * as api from './api';
-import { send, sendWorkspace, view, workspace, type CampaignView, type Request, type WorkspaceView } from './api';
+import { send, sendNetwork, sendWorkspace, view, workspace, type CampaignView, type Request, type WorkspaceView } from './api';
+import type { NetworkRequest } from '../../shared/network';
 import { button, div, el, icon, isEditing, restoreForm, snapshotForm, text } from './dom';
 import { overview, overviewHeader } from './screens/overview';
 import { applications, applicationsHeader } from './screens/applications';
@@ -72,11 +74,16 @@ export interface Ctx {
   setTheme: (theme: Theme) => void;
   /** One call for both services; the request's `kind` decides which one answers. */
   run: (request: Request) => Promise<void>;
+  runNetwork: (request: NetworkRequest) => Promise<void>;
+  openExternal: (url: string) => void;
+  inform: (message: string) => void;
   go: (route: Route) => void;
   openPanel: () => void;
   redraw: () => void;
   refresh: () => Promise<void>;
   fail: (message: string) => void;
+  /** True while a background action is running; screens use it to label and disable the relevant control. */
+  busyAction: string;
 }
 
 /** Routes reachable by link but not shown in the rail. */
@@ -102,17 +109,31 @@ let shop: WorkspaceView | null = null;
 let error = '';
 /** A short confirmation of what just happened, cleared on the next action. */
 let note = '';
+/** Visible, accessible progress state. Never leave a person wondering whether a click registered. */
+let busyAction = '';
+let busyMessage = '';
 /** What the last render drew, so a refresh that changes nothing does not rebuild the page. */
 let drawn = '';
 /** State that arrived while the person was typing, applied once they stop. */
 let deferred: { view: CampaignView; workspace: WorkspaceView | null } | null = null;
 
 const root = document.getElementById('app')!;
+const floatingToasts = createToaster(document.body);
 
 function rail(ctx: Ctx): HTMLElement {
   const nav = el('nav', { class: 'nav', 'aria-label': 'Sections' });
-  for (const item of NAV) {
-    const b = button(item.label, 'nav-item', () => ctx.go(item.route));
+  // A first-time user should not see ten empty destinations before creating a campaign. Keep the rail focused
+  // on the few places that help them complete setup; the full workbench appears as soon as a campaign exists.
+  const items = ctx.view.campaign
+    ? NAV
+    : [
+        { route: 'welcome' as const, label: 'Get started', icon: 'check' },
+        { route: 'profile' as const, label: 'Candidate profile', icon: 'person' },
+        { route: 'setup' as const, label: 'Campaign', icon: 'target' },
+        { route: 'settings' as const, label: 'Settings', icon: 'gear' },
+      ];
+  for (const item of items) {
+    const b = button(item.label, 'nav-item', () => ctx.go(item.route), { 'data-allow-during-action': true });
     b.prepend(icon(item.icon));
     if (current === item.route) b.setAttribute('aria-current', 'page');
     if (item.route === 'needs-you' && ctx.view.inboxCounts.open)
@@ -133,7 +154,7 @@ function rail(ctx: Ctx): HTMLElement {
   themeRow.setAttribute('role', 'group');
   themeRow.setAttribute('aria-label', 'Appearance');
   for (const [value, label] of themes) {
-    const b = button(label, 'rail-theme-btn', () => ctx.setTheme(value));
+    const b = button(label, 'rail-theme-btn', () => ctx.setTheme(value), { 'data-allow-during-action': true });
     if (ctx.theme === value) b.setAttribute('aria-pressed', 'true');
     themeRow.append(b);
   }
@@ -158,7 +179,7 @@ function rail(ctx: Ctx): HTMLElement {
           ),
           div('rail-bar', [el('span', { style: `width:${done}%` })]),
         ])
-      : div('rail-foot', [text('div', 'rail-foot-label', 'No campaign yet'), text('div', 'rail-foot-meta', 'Create one to begin.')]),
+      : div('rail-foot', [text('div', 'rail-foot-label', 'Setup in progress'), text('div', 'rail-foot-meta', 'Your workspace is ready when you are.')]),
     themeRow,
   ]);
 }
@@ -199,7 +220,39 @@ function screenFor(ctx: Ctx): { header: Header; body: HTMLElement } {
   }
 }
 
+const resetToWelcome = (push = false): void => {
+  try {
+    localStorage.removeItem('rs-apply-setup-skipped');
+  } catch {
+    // Ignore storage restrictions.
+  }
+  current = 'welcome';
+  if (push) history.pushState({ route: 'welcome' }, '', '#welcome');
+  else history.replaceState({ route: 'welcome' }, '', '#welcome');
+  window.scrollTo({ top: 0 });
+};
+
 const signature = (): string => JSON.stringify([current, error, state, shop]);
+
+function actionProgress(action: string): string {
+  const labels: Record<string, string> = {
+    save: 'Saving your campaign preferences…',
+    create: 'Creating your campaign…',
+    update: 'Updating your campaign…',
+    rules: 'Saving your automation rules…',
+    preferences: 'Saving your preferences…',
+    testAi: 'Checking your ChatGPT connection…',
+    testApi: 'Testing the optional API connection…',
+    processProfileWithChatGPT: 'Asking ChatGPT to reconcile your CV and LinkedIn evidence… Nothing is being added to your profile yet.',
+    approveAiProfileDraft: 'Adding the approved ChatGPT suggestions to your candidate profile…',
+    start: 'Starting the application queue…',
+    findJobs: 'Starting LinkedIn Jobs search and preparing related role titles…',
+    finishJobSearch: 'Finishing the current search and preparing the jobs for review…',
+    pause: 'Pausing the workflow…',
+    clear: 'Deleting all local data from this device…',
+  };
+  return labels[action] ?? 'Working… Your changes are being saved.';
+}
 
 /**
  * Draws the page.
@@ -224,8 +277,13 @@ function render(force = false): void {
       render();
     },
     run: async request => {
+      if (busyAction) return;
+      busyAction = `${request.kind}:${request.action}`;
+      busyMessage = actionProgress(request.action);
+      note = '';
+      error = '';
+      render(true);
       try {
-        note = '';
         if (request.kind === 'workspace') {
           shop = await sendWorkspace(request);
           note = api.lastMessage;
@@ -235,10 +293,76 @@ function render(force = false): void {
         const [a, b] = await Promise.all([view(), workspace().catch(() => shop)]);
         state = a;
         shop = b;
+        if (request.kind === 'workspace' && request.action === 'clear') resetToWelcome(true);
         error = '';
       } catch (e) {
         error = e instanceof Error ? e.message : 'Something went wrong.';
+      } finally {
+        busyAction = '';
+        busyMessage = '';
       }
+      render(true);
+    },
+    runNetwork: async request => {
+      if (busyAction) return;
+      busyAction = `network:${request.action}`;
+      busyMessage = request.action === 'import'
+        ? 'Reading your LinkedIn profile… Keep this dashboard open. Referral Scout is saving it as source evidence; ChatGPT will reconcile it with your CV before anything enters your candidate profile.'
+        : actionProgress(request.action);
+      note = '';
+      error = '';
+      render(true);
+      try {
+        const result = await sendNetwork(request);
+        if (request.action === 'import') {
+          if (!result.profile || !result.profileCapturedAt) {
+            throw new Error('LinkedIn did not return a verified profile. Check that you are signed in to the correct account, then try again.');
+          }
+        } else {
+          note = request.action === 'consent'
+            ? 'Optional usage counting is enabled.'
+            : request.action === 'revokeConsent'
+              ? 'Optional usage counting is disabled.'
+              : result.status || 'Connection preference saved.';
+        }
+        const [a, b] = await Promise.all([
+          view().catch(() => state!),
+          workspace()
+            .then(value => ({ value, failed: false as const }))
+            .catch(() => ({ value: shop, failed: true as const })),
+        ]);
+        state = a;
+        shop = b.value;
+        if (request.action === 'import') {
+          note = b.failed
+            ? `${result.profile!.name || 'Your LinkedIn'} profile was verified and saved as source evidence, but the dashboard could not refresh. Reopen Candidate profile to process it with ChatGPT.`
+            : `${result.profile!.name || 'Your LinkedIn'} profile was verified and saved as source evidence. Add your CV, then ask ChatGPT to reconcile both before creating candidate-profile records.`;
+        }
+        error = '';
+      } catch (e) {
+        error = e instanceof Error ? e.message : 'Something went wrong.';
+      } finally {
+        busyAction = '';
+        busyMessage = '';
+      }
+      render(true);
+    },
+    openExternal: url => {
+      try {
+        const parsed = new URL(url);
+        if (!['https:'].includes(parsed.protocol)) throw new Error('Only secure links can be opened.');
+        void chrome.tabs.create({ url: parsed.toString(), active: true }).catch(() => {
+          error = 'The page could not be opened. Check your browser settings and try again.';
+          render(true);
+        });
+      } catch (e) {
+        error = e instanceof Error ? e.message : 'This link could not be opened.';
+        render(true);
+      }
+    },
+    inform: message => {
+      note = message;
+      error = '';
       render(true);
     },
     openPanel: () => void chrome.runtime.sendMessage({ kind: 'surface', action: 'open-panel' }).catch(() => undefined),
@@ -257,6 +381,7 @@ function render(force = false): void {
     refresh: async () => {
       try {
         const [a, b] = await Promise.all([view(), workspace().catch(() => shop)]);
+        if (state?.campaign && !a.campaign && !['welcome', 'profile', 'setup', 'settings'].includes(current)) resetToWelcome();
         state = a;
         shop = b;
         error = '';
@@ -269,6 +394,7 @@ function render(force = false): void {
       error = message;
       render(true);
     },
+    busyAction,
   };
 
   const { header, body } = screenFor(ctx);
@@ -282,6 +408,7 @@ function render(force = false): void {
   const page = el('main', { class: 'page' }, [
     text('div', 'crumb', state.campaign ? `Campaigns / ${state.campaign.name}` : 'Campaigns'),
     head,
+    busyMessage ? el('div', { class: 'banner banner-progress', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' }, [icon('clock', 18), text('span', 'progress-copy', busyMessage)]) : null,
     error ? div('banner banner-error', [icon('alert', 18), error]) : null,
     note ? div('banner banner-note', [icon('check', 18), note]) : null,
     body,
@@ -339,8 +466,6 @@ export async function mount(): Promise<void> {
   if (!state.campaign && !location.hash) current = 'welcome';
   render(true);
   // A worker filling a form in another tab changes the queue without this page doing anything, so the view is
-  // re-read on a slow tick rather than left to go stale behind the person's back.
-  // A worker filling a form in another tab changes the queue without this page doing anything, so the view is
   // re-read on a slow tick. It never interrupts: while the person is in a field the new state is held back, and
   // a tick that changes nothing does not touch the DOM at all.
   setInterval(() => {
@@ -351,8 +476,10 @@ export async function mount(): Promise<void> {
           deferred = { view: a, workspace: b };
           return;
         }
+        if (state?.campaign && !a.campaign && !['welcome', 'profile', 'setup', 'settings'].includes(current)) resetToWelcome();
         state = a;
         shop = b;
+        if (busyAction === 'generic') return;
         render();
       })
       .catch(() => undefined);
@@ -360,6 +487,83 @@ export async function mount(): Promise<void> {
 
   // Held-back state lands as soon as the person leaves the field they were in.
   root.addEventListener('focusout', () => setTimeout(flushDeferred, 150));
+
+  // Async button handlers that perform a multi-step workflow outside ctx.run also receive visible feedback.
+  const replaceTransientBanner = (kind: 'progress' | 'error', message: string): void => {
+    const page = root.querySelector<HTMLElement>('.page');
+    const head = page?.querySelector('.page-head');
+    if (!page || !head) return;
+    page.querySelectorAll('.banner-progress, .banner-error, .banner-note').forEach(node => node.remove());
+    const banner = kind === 'progress'
+      ? el('div', { class: 'banner banner-progress', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' }, [icon('clock', 18), text('span', 'progress-copy', message)])
+      : div('banner banner-error', [icon('alert', 18), message]);
+    head.after(banner);
+  };
+
+  addEventListener('referral-scout-action-start', event => {
+    if (busyAction) return; // ctx.run already owns a more specific progress message
+    busyAction = 'generic';
+    busyMessage = (event as CustomEvent<string>).detail || 'Working… Your changes are being saved.';
+    note = '';
+    error = '';
+    replaceTransientBanner('progress', busyMessage);
+  });
+  addEventListener('referral-scout-action-end', () => {
+    if (busyAction === 'generic') {
+      busyAction = '';
+      busyMessage = '';
+    }
+    // The DOM may have been rebuilt while the action ran. Recreate controls now that the shared action lock is clear.
+    render(true);
+  });
+
+  // Async click handlers outside ctx.run (exports, connection checks, file operations) still report failures
+  // in the same visible banner rather than leaving a rejected promise in the console.
+  addEventListener('referral-scout-action-error', event => {
+    if (busyAction && busyAction !== 'generic') return;
+    const message = (event as CustomEvent<string>).detail;
+    error = typeof message === 'string' && message ? message : 'That action could not be completed. Please try again.';
+    busyAction = '';
+    busyMessage = '';
+    replaceTransientBanner('error', error);
+  });
+
+  // The service worker reports real milestones during longer LinkedIn imports. Keep the update in the existing
+  // banner instead of re-rendering the page while the person may be reading or scrolling.
+  chrome.runtime?.onMessage?.addListener((message: unknown, sender, sendResponse) => {
+    if (sender.id !== chrome.runtime.id || !message || typeof message !== 'object') return false;
+    const payload = message as { kind?: unknown; scope?: unknown; message?: unknown; tone?: unknown; title?: unknown };
+    if (payload.kind === 'ui.cleared') {
+      deferred = null;
+      error = '';
+      busyAction = '';
+      busyMessage = '';
+      note = 'All local data was deleted from this device.';
+      resetToWelcome();
+      sendResponse({ shown: document.visibilityState === 'visible' });
+      void Promise.all([view(), workspace().catch(() => null)])
+        .then(([a, b]) => {
+          state = a;
+          shop = b;
+          render(true);
+        })
+        .catch(() => undefined);
+      return false;
+    }
+    if (payload.kind === 'ui.toast' && typeof payload.message === 'string') {
+      floatingToasts.show(payload.tone === 'error' ? 'error' : payload.tone === 'info' ? 'info' : 'success', `${typeof payload.title === 'string' ? `${payload.title}: ` : ''}${payload.message}`);
+      sendResponse({ shown: document.visibilityState === 'visible' });
+      return false;
+    }
+    if (payload.kind !== 'ui.progress' || !['network-import', 'profile-ai'].includes(String(payload.scope)) || typeof payload.message !== 'string') return false;
+    if (payload.scope === 'network-import' && busyAction !== 'network:import') return false;
+    if (payload.scope === 'profile-ai' && busyAction !== 'workspace:processProfileWithChatGPT') return false;
+    busyMessage = payload.message;
+    const copy = root.querySelector<HTMLElement>('.banner-progress .progress-copy');
+    if (copy) copy.textContent = busyMessage;
+    sendResponse({ shown: document.visibilityState === 'visible' });
+    return false;
+  });
 
   // Back, Forward and a hand-edited address all change the hash; without this the page would keep showing the
   // screen it started on while the address bar said otherwise.

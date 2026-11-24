@@ -54,6 +54,7 @@ const CONFIRM_GRACE_MS = 20_000;
 const OWNER = `sw:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
 
 const workers = new Map<string, AbortController>();
+const workerPromises = new Set<Promise<void>>();
 let ticking = false;
 
 export const activeWorkerCount = (): number => workers.size;
@@ -346,7 +347,7 @@ function startWorker(task: ApplicationTask, campaign: Campaign): void {
   workers.set(task.id, controller);
   // The service worker must stay awake for the length of an application; a periodic call keeps it so.
   const keepAlive = setInterval(() => void chrome.runtime.getPlatformInfo(), 20_000);
-  void workOne(task, campaign, controller.signal)
+  const done = workOne(task, campaign, controller.signal)
     .catch(async e => {
       await finish(task.id, 'failed', e instanceof Error ? e.message : 'This application stopped unexpectedly.');
     })
@@ -356,6 +357,8 @@ function startWorker(task: ApplicationTask, campaign: Campaign): void {
       // One finishing is the moment to claim the next.
       void tick();
     });
+  workerPromises.add(done);
+  void done.finally(() => workerPromises.delete(done));
 }
 
 const startOfToday = (now = Date.now()): number => new Date(new Date(now).setHours(0, 0, 0, 0)).getTime();
@@ -417,6 +420,11 @@ export function abortApplication(id: string): void {
 export function abortAll(): void {
   for (const c of workers.values()) c.abort();
   workers.clear();
+}
+
+export async function stopRunnerAndWait(): Promise<void> {
+  abortAll();
+  if (workerPromises.size) await Promise.allSettled([...workerPromises]);
 }
 
 /* ---------- reconciliation ---------- */

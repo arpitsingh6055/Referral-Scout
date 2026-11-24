@@ -597,6 +597,7 @@ const workspace: WorkspaceView = {
       source: 'LinkedIn Jobs',
       applyType: 'ats',
       fit: 88,
+      fitAssessed: true,
       tier: 'strong',
       eligibility: 'eligible',
       freshness: 'fresh',
@@ -624,6 +625,7 @@ const workspace: WorkspaceView = {
       source: 'LinkedIn Jobs',
       applyType: 'easy-apply',
       fit: 74,
+      fitAssessed: true,
       tier: 'possible',
       eligibility: 'eligible',
       freshness: 'recent',
@@ -647,6 +649,7 @@ const workspace: WorkspaceView = {
       source: 'LinkedIn Jobs',
       applyType: 'ats',
       fit: 64,
+      fitAssessed: true,
       tier: 'blocked',
       eligibility: 'ineligible',
       freshness: 'recent',
@@ -704,6 +707,8 @@ const workspace: WorkspaceView = {
   connections: { linkedin: true, ai: true, gmail: false, cv: true },
   surface: 'tab',
   cv: { hasText: true, imported: true },
+  usageReporting: false,
+  outreachAutomatic: false,
   storage: { jobs: 31, applications: 31, contacts: 22, events: 48, facts: 14 },
 };
 

@@ -6,6 +6,7 @@
 import type { CampaignRequest, CampaignView } from '../../background/campaign';
 import type { WorkspaceRequest, WorkspaceView } from '../../background/workspace';
 import type { GmailRequest } from '../../background/gmail';
+import type { NetworkRequest, NetworkState } from '../../shared/network';
 
 export type { CampaignView, WorkspaceView };
 export type Request = CampaignRequest | WorkspaceRequest;
@@ -13,7 +14,7 @@ export type Request = CampaignRequest | WorkspaceRequest;
 interface Reply<T> {
   ok: boolean;
   view?: T;
-  data?: unknown;
+  data?: T;
   /** What the action did, shown to the person so a click is never silent. */
   message?: string;
   error?: string;
@@ -35,6 +36,12 @@ export async function send(request: CampaignRequest): Promise<CampaignView> {
   return reply.view;
 }
 
+export async function sendNetwork(request: NetworkRequest): Promise<NetworkState> {
+  const reply = await ask<NetworkState>(request);
+  if (!reply.data) throw new Error('Referral Scout returned no connection status.');
+  return reply.data;
+}
+
 export async function sendWorkspace(request: WorkspaceRequest): Promise<WorkspaceView> {
   const reply = await ask<WorkspaceView>(request);
   if (!reply.view) throw new Error('Referral Scout returned nothing.');
@@ -52,3 +59,12 @@ export const sendGmail = async <T>(request: GmailRequest): Promise<T> => (await 
 
 export const view = (): Promise<CampaignView> => send({ kind: 'campaign', action: 'view' });
 export const workspace = (): Promise<WorkspaceView> => sendWorkspace({ kind: 'workspace', action: 'view' });
+
+/** Tests the user's signed-in ChatGPT website session from the dashboard's Connections settings. */
+export async function testChatGpt(): Promise<void> {
+  const reply = (await chrome.runtime.sendMessage({ kind: 'apply', action: 'testAi' }).catch(() => undefined)) as
+    | { ok?: boolean; error?: string }
+    | undefined;
+  if (!reply) throw new Error('Referral Scout did not respond. Reload the extension and try again.');
+  if (!reply.ok) throw new Error(reply.error ?? 'ChatGPT could not be reached. Open chatgpt.com and check your sign-in.');
+}

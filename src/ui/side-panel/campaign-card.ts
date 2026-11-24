@@ -98,10 +98,21 @@ export async function renderCampaignCard(host: HTMLElement): Promise<void> {
   const primary = document.createElement('button');
   primary.type = 'button';
   primary.className = 'btn primary';
-  primary.textContent = inboxCounts.open ? 'Review what needs you' : running ? 'Pause' : campaign.status === 'paused' ? 'Resume' : 'Start';
+  const hasQueuedApplications = counts.queued > 0;
+  primary.textContent = inboxCounts.open
+    ? 'Review what needs you'
+    : running
+      ? 'Pause application queue'
+      : hasQueuedApplications
+        ? campaign.status === 'paused' ? 'Resume application queue' : 'Start application queue'
+        : 'Find jobs';
   primary.addEventListener('click', () => {
     if (inboxCounts.open) {
       openWorkbench('needs-you');
+      return;
+    }
+    if (!running && !hasQueuedApplications) {
+      openWorkbench('jobs');
       return;
     }
     primary.disabled = true;

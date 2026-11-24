@@ -5,8 +5,8 @@ import { registerApplyMessages } from './apply';
 import { networkTick, updateNetwork } from './network';
 import { registerCampaignMessages, migrateAnswerBank } from './campaign';
 import { registerGmailMessages } from './gmail';
-import { applySurfaceBehaviour, installMenus, registerSurfaceMessages, registerSurfaces } from './surfaces';
-import { registerWorkspaceMessages, seedProfile } from './workspace';
+import { applySurfaceBehaviour, installMenus, openWorkbench, registerSurfaceMessages, registerSurfaces } from './surfaces';
+import { registerWorkspaceMessages } from './workspace';
 import { registerRunner, ensureRunnerAlarm, recoverQueue, tick, abortAll } from './runner';
 registerNetworkMessages();
 registerAiMessages();
@@ -17,6 +17,12 @@ registerRunner();
 registerSurfaces();
 registerSurfaceMessages();
 registerWorkspaceMessages();
+// Clicking an important background notification takes the person back into the workbench; notifications are
+// otherwise passive and never perform a consequential action on their own.
+chrome.notifications?.onClicked.addListener(notificationId => {
+  void chrome.notifications.clear(notificationId);
+  void openWorkbench('overview');
+});
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === 'network-tick') void networkTick();
 });
@@ -33,8 +39,7 @@ function initialize(): Promise<void> {
 
 async function start(): Promise<void> {
   await chrome.storage.sync.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
-  // The toolbar opens whichever surface the person chose; the full page is the default because it can show the
-  // queue, the evidence and the inbox at once without squeezing any of them.
+  // Fresh installs open the side panel first; the full workbench remains one click away for setup and detailed review.
   await applySurfaceBehaviour();
   await installMenus();
   await openDatabase();
@@ -51,8 +56,8 @@ async function start(): Promise<void> {
   // back before the runner claims anything new, so a restart can never leave two workers on one application.
   await recoverQueue().catch(() => undefined);
   await migrateAnswerBank().catch(() => undefined);
-  // The profile screen should open with what the person already told LinkedIn and the application settings.
-  await seedProfile().catch(() => undefined);
+  // LinkedIn/CV captures remain source evidence only. Candidate profile records are created only from an
+  // explicitly approved ChatGPT reconciliation draft.
   await ensureRunnerAlarm();
 }
 // After an install or update, tabs that were already open keep running the old content script, or none at all: the

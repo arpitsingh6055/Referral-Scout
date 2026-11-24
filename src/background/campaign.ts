@@ -425,6 +425,14 @@ export const campaignRequest = z.discriminatedUnion('action', [
     location: z.string().trim().min(1).max(120),
     employmentType: z.string().trim().max(40).optional(),
   }),
+  z.object({
+    kind: z.literal('campaign'),
+    action: z.literal('update'),
+    name: z.string().trim().min(1).max(120),
+    targetRoles: z.array(z.string().trim().min(1).max(80)).min(1).max(8),
+    location: z.string().trim().min(1).max(120),
+    employmentType: z.string().trim().max(40),
+  }),
   z.object({ kind: z.literal('campaign'), action: z.literal('control'), control: z.enum(['start', 'pause', 'resume', 'drain', 'stop']) }),
   z.object({
     kind: z.literal('campaign'),
@@ -503,6 +511,23 @@ async function handle(req: CampaignRequest): Promise<CampaignView> {
       });
       await saveCampaign(c);
       await migrateAnswerBank();
+      break;
+    }
+    case 'update': {
+      const current = await activeCampaign();
+      if (!current) throw new Error('Create a campaign first.');
+      await changeCampaign(current.id, c =>
+        c
+          ? {
+              ...c,
+              name: req.name,
+              targetRoles: req.targetRoles,
+              location: req.location,
+              employmentType: req.employmentType,
+              updatedAt: Date.now(),
+            }
+          : c,
+      );
       break;
     }
     case 'control': {
