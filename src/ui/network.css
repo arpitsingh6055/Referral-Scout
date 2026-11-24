@@ -2025,3 +2025,95 @@ button.pill:focus-visible {
 .home-turn {
   scroll-margin-top: 72px;
 }
+
+/* ---------- campaign card (side panel) ---------- */
+/* The narrow surface gets status, one primary action and a door into the workbench — never a desktop table. */
+.rs-campaign {
+  background: #fff;
+  border: 1px solid #e2e6f0;
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 2px rgb(21 27 53 / 4%);
+}
+
+.rs-campaign-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rs-campaign-name {
+  font-weight: 650;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rs-campaign-state {
+  margin-left: auto;
+  flex: none;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #f1f3f8;
+  color: #65718a;
+}
+
+.rs-campaign-state.is-running {
+  background: #e4f5ee;
+  color: #159b69;
+}
+
+.rs-campaign-state.is-attention {
+  background: #fcf3e4;
+  color: #cb851b;
+}
+
+.rs-campaign-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 8px;
+}
+
+.rs-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  background: #f5f4ff;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  color: #65718a;
+}
+
+.rs-chip b {
+  font-size: 13px;
+  color: #151b35;
+}
+
+.rs-chip-amber {
+  background: #fcf3e4;
+}
+
+.rs-chip-amber b {
+  color: #cb851b;
+}
+
+.rs-campaign-next {
+  font-size: 12.5px;
+  color: #65718a;
+  margin: 0 0 10px;
+}
+
+.rs-campaign-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.rs-campaign-actions .btn {
+  flex: 1;
+}
