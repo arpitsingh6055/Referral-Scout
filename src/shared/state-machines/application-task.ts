@@ -26,8 +26,8 @@ export const ALLOWED: Record<TaskState, readonly TaskState[]> = {
   // Once submitted, the application leaves the queue: what happens next (assessment, interview, rejection) is an
   // outcome recorded in the event ledger, not a queue state. Mixing the two is how a queue becomes a CRM by accident.
   submitted: ['closed'],
-  // An uncertain submission is reconciled by evidence or by the person; it is never silently retried.
-  uncertain: ['submitted', 'needs-you', 'failed', 'closed'],
+  // An uncertain submission is reconciled by evidence or by the person; only explicit confirmation may return it to queued.
+  uncertain: ['submitted', 'queued', 'needs-you', 'failed', 'closed'],
   failed: ['queued', 'closed'],
   skipped: ['closed', 'queued'],
   duplicate: ['closed'],
@@ -298,6 +298,15 @@ export function nextEligible(tasks: readonly ApplicationTask[], o: SchedulerOpti
  */
 export const orphaned = (tasks: readonly ApplicationTask[], now = Date.now()): ApplicationTask[] =>
   tasks.filter(t => isActive(t.state) && !leaseLive(t, now));
+
+/**
+ * Parked items whose blocking exception ids are no longer open (for example resolved or confirmed elsewhere).
+ * Only safe-to-retry tasks with stale `blockedBy` references are healed so submitted/uncertain ones stay safe.
+ */
+export const staleNeedsYou = (tasks: readonly ApplicationTask[], openExceptionIds: ReadonlySet<string>): ApplicationTask[] =>
+  tasks.filter(
+    t => t.state === 'needs-you' && safeToRetry(t) && (t.blockedBy?.length ?? 0) > 0 && t.blockedBy!.every(id => !openExceptionIds.has(id)),
+  );
 
 /**
  * Whether a stopped item is safe to reopen. The question is never "did the worker stop?" but "did it stop before or

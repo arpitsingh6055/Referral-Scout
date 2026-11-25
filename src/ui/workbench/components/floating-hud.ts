@@ -197,6 +197,24 @@ export function computeHudState(input: HudInput): HudState | null {
     };
   }
 
+  /* 2b. Urgent Human-in-the-Loop Blockers ("Stop Here" gates across any route) */
+  if (view.inboxCounts.open > 0 && (view.inboxCounts.urgent > 0 || (w.cv.imported && w.completeness.complete >= w.completeness.total))) {
+    const queueTotal = Math.max(1, view.counts.total);
+    const pct = Math.min(96, Math.max(25, Math.round((view.counts.submitted / queueTotal) * 100) || 88));
+    return {
+      mode: view.inboxCounts.urgent > 0 ? 'error' : 'completion',
+      percent: pct,
+      title:
+        view.inboxCounts.urgent > 0
+          ? `Urgent · ${view.inboxCounts.urgent} item${view.inboxCounts.urgent === 1 ? '' : 's'} need confirmation`
+          : `${view.inboxCounts.open} paused application${view.inboxCounts.open === 1 ? '' : 's'}`,
+      detail: view.inbox[0]?.prompt ?? 'Answer once in Needs you to resume automatically',
+      ctaLabel: route === 'needs-you' ? 'Resolve above ↑' : 'Resolve now →',
+      targetRoute: 'needs-you',
+      targetSelector: '.inbox-item',
+    };
+  }
+
   /* 3. Overall Setup & Profile Completion Mode */
   const hasProfileRecords = w.cv.imported || w.profile.employment.length > 0 || w.profile.education.length > 0;
   const answerFraction = w.completeness.total > 0 ? Math.min(1, w.completeness.complete / w.completeness.total) : 1;
@@ -264,8 +282,9 @@ export function computeHudState(input: HudInput): HudState | null {
       percent: 92,
       title: `92% Complete · ${view.inboxCounts.open} waiting`,
       detail: 'A paused application needs your quick answer',
-      ctaLabel: 'Answer now →',
+      ctaLabel: 'Resolve now →',
       targetRoute: 'needs-you',
+      targetSelector: '.inbox-item',
     };
   }
 

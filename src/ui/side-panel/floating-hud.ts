@@ -95,6 +95,18 @@ export function computePanelHudState(input: {
   }
 
   /* 4. Pending Review / Approval Gates */
+  const waitingQuestions = (s.referralJobs ?? []).filter(j => j.waiting && j.finishedAt === undefined).length;
+  if (waitingQuestions > 0) {
+    return {
+      mode: 'completion',
+      percent: 76,
+      title: `${waitingQuestions} search question${waitingQuestions === 1 ? '' : 's'}`,
+      detail: 'Confirm company match so contact scan resumes',
+      ctaLabel: 'Answer →',
+      action: { kind: 'tab-home-turn' },
+    };
+  }
+
   const toApprove = s.contacts.filter(p => p.state === 'review' && !p.approved).length;
   if (toApprove > 0) {
     return {

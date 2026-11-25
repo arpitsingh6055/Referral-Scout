@@ -163,7 +163,7 @@ export function allocate(candidates: readonly ContactCandidate[], input: Allocat
       const breakdown = scoreContact(c);
       return { contact: c, score: breakdown.total, breakdown, priority: priorityOf(breakdown.total) };
     })
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => Number(pinned.has(b.contact.companyId)) - Number(pinned.has(a.contact.companyId)) || b.score - a.score);
 
   const takenAtCompany = new Map<string, number>();
   const out: Allocation[] = [];
@@ -197,10 +197,18 @@ export function allocate(candidates: readonly ContactCandidate[], input: Allocat
         placed.add(s.contact.id);
         continue;
       }
+      const isPinned = pinned.has(s.contact.companyId);
       out.push({
         ...s,
         status: 'allocated',
-        reason: already === 0 ? `Best remaining contact at ${s.contact.company}.` : `Second route at ${s.contact.company}.`,
+        reason:
+          already === 0
+            ? isPinned
+              ? `Pinned company priority — best remaining contact at ${s.contact.company}.`
+              : `Best remaining contact at ${s.contact.company}.`
+            : isPinned
+              ? `Pinned company — second route at ${s.contact.company} released early.`
+              : `Second route at ${s.contact.company}.`,
       });
       placed.add(s.contact.id);
       takenAtCompany.set(s.contact.companyId, already + 1);
@@ -212,7 +220,76 @@ export function allocate(candidates: readonly ContactCandidate[], input: Allocat
     if (!placed.has(s.contact.id))
       out.push({ ...s, status: 'held', reason: `Already approaching ${input.maxPerCompany} people at ${s.contact.company}.` });
 
-  return out.sort((a, b) => (a.status === b.status ? b.score - a.score : a.status === 'allocated' ? -1 : 1));
+  return out.sort((a, b) =>
+    a.status === b.status
+      ? Number(pinned.has(b.contact.companyId)) - Number(pinned.has(a.contact.companyId)) || b.score - a.score
+      : a.status === 'allocated'
+        ? -1
+        : 1,
+  );
+}
+
+export interface CompanyRank {
+  companyId: string;
+  company: string;
+  pinned: boolean;
+  /** Composite 0-100 employer priority score (contact quality + opportunity fit + depth + pin boost). */
+  score: number;
+  bestContactScore: number;
+  bestOpportunityFit: number;
+  contactCount: number;
+  verifiedEmailCount: number;
+  directTieCount: number;
+  /** Plain-language explanation of why this employer ranks where it does. */
+  reasons: string[];
+}
+
+/** Groups contacts by canonical employer and produces transparent "Why this rank?" company breakdowns. */
+export function rankCompanies(candidates: readonly ContactCandidate[], input: { pinned?: readonly string[] } = {}): CompanyRank[] {
+  const pinned = new Set(input.pinned ?? []);
+  const groups = new Map<string, ContactCandidate[]>();
+  for (const c of candidates) {
+    if (c.excluded) continue;
+    const list = groups.get(c.companyId) ?? [];
+    list.push(c);
+    groups.set(c.companyId, list);
+  }
+
+  const ranked: CompanyRank[] = [];
+  for (const [companyId, list] of groups) {
+    const scored = list.map(scoreContact).sort((a, b) => b.total - a.total);
+    const bestContactScore = scored[0]?.total ?? 0;
+    const bestOpportunityFit = Math.max(...list.map(c => c.opportunityFit));
+    const verifiedEmailCount = list.filter(c => c.channel === 'email-verified').length;
+    const directTieCount = list.filter(c => c.relationship === 'existing-connection' || c.relationship === 'alumni').length;
+    const isPinned = pinned.has(companyId);
+    const depthBonus = Math.min(10, Math.max(0, list.length - 1) * 5);
+    const pinBonus = isPinned ? 15 : 0;
+    const score = Math.min(100, Math.round(bestContactScore * 0.65 + bestOpportunityFit * 0.25 + depthBonus + pinBonus));
+
+    const reasons: string[] = [];
+    if (isPinned) reasons.push('Pinned priority (+15 boost, bypasses cooldown)');
+    reasons.push(`Best contact ${bestContactScore}/100`);
+    reasons.push(`Role fit ${Math.round(bestOpportunityFit)}/100`);
+    if (directTieCount > 0) reasons.push(`${directTieCount} warm/alumni tie${directTieCount === 1 ? '' : 's'}`);
+    if (verifiedEmailCount > 0) reasons.push(`${verifiedEmailCount} verified email${verifiedEmailCount === 1 ? '' : 's'}`);
+    else if (list.length > 1) reasons.push(`${list.length} reachable contacts`);
+
+    ranked.push({
+      companyId,
+      company: list[0]!.company,
+      pinned: isPinned,
+      score,
+      bestContactScore,
+      bestOpportunityFit: Math.round(bestOpportunityFit),
+      contactCount: list.length,
+      verifiedEmailCount,
+      directTieCount,
+      reasons,
+    });
+  }
+
+  return ranked.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.score - a.score || b.bestContactScore - a.bestContactScore);
 }
 
 export interface BudgetSummary {

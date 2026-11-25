@@ -4,6 +4,7 @@ import {
   EMAIL_RULES,
   mayEmail,
   priorityOf,
+  rankCompanies,
   scoreContact,
   summarise,
   type ContactCandidate,
@@ -106,6 +107,38 @@ describe('allocation across companies', () => {
     ];
     const result = allocate(list, { ...rules, weeklyBudget: 10, pinned: ['A'] });
     expect(result.find(a => a.contact.id === 'a2')!.status).toBe('allocated');
+  });
+
+  it('allocates budget to a pinned company ahead of higher-scoring unpinned companies', () => {
+    const list = [
+      contact({ id: 'high', companyId: 'unpinned', relationship: 'existing-connection', roleRelation: 'same-team' }),
+      contact({ id: 'pin', companyId: 'pinned-co', relationship: 'second-degree', roleRelation: 'same-function' }),
+    ];
+    const result = allocate(list, { ...rules, weeklyBudget: 1, pinned: ['pinned-co'] });
+    expect(result.find(a => a.contact.id === 'pin')!.status).toBe('allocated');
+    expect(result.find(a => a.contact.id === 'high')!.status).toBe('held');
+  });
+
+  it('produces transparent company rank breakdowns and honors pin boosts', () => {
+    const list = [
+      contact({
+        id: 'a1',
+        companyId: 'acme',
+        company: 'Acme',
+        opportunityFit: 95,
+        relationship: 'second-degree',
+        channel: 'email-verified',
+      }),
+      contact({ id: 'b1', companyId: 'beta', company: 'Beta', opportunityFit: 60, relationship: 'none' }),
+    ];
+    const unpinned = rankCompanies(list);
+    expect(unpinned[0]!.companyId).toBe('acme');
+    expect(unpinned[0]!.reasons.join(' · ')).toContain('Role fit 95/100');
+
+    const withPin = rankCompanies(list, { pinned: ['beta'] });
+    expect(withPin[0]!.companyId).toBe('beta');
+    expect(withPin[0]!.pinned).toBe(true);
+    expect(withPin[0]!.reasons[0]).toContain('Pinned priority');
   });
 
   it('keeps researching and drafting when the budget is gone', () => {

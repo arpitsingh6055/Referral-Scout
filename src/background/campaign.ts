@@ -27,6 +27,7 @@ import {
 } from '../shared/persistence/campaign-store';
 import { read, write } from '../storage/state';
 import { applyControl, newCampaign, stages, type Campaign, type Control } from '../shared/domain/campaign';
+import { canonicalCompany } from '../shared/domain/job';
 import {
   admit,
   counts,
@@ -259,10 +260,19 @@ export async function confirmSubmission(id: string, outcome: 'submitted' | 'not-
         ? transition(old, {
             to: 'submitted',
             reason: 'You confirmed this was submitted.',
-            patch: { submission: { ...(old.submission ?? {}), confirmedAt: Date.now(), how: 'user-confirmed' } },
+            patch: {
+              blockedBy: [],
+              submission: { ...(old.submission ?? {}), confirmedAt: Date.now(), how: 'user-confirmed' },
+            },
           })
         : old,
     );
+    const uncertainOpen = (await openExceptionsFor(task.campaignId)).filter(
+      e => e.kind === 'submission-uncertain' && e.affected.some(a => a.applicationId === id),
+    );
+    for (const exc of uncertainOpen) {
+      await changeException(exc.id, e => (e ? resolve(e, { applyTo: exc.affected.map(a => a.applicationId), savedToBank: false }) : e));
+    }
     await recordEvent({
       campaignId: task.campaignId,
       entityId: id,
@@ -277,9 +287,19 @@ export async function confirmSubmission(id: string, outcome: 'submitted' | 'not-
     return;
   }
   // Not submitted after all: the attempt record is cleared so the item can safely be filled again.
+  const uncertainOpen = (await openExceptionsFor(task.campaignId)).filter(
+    e => e.kind === 'submission-uncertain' && e.affected.some(a => a.applicationId === id),
+  );
+  for (const exc of uncertainOpen) {
+    await changeException(exc.id, e => (e ? resolve(e, { applyTo: exc.affected.map(a => a.applicationId), savedToBank: false }) : e));
+  }
   await changeTask(id, old => {
     if (!old) return old;
-    const next = transition(old, { to: 'queued', reason: 'You confirmed it was not submitted; it goes back in the queue.' });
+    const next = transition(old, {
+      to: 'queued',
+      reason: 'You confirmed it was not submitted; it goes back in the queue.',
+      patch: { blockedBy: [] },
+    });
     delete next.submission;
     return next;
   });
@@ -497,6 +517,12 @@ export const campaignRequest = z.discriminatedUnion('action', [
     value: z.string().max(4000),
     scopeValue: z.string().max(120).optional(),
   }),
+  z.object({
+    kind: z.literal('campaign'),
+    action: z.literal('pinCompany'),
+    company: z.string().trim().min(1).max(200),
+    pinned: z.boolean(),
+  }),
   z.object({ kind: z.literal('campaign'), action: z.literal('migrate') }),
 ]);
 
@@ -622,6 +648,24 @@ async function handle(req: CampaignRequest): Promise<CampaignView> {
     case 'saveFact':
       await saveAnswer({ canonicalKey: req.canonicalKey, value: req.value, ...(req.scopeValue ? { scopeValue: req.scopeValue } : {}) });
       break;
+    case 'pinCompany': {
+      const current = await activeCampaign();
+      if (!current) throw new Error('Create a campaign first.');
+      const key = canonicalCompany(req.company);
+      if (!key) break;
+      await changeCampaign(current.id, c => {
+        if (!c) return c;
+        const next = new Set(c.referral.pinnedCompanies ?? []);
+        if (req.pinned) next.add(key);
+        else next.delete(key);
+        return {
+          ...c,
+          updatedAt: Date.now(),
+          referral: { ...c.referral, pinnedCompanies: [...next] },
+        };
+      });
+      break;
+    }
     case 'migrate':
       await migrateAnswerBank(true);
       break;
