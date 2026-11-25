@@ -137,8 +137,7 @@ export function live(s: NetworkState, stage: number): HTMLElement | null {
     const terms = s.plan?.terms ?? [];
     title = 'Searching LinkedIn for jobs';
     since = search.startedAt;
-    expect =
-      'Usually 2 to 4 minutes. ChatGPT gets up to 2 minutes to suggest similar job titles, then each title takes about 15 seconds because every page is opened and read at a human pace.';
+    expect = 'Usually 2 to 4 minutes (~15s per job title).';
     steps.push([
       terms.length ? 'done' : 'now',
       'Plan the search',
@@ -163,8 +162,7 @@ export function live(s: NetworkState, stage: number): HTMLElement | null {
       current = open.find(j => !j.waiting);
     title = 'Finding who can refer you';
     since = Math.min(...open.map(j => j.addedAt));
-    expect =
-      'About 1 to 2 minutes per company: the job page, the company page, then up to five people searches, spaced a few seconds apart.';
+    expect = '1–2 min per company (~5 people searches at a safe pace).';
     if (open.some(j => j.mode === 'referral' && !j.strategy && !j.strategyTried))
       steps.push(['now', 'Ask ChatGPT who is worth approaching at each company', s.status]);
     for (const job of jobs.slice(0, 10)) {
@@ -185,8 +183,7 @@ export function live(s: NetworkState, stage: number): HTMLElement | null {
       next = queue[0],
       wait = usage(s).next;
     title = queue.length ? 'Reaching out' : 'Waiting for replies';
-    expect =
-      'Messages go out one at a time with a pause between them, within your daily limit. Accepted invitations are checked every 2 hours and followed up automatically.';
+    expect = 'Paced within daily limits; acceptances checked every 2h.';
     steps.push(['done', `${sent} sent so far`]);
     if (next) steps.push(['now', `Next: ${next.name}${next.companyName ? ` at ${next.companyName}` : ''}`, wait || s.status]);
     if (queue.length > 1) steps.push(['later', `${queue.length - 1} more in the queue`]);

@@ -6,8 +6,95 @@
  * about outreach and a single bar would imply one is waiting for the other.
  */
 
+import { canonicalCompany } from '../../../shared/domain/job';
 import { ago, button, card, div, emptyState, icon, metric, pill, plural, progress, text } from '../dom';
 import type { Ctx } from '../shell';
+
+function buildCommandCenter(ctx: Ctx): HTMLElement | null {
+  const jobs = ctx.workspace?.jobs ?? [];
+  const contacts = ctx.workspace?.contacts ?? [];
+  const queue = ctx.view.queue ?? [];
+  if (!jobs.length && !queue.length) return null;
+
+  const pinned = new Set(ctx.view.campaign?.referral.pinnedCompanies ?? []);
+  const contactsByCompany = new Map<string, number>();
+  for (const c of contacts) {
+    if (c.suppressed) continue;
+    const key = canonicalCompany(c.company ?? '');
+    if (key) contactsByCompany.set(key, (contactsByCompany.get(key) ?? 0) + 1);
+  }
+
+  const queueUrls = new Set(queue.flatMap(q => [q.jobId, q.url].filter((v): v is string => !!v)));
+  const companies = new Map<
+    string,
+    { key: string; name: string; roles: number; shortlisted: number; queued: number; topFit: number; pinned: boolean }
+  >();
+
+  for (const j of jobs) {
+    if (j.judgement === 'rejected') continue;
+    const key = canonicalCompany(j.company) || j.company.toLowerCase();
+    const prev = companies.get(key) ?? {
+      key,
+      name: j.company,
+      roles: 0,
+      shortlisted: 0,
+      queued: 0,
+      topFit: 0,
+      pinned: pinned.has(key),
+    };
+    prev.roles += 1;
+    if (j.judgement === 'shortlisted') prev.shortlisted += 1;
+    if (queueUrls.has(j.id) || queueUrls.has(j.url)) prev.queued += 1;
+    prev.topFit = Math.max(prev.topFit, j.fit);
+    companies.set(key, prev);
+  }
+
+  const ranked = [...companies.values()]
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || Number(b.shortlisted > 0) - Number(a.shortlisted > 0) || b.topFit - a.topFit)
+    .slice(0, 5);
+  if (!ranked.length) return null;
+
+  return card('Shortlisted & Target Companies', {
+    sub: 'Launch LinkedIn with the Side Panel open, review matched roles, or queue applications in 1 click.',
+    link: button('Side Panel on LinkedIn →', 'btn btn-sm btn-primary', () => ctx.openPanel('https://www.linkedin.com/jobs/')),
+    body: [
+      div(
+        'rows',
+        ranked.map((co, idx) => {
+          const refs = contactsByCompany.get(co.key) ?? 0;
+          const monogram = co.name.trim().charAt(0).toUpperCase() || 'C';
+          const primaryBtn =
+            co.shortlisted > 0 && co.queued < co.shortlisted
+              ? button('Queue Roles', 'btn btn-sm btn-primary', () => ctx.run({ kind: 'workspace', action: 'enqueueShortlisted' }))
+              : refs > 0
+                ? button('View Referrers', 'btn btn-sm btn-primary', () => ctx.go('referrals'))
+                : button('Find Referrers', 'btn btn-sm btn-primary', () => ctx.openPanel('https://www.linkedin.com/jobs/'));
+          return div('company-cmd-row', [
+            div('company-monogram', [monogram]),
+            div('row-title', [
+              div('inline', [
+                text('span', 'cell-strong', co.name),
+                pill(`#${idx + 1} · ${co.topFit}/100`, co.topFit >= 80 ? 'green' : 'violet'),
+                co.pinned ? pill('Pinned', 'violet') : null,
+              ]),
+              text(
+                'div',
+                'cell-muted',
+                `${plural(co.roles, 'matched role')}${co.shortlisted ? ` · ${co.shortlisted} shortlisted` : ''} · ${refs ? `${plural(refs, 'referrer')}` : 'No referrers yet'}`,
+              ),
+            ]),
+            div('inline', [
+              primaryBtn,
+              button(co.pinned ? 'Pinned ★' : 'Pin', co.pinned ? 'btn btn-sm' : 'btn btn-sm btn-ghost', () =>
+                ctx.run({ kind: 'campaign', action: 'pinCompany', company: co.name, pinned: !co.pinned }),
+              ),
+            ]),
+          ]);
+        }),
+      ),
+    ],
+  });
+}
 
 const statusPill = (status: string, needsYou: number): HTMLElement =>
   needsYou > 0 && status === 'running'
@@ -159,10 +246,13 @@ export function overview(ctx: Ctx): HTMLElement {
   });
   page.append(
     card('Campaign progress', {
-      sub: 'Applications and referral outreach move ahead side-by-side so neither holds up the other.',
+      sub: 'Job discovery, applications, and referrals advance independently.',
       body: [strip],
     }),
   );
+
+  const cmdCenter = buildCommandCenter(ctx);
+  if (cmdCenter) page.append(cmdCenter);
 
   const nextUp = queue.filter(q => q.state !== 'submitted' && q.state !== 'skipped').slice(0, 3);
   const interactiveRow = (rowEl: HTMLElement, target: 'applications' | 'needs-you'): HTMLElement => {
@@ -310,6 +400,7 @@ export const overviewHeader = (ctx: Ctx): { title: string; sub: string; status?:
                   : button('Start application queue', 'btn btn-primary', () =>
                       ctx.run({ kind: 'campaign', action: 'control', control: c.status === 'paused' ? 'resume' : 'start' }),
                     ),
+      button('Side Panel on LinkedIn', 'btn', () => ctx.openPanel('https://www.linkedin.com/jobs/')),
     ],
   };
 };

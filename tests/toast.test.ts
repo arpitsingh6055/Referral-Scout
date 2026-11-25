@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createToaster } from '../src/ui/toast';
+import { condenseToastMessage, createToaster } from '../src/ui/toast';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -40,4 +40,17 @@ it('never stacks more than four notifications', () => {
   for (let i = 0; i < 9; i++) t.show('info', `n${i}`);
   expect(toasts().length).toBeLessThanOrEqual(4);
   expect(toasts().at(-1)!.textContent).toContain('n8');
+});
+
+it('condenses verbose messages under 64 chars and deduplicates identical active toasts', () => {
+  const shortened = condenseToastMessage('Application answers saved to your bank cleanly. You can review your queue on the next screen.');
+  expect(shortened.length).toBeLessThanOrEqual(64);
+  expect(shortened).toBe('Application answers saved to your bank cleanly.');
+
+  const t = createToaster(document.body);
+  t.show('success', 'Company pinned.');
+  t.show('success', 'Company pinned.');
+  expect(toasts()).toHaveLength(1);
+  vi.advanceTimersByTime(3600);
+  expect(toasts()).toHaveLength(0);
 });

@@ -41,9 +41,82 @@ export async function openWorkbench(route = ''): Promise<void> {
 }
 
 export async function openPanel(tabId?: number): Promise<void> {
-  const id = tabId ?? (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id;
-  if (id === undefined) return;
-  await chrome.sidePanel.open({ tabId: id }).catch(() => undefined);
+  const activeTab =
+    tabId !== undefined
+      ? await chrome.tabs.get(tabId).catch(() => undefined)
+      : (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0];
+  const id = tabId ?? activeTab?.id;
+  const windowId = activeTab?.windowId;
+  if (id !== undefined) {
+    try {
+      await chrome.sidePanel.open({ tabId: id });
+      return;
+    } catch {
+      // Fall back to windowId below if tab-level open is rejected.
+    }
+  }
+  if (windowId !== undefined) await chrome.sidePanel.open({ windowId }).catch(() => undefined);
+}
+
+const DEFAULT_LINKEDIN_URL = 'https://www.linkedin.com/jobs/';
+
+const safeLinkedInUrl = (raw?: string): string => {
+  if (!raw) return DEFAULT_LINKEDIN_URL;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === 'https:' && (parsed.hostname === 'linkedin.com' || parsed.hostname.endsWith('.linkedin.com'))) {
+      return parsed.toString();
+    }
+  } catch {
+    // Fall back safely to LinkedIn Jobs.
+  }
+  return DEFAULT_LINKEDIN_URL;
+};
+
+/**
+ * Focuses (or opens) a LinkedIn tab in the user's normal browser window and programmatically opens the
+ * Side Panel beside it so the user never has to hunt for the extension toolbar icon.
+ */
+export async function openLinkedInWithSidePanel(targetUrl?: string): Promise<{ opened: boolean }> {
+  const url = safeLinkedInUrl(targetUrl);
+  const existingTabs = await chrome.tabs.query({ url: ['https://www.linkedin.com/*', 'https://linkedin.com/*'] }).catch(() => []);
+  const matching =
+    targetUrl && existingTabs.find(t => t.url === url) ? existingTabs.find(t => t.url === url) : !targetUrl ? existingTabs[0] : undefined;
+
+  let tabId = matching?.id;
+  let windowId = matching?.windowId;
+
+  if (tabId !== undefined) {
+    await chrome.tabs.update(tabId, { active: true }).catch(() => undefined);
+    if (windowId !== undefined) await chrome.windows.update(windowId, { focused: true }).catch(() => undefined);
+  } else {
+    const win =
+      (await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => undefined)) ??
+      (await chrome.windows.getAll({ windowTypes: ['normal'] }).catch(() => []))[0];
+    const created = await chrome.tabs
+      .create({ url, active: true, ...(win?.id !== undefined ? { windowId: win.id } : {}) })
+      .catch(() => undefined);
+    tabId = created?.id;
+    windowId = created?.windowId ?? win?.id;
+    if (windowId !== undefined) await chrome.windows.update(windowId, { focused: true }).catch(() => undefined);
+  }
+
+  let opened = false;
+  if (chrome.sidePanel?.open) {
+    if (tabId !== undefined) {
+      opened = await chrome.sidePanel
+        .open({ tabId })
+        .then(() => true)
+        .catch(() => false);
+    }
+    if (!opened && windowId !== undefined) {
+      opened = await chrome.sidePanel
+        .open({ windowId })
+        .then(() => true)
+        .catch(() => false);
+    }
+  }
+  return { opened };
 }
 
 const MENU_TAB = 'rs-open-tab';
@@ -101,10 +174,17 @@ export function registerSurfaceMessages(): void {
   chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
     if (!input || typeof input !== 'object' || (input as { kind?: unknown }).kind !== 'surface') return false;
     if (!trustedExtension(sender, chrome.runtime.id)) return false;
-    const message = input as { action?: string; route?: string; surface?: Surface };
+    const message = input as { action?: string; route?: string; url?: string; surface?: Surface };
     if (message.action === 'open-tab')
       void openWorkbench(typeof message.route === 'string' ? message.route : '').then(() => respond({ ok: true }));
-    else if (message.action === 'open-panel') void openPanel().then(() => respond({ ok: true }));
+    else if (message.action === 'open-panel') {
+      if (typeof message.url === 'string' && message.url) {
+        void openLinkedInWithSidePanel(message.url).then(res => respond({ ok: true, ...res }));
+      } else {
+        void openPanel().then(() => respond({ ok: true, opened: true }));
+      }
+    } else if (message.action === 'open-linkedin-panel')
+      void openLinkedInWithSidePanel(typeof message.url === 'string' ? message.url : undefined).then(res => respond({ ok: true, ...res }));
     else if (message.action === 'set-default' && (message.surface === 'tab' || message.surface === 'panel'))
       void setDefaultSurface(message.surface).then(() => respond({ ok: true }));
     else if (message.action === 'get-default') void defaultSurface().then(surface => respond({ ok: true, surface }));
