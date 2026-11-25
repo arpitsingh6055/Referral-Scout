@@ -1,7 +1,14 @@
-import { access, rm, rename } from 'node:fs/promises';
+import { access, readFile, rename, rm, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import assert from 'node:assert/strict';
 
-await access('dist/manifest.json');
+const manifest = JSON.parse(await readFile('dist/manifest.json', 'utf8'));
+const pkg = JSON.parse(await readFile('package.json', 'utf8'));
+assert.equal(manifest.version, pkg.version, 'Run pnpm build so dist/manifest.json matches package.json version.');
+
+await access('dist/workbench.html');
+await access('dist/sidepanel.html');
 await rm('referral-scout.zip.pending', { force: true });
 
 if (process.platform === 'win32') {
@@ -23,4 +30,8 @@ await access('referral-scout.zip.pending');
 await rm('referral-scout.zip', { force: true });
 await rename('referral-scout.zip.pending', 'referral-scout.zip');
 
-console.log('Created referral-scout.zip');
+const zipBytes = await readFile('referral-scout.zip');
+const zipStat = await stat('referral-scout.zip');
+const sha256 = createHash('sha256').update(zipBytes).digest('hex');
+
+console.log(`Created referral-scout.zip (v${manifest.version}, ${(zipStat.size / 1024).toFixed(1)} kB, sha256:${sha256})`);

@@ -129,16 +129,21 @@ describe('versioning', () => {
   });
 });
 
-
 describe('matching evidence', () => {
   it('uses technologies and project skills as profile evidence even when the Skills list is empty', () => {
     const profile = {
       ...emptyProfile(NOW),
       employment: [employment({ id: 'work', technologies: ['Kubernetes', 'Python'] })],
-      projects: [{
-        id: 'project', name: 'Deployment automation', skills: ['Product analytics'], links: [], outcomes: [],
-        provenance: unverified('cv', NOW),
-      }],
+      projects: [
+        {
+          id: 'project',
+          name: 'Deployment automation',
+          skills: ['Product analytics'],
+          links: [],
+          outcomes: [],
+          provenance: unverified('cv', NOW),
+        },
+      ],
     };
     expect(requirementsFrom(profile).skills).toEqual(['Kubernetes', 'Python', 'Product analytics']);
   });

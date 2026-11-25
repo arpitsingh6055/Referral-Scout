@@ -103,29 +103,49 @@ export async function getNetwork(): Promise<NetworkState> {
 }
 function announceImportantStatus(previous: string | undefined, next: string | undefined): void {
   if (!next || next === previous) return;
-  const important = /your linkedin profile is saved|jobs found at|no matching jobs were found|your turn:|message is ready for your approval|messages are ready for your approval|could not|not signed in|different linkedin account|failed|interrupted|needs your attention/i.test(next);
+  const important =
+    /your linkedin profile is saved|jobs found at|no matching jobs were found|your turn:|message is ready for your approval|messages are ready for your approval|could not|not signed in|different linkedin account|failed|interrupted|needs your attention/i.test(
+      next,
+    );
   if (!important) return;
-  const title = /jobs found at/i.test(next) || /no matching jobs/i.test(next)
-    ? 'Job search update'
-    : /your linkedin profile is saved/i.test(next)
-      ? 'LinkedIn profile imported'
-      : /your turn:|approval|attention/i.test(next)
-        ? 'Referral Scout needs you'
-        : 'Referral Scout update';
+  const title =
+    /jobs found at/i.test(next) || /no matching jobs/i.test(next)
+      ? 'Job search update'
+      : /your linkedin profile is saved/i.test(next)
+        ? 'LinkedIn profile imported'
+        : /your turn:|approval|attention/i.test(next)
+          ? 'Referral Scout needs you'
+          : 'Referral Scout update';
   try {
     const tone = /could not|failed|interrupted|not signed in|different linkedin/i.test(next)
       ? 'error'
-      : /no matching jobs/i.test(next) ? 'info' : 'success';
+      : /no matching jobs/i.test(next)
+        ? 'info'
+        : 'success';
     const message = { kind: 'ui.toast', tone, title, message: next };
     const system = (): void => {
       // Only important milestones reach the operating system, and only when no extension surface acknowledged
       // the floating toast. This avoids duplicate notifications while the person is actively using the product.
-      if (chrome.notifications?.create) void chrome.notifications.create(`referral-scout-${Date.now()}`, {
-        type: 'basic', iconUrl: chrome.runtime.getURL('icons/icon128.png'), title, message: next.slice(0, 240), priority: 1,
-      }).catch(() => undefined);
+      if (chrome.notifications?.create)
+        void chrome.notifications
+          .create(`referral-scout-${Date.now()}`, {
+            type: 'basic',
+            iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+            title,
+            message: next.slice(0, 240),
+            priority: 1,
+          })
+          .catch(() => undefined);
     };
-    void chrome.runtime.sendMessage(message).then(response => { if (!(response as { shown?: boolean } | undefined)?.shown) system(); }).catch(system);
-  } catch { /* Tests and restricted browser contexts may not expose notification APIs. */ }
+    void chrome.runtime
+      .sendMessage(message)
+      .then(response => {
+        if (!(response as { shown?: boolean } | undefined)?.shown) system();
+      })
+      .catch(system);
+  } catch {
+    /* Tests and restricted browser contexts may not expose notification APIs. */
+  }
 }
 
 export async function updateNetwork(fn: (s: NetworkState) => NetworkState): Promise<NetworkState> {

@@ -3,7 +3,7 @@
   "version": "0.58.2",
   "private": true,
   "type": "module",
-  "description": "Referral Scout: LinkedIn job search and referral outreach as a browser side panel",
+  "description": "Referral Scout: local-first MV3 extension for CV-ranked job discovery, referrer outreach, and application autofill",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=22.0.0"

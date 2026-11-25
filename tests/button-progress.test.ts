@@ -11,7 +11,9 @@ afterEach(() => {
 
 it('changes an async action button into a busy state and restores it when complete', async () => {
   let finish!: () => void;
-  const action = new Promise<void>(resolve => { finish = resolve; });
+  const action = new Promise<void>(resolve => {
+    finish = resolve;
+  });
   const start = vi.fn();
   const end = vi.fn();
   window.addEventListener('referral-scout-action-start', start);
@@ -39,7 +41,9 @@ it('changes an async action button into a busy state and restores it when comple
 
 it('keeps navigation available while a background action is pending and ignores duplicate mutating actions', async () => {
   let finish!: () => void;
-  const action = new Promise<void>(resolve => { finish = resolve; });
+  const action = new Promise<void>(resolve => {
+    finish = resolve;
+  });
   const mutate = vi.fn(() => action);
   const navigate = vi.fn();
   const first = button('Save', 'btn', mutate);

@@ -1,26 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "Referral Scout: jobs and referrals on LinkedIn",
+  "name": "Referral Scout — Jobs, Referrals & Autofill",
+  "short_name": "Referral Scout",
   "version": "0.58.2",
-  "description": "Find jobs on LinkedIn, choose the companies, and ask the right people at each one for a referral. Slow, safe and under your control.",
+  "description": "Find jobs matching your CV, rank referrers, draft outreach, and autofill applications—always under your review.",
+  "homepage_url": "https://referral-scout.vercel.app",
   "minimum_chrome_version": "120",
-  "permissions": [
-    "storage",
-    "alarms",
-    "sidePanel",
-    "scripting",
-    "tabs",
-    "power",
-    "unlimitedStorage",
-    "contextMenus",
-    "notifications"
-  ],
-  "host_permissions": [
-    "https://www.linkedin.com/*",
-    "https://linkedin.com/*",
-    "https://chatgpt.com/*",
-    "https://mail.google.com/*"
-  ],
+  "permissions": ["storage", "alarms", "sidePanel", "scripting", "tabs", "power", "unlimitedStorage", "contextMenus", "notifications"],
+  "host_permissions": ["https://www.linkedin.com/*", "https://linkedin.com/*", "https://chatgpt.com/*", "https://mail.google.com/*"],
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"
@@ -39,25 +26,13 @@
   },
   "content_scripts": [
     {
-      "matches": [
-        "https://www.linkedin.com/*",
-        "https://linkedin.com/*",
-        "https://chatgpt.com/*",
-        "https://mail.google.com/*"
-      ],
-      "js": [
-        "health.js"
-      ],
+      "matches": ["https://www.linkedin.com/*", "https://linkedin.com/*", "https://chatgpt.com/*", "https://mail.google.com/*"],
+      "js": ["health.js"],
       "run_at": "document_idle"
     }
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
   },
-  "optional_host_permissions": [
-    "https://api.openai.com/*",
-    "https://media.licdn.com/*",
-    "https://*/*",
-    "http://*/*"
-  ]
+  "optional_host_permissions": ["https://api.openai.com/*", "https://media.licdn.com/*", "https://*/*", "http://*/*"]
 }

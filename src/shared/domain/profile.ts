@@ -248,11 +248,17 @@ export function requirementsFrom(profile: CandidateProfile, now = Date.now()): M
     ...(years !== undefined ? { yearsExperience: years } : {}),
     // A person's evidence is not limited to a manually curated Skills list. CV/LinkedIn experience and projects
     // commonly carry technologies and capabilities; include those as traceable matching signals as well.
-    skills: [...new Set([
-      ...profile.skills.map(s => s.skill),
-      ...profile.employment.flatMap(e => e.technologies ?? []),
-      ...profile.projects.flatMap(p => p.skills ?? []),
-    ].map(s => s.trim()).filter(Boolean))],
+    skills: [
+      ...new Set(
+        [
+          ...profile.skills.map(s => s.skill),
+          ...profile.employment.flatMap(e => e.technologies ?? []),
+          ...profile.projects.flatMap(p => p.skills ?? []),
+        ]
+          .map(s => s.trim())
+          .filter(Boolean),
+      ),
+    ],
     preferredLocations: profile.preferences.locations,
     preferredWorkModes: profile.preferences.workModes,
     preferredEmploymentTypes: profile.preferences.employmentTypes,
