@@ -7,10 +7,11 @@
  *    per view, visual Before (red strikethrough) -> After (green addition) diff cards, and 1-click apply.
  */
 
-import { button, card, div, el, icon, pill, text } from '../dom';
+import { button, card, div, el, icon, input, pill, text } from '../dom';
 import type { Ctx } from '../shell';
 import type { WorkspaceView } from '../api';
 import type { AiProfileDraft } from '../../../shared/profile-draft';
+import { formatLocation } from '../../../shared/normalizeChatGptProfile';
 import type { ReviewProgressSnapshot } from './floating-hud';
 
 interface ReviewSession {
@@ -19,6 +20,8 @@ interface ReviewSession {
   skippedConflicts: Set<number>;
   skippedRoles: Set<number>;
   skippedEdu: Set<number>;
+  missingPrompts: string[];
+  dismissedPrompts: Set<string>;
   justApproved: boolean;
   lastDraftStamp: string;
 }
@@ -29,6 +32,8 @@ const session: ReviewSession = {
   skippedConflicts: new Set(),
   skippedRoles: new Set(),
   skippedEdu: new Set(),
+  missingPrompts: [],
+  dismissedPrompts: new Set(),
   justApproved: false,
   lastDraftStamp: '',
 };
@@ -43,6 +48,8 @@ export function resetReviewSession(): void {
   session.skippedConflicts.clear();
   session.skippedRoles.clear();
   session.skippedEdu.clear();
+  session.missingPrompts = [];
+  session.dismissedPrompts.clear();
   session.justApproved = false;
   session.lastDraftStamp = '';
 }
@@ -75,6 +82,8 @@ function syncDraftSession(draft: AiProfileDraft | undefined): void {
     session.skippedConflicts.clear();
     session.skippedRoles.clear();
     session.skippedEdu.clear();
+    session.missingPrompts = [...draft.missingInformation];
+    session.dismissedPrompts.clear();
     session.justApproved = false;
   }
 }
@@ -133,6 +142,101 @@ function diffBox(beforeLabel: string, beforeText: string, afterLabel: string, af
       el('ins', { class: 'diff-add', title: afterText }, [afterText || 'Not stated']),
     ]),
     reason ? text('p', 'diff-reason', reason) : null,
+  ]);
+}
+
+function snapshotCard(
+  data: {
+    fullName?: string;
+    email?: string;
+    phone?: string;
+    location?: string;
+    profileUrl?: string;
+    rolesCount: number;
+    eduCount: number;
+    skillsCount: number;
+  },
+  saved: boolean,
+): HTMLElement {
+  const fields: [string, string][] = [
+    ['Full name', data.fullName || 'Not extracted'],
+    ['Email', data.email || 'Not extracted'],
+    ['Phone', data.phone || 'Not extracted'],
+    ['Location', data.location || 'Not extracted'],
+    ['LinkedIn URL', data.profileUrl || 'Not extracted'],
+    ['Structured profile', `${data.rolesCount} roles · ${data.eduCount} degrees · ${data.skillsCount} skills`],
+  ];
+  return div(`snapshot-card${saved ? ' is-saved' : ''}`, [
+    div('diff-card-head', [
+      text('span', 'diff-field', saved ? 'Identity & Career Snapshot' : 'Identity & Contact Preview (Will Save on Apply)'),
+      pill(saved ? 'Saved to Profile ✓' : 'Ready to save', saved ? 'green' : 'violet'),
+    ]),
+    div(
+      'snapshot-grid',
+      fields.map(([label, val]) =>
+        div('snapshot-cell', [
+          text('span', 'snapshot-label', label),
+          Object.assign(text('div', `snapshot-val${val === 'Not extracted' ? ' is-muted' : ''}`, val), { title: val }),
+        ]),
+      ),
+    ),
+  ]);
+}
+
+function quickFillFactKey(prompt: string): string | null {
+  if (/\b(e-?mail)\b/i.test(prompt)) return 'email';
+  if (/\b(phone|mobile|whatsapp)\b/i.test(prompt)) return 'phone';
+  if (/\b(city|location|based)\b/i.test(prompt)) return 'city';
+  if (/\b(salary|ctc|compensation|stipend)\b/i.test(prompt)) return 'expected_ctc';
+  if (/\b(notice|availability|start)\b/i.test(prompt)) return 'notice_period';
+  if (/\b(authori[sz]|visa|sponsorship)\b/i.test(prompt)) return 'work_authorization';
+  if (/\b(portfolio|github|website)\b/i.test(prompt)) return 'portfolio_url';
+  return null;
+}
+
+function renderQuickFillPrompts(prompts: string[], ctx: Ctx): HTMLElement | null {
+  const active = prompts.filter(p => !session.dismissedPrompts.has(p)).slice(0, 3);
+  if (!active.length) return null;
+  return div('quick-fill-box', [
+    text('div', 'field-label', 'Optional quick-fill details ChatGPT noticed missing'),
+    div(
+      'quick-fill-list',
+      active.map(prompt => {
+        const factKey = quickFillFactKey(prompt);
+        const box = input('', { placeholder: `Enter answer for “${prompt}”…`, 'aria-label': prompt });
+        return div('quick-fill-row', [
+          div('', [
+            text('div', 'rule-name', prompt),
+            text('span', 'field-help', factKey ? 'Saves straight to Answer Bank' : 'Saves to Profile Summary'),
+          ]),
+          factKey
+            ? div('inline', [
+                box,
+                button('Save', 'btn btn-sm btn-primary', async () => {
+                  const val = box.value.trim();
+                  if (!val) return;
+                  await ctx.run({ kind: 'workspace', action: 'saveFact', key: factKey, value: val });
+                  session.dismissedPrompts.add(prompt);
+                  ctx.redraw();
+                }),
+                button('Skip', 'btn btn-sm btn-ghost', () => {
+                  session.dismissedPrompts.add(prompt);
+                  ctx.redraw();
+                }),
+              ])
+            : div('inline', [
+                button('Add in Profile →', 'btn btn-sm', () => {
+                  session.dismissedPrompts.add(prompt);
+                  ctx.go('profile');
+                }),
+                button('Skip', 'btn btn-sm btn-ghost', () => {
+                  session.dismissedPrompts.add(prompt);
+                  ctx.redraw();
+                }),
+              ]),
+        ]);
+      }),
+    ),
   ]);
 }
 
@@ -295,19 +399,26 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
           );
 
     wrapper.append(
-      card('Step 3 of 3: Your Profile is Organized', {
+      card('Step 3 of 3: Saved to Your Profile ✓', {
         sub: session.justApproved
-          ? 'Approved improvements were added to your Candidate Profile. Review records below whenever you like.'
+          ? 'Your Name, Email, Contact Details, Roles, Education and Skills are durably saved in your Candidate Profile and Answer Bank.'
           : 'Your CV has been reconciled with LinkedIn. Re-run anytime after uploading a newer CV.',
-        link: pill('Complete', 'green'),
+        link: pill('Saved to Profile ✓', 'green'),
         body: [
-          div('note note-green', [
-            text(
-              'p',
-              '',
-              `${w.profile.employment.length} roles · ${w.profile.education.length} qualifications · ${w.profile.skills.length} skills ready for job matching and autofill.`,
-            ),
-          ]),
+          snapshotCard(
+            {
+              ...(w.profile.identity.fullName ? { fullName: w.profile.identity.fullName } : {}),
+              ...(w.profile.identity.email ? { email: w.profile.identity.email } : {}),
+              ...(w.profile.identity.phone ? { phone: w.profile.identity.phone } : {}),
+              location: formatLocation(w.profile.identity),
+              ...(w.profile.identity.profileUrl ? { profileUrl: w.profile.identity.profileUrl } : {}),
+              rolesCount: w.profile.employment.length,
+              eduCount: w.profile.education.length,
+              skillsCount: w.profile.skills.length,
+            },
+            true,
+          ),
+          renderQuickFillPrompts(session.missingPrompts, ctx),
           div('inline', [
             primaryCta,
             button(
@@ -435,6 +546,19 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
   const newSkillsCount = draft.skills.length;
 
   const previewItems: HTMLElement[] = [
+    snapshotCard(
+      {
+        fullName: draft.identity.fullName || p.identity.fullName || '',
+        email: draft.identity.email || p.identity.email || '',
+        phone: draft.identity.phone || p.identity.phone || '',
+        location: formatLocation(draft.identity) || formatLocation(p.identity),
+        profileUrl: draft.identity.profileUrl || p.identity.profileUrl || '',
+        rolesCount: includedRolesCount,
+        eduCount: includedEduCount,
+        skillsCount: newSkillsCount,
+      },
+      false,
+    ),
     div('diff-summary-grid', [
       div('diff-summary-cell', [
         text('span', 'diff-tag', 'Current Profile (Before)'),
@@ -540,23 +664,15 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
             ctx.busyAction === 'workspace:approveAiProfileDraft' ? 'Applying changes…' : 'Accept & Apply Changes →',
             'btn btn-primary btn-lg',
             async () => {
-              const skippedRoleKeys = [...session.skippedRoles].flatMap(i => (draft.employment[i] ? [draft.employment[i]!] : []));
-              const skippedEduKeys = [...session.skippedEdu].flatMap(i => (draft.education[i] ? [draft.education[i]!] : []));
-              await ctx.run({ kind: 'workspace', action: 'approveAiProfileDraft' });
-              if ((skippedRoleKeys.length || skippedEduKeys.length) && ctx.workspace) {
-                for (const sr of skippedRoleKeys) {
-                  const added = ctx.workspace.profile.employment.find(
-                    e => e.employer === sr.employer && e.title === sr.title && e.provenance.source === 'model',
-                  );
-                  if (added) await ctx.run({ kind: 'workspace', action: 'removeRecord', list: 'employment', id: added.id });
-                }
-                for (const se of skippedEduKeys) {
-                  const added = ctx.workspace.profile.education.find(
-                    e => e.institution === se.institution && e.provenance.source === 'model',
-                  );
-                  if (added) await ctx.run({ kind: 'workspace', action: 'removeRecord', list: 'education', id: added.id });
-                }
-              }
+              session.missingPrompts = [...draft.missingInformation];
+              const skippedEmp = [...session.skippedRoles];
+              const skippedEdu = [...session.skippedEdu];
+              await ctx.run({
+                kind: 'workspace',
+                action: 'approveAiProfileDraft',
+                ...(skippedEmp.length ? { skippedEmploymentIndexes: skippedEmp } : {}),
+                ...(skippedEdu.length ? { skippedEducationIndexes: skippedEdu } : {}),
+              });
               session.justApproved = true;
               session.step = 3;
               emitReviewChanged();

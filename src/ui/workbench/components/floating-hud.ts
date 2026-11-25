@@ -272,7 +272,10 @@ export function computeHudState(input: HudInput): HudState | null {
   return {
     mode: 'completion',
     percent,
-    title: `${percent}% Complete · ${incomplete.length} step${incomplete.length === 1 ? '' : 's'} left`,
+    title:
+      w.cv.imported && w.profile.identity.fullName && !w.aiProfileDraft
+        ? `${percent}% Ready · Profile Saved`
+        : `${percent}% Complete · ${incomplete.length} step${incomplete.length === 1 ? '' : 's'} left`,
     detail: `Next: ${next?.label ?? 'Finish profile'}`,
     ctaLabel: route === next?.route ? 'Jump to next ↓' : 'Fix next →',
     targetRoute: next?.route ?? 'profile',

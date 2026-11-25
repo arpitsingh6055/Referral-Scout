@@ -457,7 +457,10 @@ export function select(options: { value: string; label: string }[], value: strin
 
 export interface FormSnapshot {
   values: Map<string, string>;
+  defaults: Map<string, string>;
+  dirty: Set<string>;
   checked: Map<string, boolean>;
+  checkedDefaults: Map<string, boolean>;
   focusKey?: string;
   selectionStart?: number | null;
   selectionEnd?: number | null;
@@ -477,12 +480,27 @@ export function isEditing(root: ParentNode): boolean {
 }
 
 export function snapshotForm(root: ParentNode): FormSnapshot {
-  const snap: FormSnapshot = { values: new Map(), checked: new Map(), scrollY: window.scrollY };
+  const snap: FormSnapshot = {
+    values: new Map(),
+    defaults: new Map(),
+    dirty: new Set(),
+    checked: new Map(),
+    checkedDefaults: new Map(),
+    scrollY: window.scrollY,
+  };
   const active = document.activeElement;
   for (const node of controls(root)) {
     const key = node.getAttribute(FIELD_KEY)!;
-    if (node instanceof HTMLInputElement && (node.type === 'checkbox' || node.type === 'radio')) snap.checked.set(key, node.checked);
-    else snap.values.set(key, node.value);
+    if (node instanceof HTMLInputElement && (node.type === 'checkbox' || node.type === 'radio')) {
+      snap.checked.set(key, node.checked);
+      snap.checkedDefaults.set(key, node.defaultChecked);
+      if (node.checked !== node.defaultChecked) snap.dirty.add(key);
+    } else {
+      const def = node instanceof HTMLSelectElement ? ([...node.options].find(o => o.defaultSelected)?.value ?? '') : node.defaultValue;
+      snap.values.set(key, node.value);
+      snap.defaults.set(key, def);
+      if (node.value !== def) snap.dirty.add(key);
+    }
     if (node === active) {
       snap.focusKey = key;
       if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement) {
@@ -503,12 +521,19 @@ export function restoreForm(root: ParentNode, snap: FormSnapshot): void {
     const key = node.getAttribute(FIELD_KEY)!;
     if (node instanceof HTMLInputElement && (node.type === 'checkbox' || node.type === 'radio')) {
       const was = snap.checked.get(key);
-      if (was !== undefined && was !== node.defaultChecked) node.checked = was;
+      // Only restore checkboxes the user actually modified while preserving backend-driven default updates.
+      if (snap.dirty.has(key) && was !== undefined && node.defaultChecked === snap.checkedDefaults.get(key)) {
+        node.checked = was;
+      }
       continue;
     }
     const was = snap.values.get(key);
+    const prevDef = snap.defaults.get(key);
     const fresh = node instanceof HTMLSelectElement ? node.value : node.defaultValue;
-    if (was !== undefined && was !== node.value && was !== fresh) node.value = was;
+    // Never overwrite a clean control or a backend-populated value (e.g., "" -> "ARPIT SINGH" after AI approval).
+    if (snap.dirty.has(key) && was !== undefined && was !== node.value && prevDef === fresh) {
+      node.value = was;
+    }
     if (key === snap.focusKey) {
       node.focus({ preventScroll: true });
       if ((node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement) && snap.selectionStart != null) {

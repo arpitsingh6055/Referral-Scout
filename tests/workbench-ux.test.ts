@@ -488,14 +488,20 @@ it('GuidedReviewWorkspace walks through live bridge, Before/After diffs, and 1-c
 
   document.body.replaceChildren(guidedReviewWorkspace(ctx)!);
   expect(document.body.textContent).toContain('Step 2 of 3: Accept & Apply Improvements');
+  expect(document.body.textContent).toContain('Arpit Singh');
+  expect(document.body.textContent).toContain('a@b.com');
   const applyBtn = [...document.querySelectorAll('button')].find(b => b.textContent?.includes('Accept & Apply Changes'))!;
   applyBtn.click();
   await vi.waitFor(() => expect(ctx.run).toHaveBeenCalledWith({ kind: 'workspace', action: 'approveAiProfileDraft' }));
 
   delete ctx.workspace!.aiProfileDraft;
   ctx.workspace!.cv.imported = true;
+  ctx.workspace!.profile.identity.fullName = 'Arpit Singh';
+  ctx.workspace!.profile.identity.email = 'a@b.com';
   document.body.replaceChildren(guidedReviewWorkspace(ctx)!);
-  expect(document.body.textContent).toContain('Step 3 of 3: Your Profile is Organized');
+  expect(document.body.textContent).toContain('Step 3 of 3: Saved to Your Profile ✓');
+  expect(document.body.textContent).toContain('Saved to Profile ✓');
+  expect(document.body.textContent).toContain('Arpit Singh');
 });
 
 it('progress-store rehydrates chrome.storage.local and SidePanel HUD prioritizes active jobs', async () => {
