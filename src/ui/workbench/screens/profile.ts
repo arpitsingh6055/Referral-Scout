@@ -29,7 +29,13 @@ import {
 import { uploadCvForWorkbench } from '../cv-upload';
 import { guidedReviewWorkspace } from '../components/guided-review';
 import type { Ctx } from '../shell';
-import type { EducationRecord, EmploymentRecord, ProjectRecord } from '../../../shared/domain/profile';
+import {
+  isProfileApproved,
+  isProfilePendingReview,
+  type EducationRecord,
+  type EmploymentRecord,
+  type ProjectRecord,
+} from '../../../shared/domain/profile';
 
 let editing: string | null = null;
 
@@ -696,25 +702,26 @@ export function profile(ctx: Ctx): HTMLElement {
 export const profileHeader = (ctx: Ctx): { title: string; sub: string; status?: HTMLElement; actions: HTMLElement[] } => {
   const reviewStatus = ctx.workspace?.reviewMeta?.status;
   const actions: HTMLElement[] = [];
-  if (reviewStatus === 'draft') {
-    actions.push(button('Finalize Profile ✓', 'btn btn-primary', () => ctx.run({ kind: 'workspace', action: 'finalizeProfile' })));
-  } else if (reviewStatus === 'finalized') {
-    actions.push(button('Re-open AI Review / Edit', 'btn', () => ctx.run({ kind: 'workspace', action: 'reopenProfileReview' })));
+  if (isProfilePendingReview(reviewStatus)) {
+    actions.push(
+      button('Approve Profile & Continue →', 'btn btn-primary', () => ctx.run({ kind: 'workspace', action: 'finalizeProfile' })),
+    );
+  } else if (isProfileApproved(reviewStatus)) {
+    actions.push(button('Re-open Review', 'btn', () => ctx.run({ kind: 'workspace', action: 'reopenProfileReview' })));
   }
   actions.push(button('Answer Bank', 'btn', () => ctx.go('answers')));
 
   return {
     title: 'Candidate profile',
-    sub:
-      reviewStatus === 'draft'
-        ? 'Draft in progress — inspect your extracted roles, degrees and skills below, then click Finalize Profile ✓.'
-        : reviewStatus === 'finalized'
-          ? 'Finalized & ready for matching and autofill. You can re-open review or edit records anytime.'
-          : 'Review the information Referral Scout uses before it matches jobs or prepares applications.',
-    ...(reviewStatus === 'draft'
-      ? { status: pill('Draft — Needs Final Sign-Off', 'amber') }
-      : reviewStatus === 'finalized'
-        ? { status: pill('Finalized & Ready ✓', 'green') }
+    sub: isProfilePendingReview(reviewStatus)
+      ? 'Quick 10s review — verify extracted details below, then click Approve Profile & Continue →.'
+      : isProfileApproved(reviewStatus)
+        ? 'Approved & ready for matching and autofill. You can re-open review or edit records anytime.'
+        : 'Review the information Referral Scout uses before it matches jobs or prepares applications.',
+    ...(isProfilePendingReview(reviewStatus)
+      ? { status: pill('Pending Review', 'amber') }
+      : isProfileApproved(reviewStatus)
+        ? { status: pill('Approved & Ready ✓', 'green') }
         : {}),
     actions,
   };

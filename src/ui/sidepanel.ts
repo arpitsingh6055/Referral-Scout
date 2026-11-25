@@ -838,10 +838,11 @@ chrome.runtime?.onMessage?.addListener((message: unknown, sender, sendResponse) 
     cachedProgressTasks = {};
     void clearAllProgressTasks();
     try {
-      localStorage.removeItem('rs-apply-setup-skipped');
+      localStorage.clear();
     } catch {
       // Ignore storage restrictions.
     }
+    cachedMission = getCachedActiveMission();
     sendResponse({ shown: document.visibilityState === 'visible' });
     void refresh().catch(showLoadError);
     void refreshCard(true).catch(() => undefined);

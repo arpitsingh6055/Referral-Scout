@@ -84,6 +84,23 @@ export const DB_NAME = 'cold-contact';
  */
 export const DB_VERSION = 3;
 let pending: Promise<IDBDatabase> | undefined;
+let resetGeneration = 0;
+let resettingData = false;
+
+/** Monotonic reset generation counter preventing debounced pre-reset writes from resurrecting wiped state. */
+export const currentResetGeneration = (): number => resetGeneration;
+export const isResettingData = (): boolean => resettingData;
+export const shouldAbortStaleWrite = (capturedGeneration: number): boolean => resettingData || capturedGeneration !== resetGeneration;
+
+export function beginResetGeneration(): number {
+  resetGeneration += 1;
+  resettingData = true;
+  return resetGeneration;
+}
+
+export function finishResetGeneration(): void {
+  resettingData = false;
+}
 
 export function openDatabase(): Promise<IDBDatabase> {
   if (pending) return pending;

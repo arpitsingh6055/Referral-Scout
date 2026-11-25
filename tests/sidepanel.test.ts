@@ -522,3 +522,50 @@ it('exposes Expand in Full Workbench button in the Side Panel header that deep-l
   expandBtn.click();
   await vi.waitFor(() => expect(sent.some(r => r.action === 'open-tab')).toBe(true));
 });
+
+it('walks every Side Panel tab cleanly and clears localStorage on ui.cleared broadcast', async () => {
+  vi.resetModules();
+  document.body.innerHTML = '<main id="app"></main>';
+  state = {
+    ...emptyNetwork(),
+    usageConsent: true,
+    targetSet: true,
+    profile,
+    settings: { ...defaultSettings, roles: ['Product Management internship'], activeHours: null },
+    target: 'Product Management internship',
+  };
+  const registeredListeners: ((msg: unknown, sender: { id?: string }, sendResponse: (r?: unknown) => void) => boolean)[] = [];
+  vi.stubGlobal('chrome', {
+    runtime: {
+      id: 'ext-1',
+      sendMessage: vi.fn(async (req: { action?: string }) => {
+        sent.push(req);
+        return { ok: true, data: structuredClone(state) };
+      }),
+      onMessage: {
+        addListener: (fn: (msg: unknown, sender: { id?: string }, sendResponse: (r?: unknown) => void) => boolean) => {
+          registeredListeners.push(fn);
+        },
+      },
+    },
+  });
+  await import('../src/ui/sidepanel');
+  await vi.waitFor(() => expect($('.tabs')).not.toBeNull());
+
+  for (const label of ['Jobs', 'People', 'Activity', 'Home']) {
+    const tab = byText('.tab', label);
+    expect(tab).toBeTruthy();
+    tab!.click();
+    expect($('.tab[aria-selected=true]')!.textContent).toContain(label);
+  }
+  const settingsBtn = $<HTMLElement>('[aria-label="Outreach settings"]');
+  expect(settingsBtn).toBeTruthy();
+  settingsBtn!.click();
+
+  localStorage.setItem('rs-apply-setup-skipped', '1');
+  localStorage.setItem('rs-custom-cache', 'stale');
+  const sendResponse = vi.fn();
+  registeredListeners.forEach(fn => fn({ kind: 'ui.cleared' }, { id: 'ext-1' }, sendResponse));
+  expect(localStorage.getItem('rs-apply-setup-skipped')).toBeNull();
+  expect(localStorage.getItem('rs-custom-cache')).toBeNull();
+});

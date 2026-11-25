@@ -12,8 +12,10 @@ import type { Ctx } from '../shell';
 import type { WorkspaceView } from '../api';
 import type { AiProfileDraft } from '../../../shared/profile-draft';
 import type { EducationRecord, EmploymentRecord, ProjectRecord, StructuredMissingPrompt } from '../../../shared/domain/profile';
+import { isProfileApproved } from '../../../shared/domain/profile';
 import { formatLocation, sanitizeMissingInformation } from '../../../shared/normalizeChatGptProfile';
 import { getCachedProgressTasks } from '../../../shared/progress-store';
+import { currentResetGeneration, shouldAbortStaleWrite } from '../../../storage/database';
 import type { ReviewProgressSnapshot } from './floating-hud';
 
 interface ReviewSession {
@@ -27,6 +29,8 @@ interface ReviewSession {
   dismissedPrompts: Set<string>;
   expandedSections: Set<string>;
   inlineEditKey: string | null;
+  inlineIdentityField: string | null;
+  inlineSavedField: string | null;
   justApproved: boolean;
   lastDraftStamp: string;
 }
@@ -42,6 +46,8 @@ const session: ReviewSession = {
   dismissedPrompts: new Set(),
   expandedSections: new Set(['employment', 'skills']),
   inlineEditKey: null,
+  inlineIdentityField: null,
+  inlineSavedField: null,
   justApproved: false,
   lastDraftStamp: '',
 };
@@ -51,6 +57,7 @@ const emitReviewChanged = (): void => {
 };
 
 export function resetReviewSession(): void {
+  clearIdentitySaveTimer();
   session.step = 1;
   session.resolvedConflicts.clear();
   session.skippedConflicts.clear();
@@ -61,6 +68,8 @@ export function resetReviewSession(): void {
   session.dismissedPrompts.clear();
   session.expandedSections = new Set(['employment', 'skills']);
   session.inlineEditKey = null;
+  session.inlineIdentityField = null;
+  session.inlineSavedField = null;
   session.justApproved = false;
   session.lastDraftStamp = '';
 }
@@ -176,6 +185,31 @@ function diffBox(beforeLabel: string, beforeText: string, afterLabel: string, af
   ]);
 }
 
+let identitySaveTimer: number | null = null;
+
+function clearIdentitySaveTimer(): void {
+  if (identitySaveTimer !== null) {
+    clearTimeout(identitySaveTimer);
+    identitySaveTimer = null;
+  }
+}
+
+function buildIdentityPayload(base: WorkspaceView['profile']['identity'], patch: Partial<WorkspaceView['profile']['identity']>) {
+  return {
+    fullName: base.fullName ?? '',
+    email: base.email ?? '',
+    phone: base.phone ?? '',
+    city: base.city ?? '',
+    state: base.state ?? '',
+    country: base.country ?? '',
+    address: base.address ?? '',
+    postalCode: base.postalCode ?? '',
+    profileUrl: base.profileUrl ?? '',
+    portfolioLinks: base.portfolioLinks ?? [],
+    ...patch,
+  };
+}
+
 function snapshotCard(
   data: {
     fullName?: string;
@@ -189,36 +223,131 @@ function snapshotCard(
     skillsCount: number;
   },
   mode: 'preview' | 'draft' | 'finalized',
+  editable?: { ctx: Ctx; identity: WorkspaceView['profile']['identity'] },
 ): HTMLElement {
-  const fields: [string, string][] = [
-    ['Full name', data.fullName || 'Not extracted'],
-    ['Email', data.email || 'Not extracted'],
-    ['Phone', data.phone || 'Not extracted'],
-    ['Location', data.location || 'Not extracted'],
-    ['LinkedIn URL', data.profileUrl || 'Not extracted'],
-    [
-      'Sections ready to inspect',
-      `${data.rolesCount} experience · ${data.eduCount} education · ${data.projectsCount ?? 0} projects · ${data.skillsCount} skills`,
-    ],
+  const fields: {
+    key?: 'fullName' | 'email' | 'phone' | 'city' | 'profileUrl';
+    label: string;
+    val: string;
+    raw?: string;
+  }[] = [
+    { key: 'fullName', label: 'Full name', val: data.fullName || 'Not extracted', raw: data.fullName ?? '' },
+    { key: 'email', label: 'Email', val: data.email || 'Not extracted', raw: data.email ?? '' },
+    { key: 'phone', label: 'Phone', val: data.phone || 'Not extracted', raw: data.phone ?? '' },
+    {
+      key: 'city',
+      label: 'Location',
+      val: data.location || 'Not extracted',
+      raw: editable?.identity.city || data.location || '',
+    },
+    { key: 'profileUrl', label: 'LinkedIn URL', val: data.profileUrl || 'Not extracted', raw: data.profileUrl ?? '' },
+    {
+      label: 'Sections ready to inspect',
+      val: `${data.rolesCount} experience · ${data.eduCount} education · ${data.projectsCount ?? 0} projects · ${data.skillsCount} skills`,
+    },
   ];
   const saved = mode !== 'preview';
   return div(`snapshot-card${saved ? ' is-saved' : ''}`, [
     div('diff-card-head', [
       text('span', 'diff-field', saved ? 'Identity & Contact Snapshot' : 'Identity & Contact Preview (Saves as Draft)'),
       mode === 'finalized'
-        ? pill('Finalized & Verified ✓', 'green')
+        ? pill('Approved & Verified ✓', 'green')
         : mode === 'draft'
-          ? pill('Saved to Profile ✓', 'green')
+          ? pill(editable ? 'Click any field to edit ✓' : 'Saved to Profile ✓', 'green')
           : pill('Ready to save draft', 'violet'),
     ]),
     div(
       'snapshot-grid',
-      fields.map(([label, val]) =>
-        div('snapshot-cell', [
-          text('span', 'snapshot-label', label),
+      fields.map(({ key, label, val, raw }) => {
+        const labelNode = el('span', { class: 'snapshot-label' }, [
+          label,
+          key && session.inlineSavedField === key ? text('span', 'snapshot-saved-tag', 'Saved ✓') : null,
+        ]);
+
+        if (editable && mode === 'draft' && key) {
+          if (session.inlineIdentityField === key) {
+            const fieldKey = key;
+            const initialVal = raw ?? '';
+            const fieldInput = input(initialVal, {
+              class: 'input snapshot-inline-input',
+              placeholder: label,
+              'data-inline-input': fieldKey,
+            });
+            const commit = async (closeAfter: boolean): Promise<void> => {
+              clearIdentitySaveTimer();
+              const capturedGen = currentResetGeneration();
+              const trimmed = fieldInput.value.trim();
+              if (closeAfter && session.inlineIdentityField === fieldKey) {
+                session.inlineIdentityField = null;
+              }
+              if (trimmed === initialVal.trim() || shouldAbortStaleWrite(capturedGen)) {
+                if (closeAfter) editable.ctx.redraw();
+                return;
+              }
+              await editable.ctx.run({
+                kind: 'workspace',
+                action: 'identity',
+                identity: buildIdentityPayload(editable.identity, { [fieldKey]: trimmed }),
+              });
+              if (shouldAbortStaleWrite(capturedGen)) return;
+              session.inlineSavedField = fieldKey;
+              editable.ctx.redraw();
+            };
+            fieldInput.addEventListener('input', () => {
+              clearIdentitySaveTimer();
+              const capturedGen = currentResetGeneration();
+              identitySaveTimer = window.setTimeout(() => {
+                if (!shouldAbortStaleWrite(capturedGen)) void commit(false);
+              }, 350);
+            });
+            fieldInput.addEventListener('keydown', e => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void commit(true);
+              } else if (e.key === 'Escape') {
+                clearIdentitySaveTimer();
+                session.inlineIdentityField = null;
+                editable.ctx.redraw();
+              }
+            });
+            fieldInput.addEventListener('blur', () => {
+              void commit(true);
+            });
+            queueMicrotask(() => fieldInput.focus());
+            return div('snapshot-cell', [labelNode, fieldInput]);
+          }
+
+          const openInline = (): void => {
+            session.inlineIdentityField = key;
+            session.inlineSavedField = null;
+            editable.ctx.redraw();
+          };
+          const valueNode = el(
+            'div',
+            {
+              class: `snapshot-val is-editable${val === 'Not extracted' ? ' is-muted' : ''}`,
+              role: 'button',
+              tabindex: '0',
+              'data-inline-field': key,
+              title: `${val} (Click to edit inline)`,
+            },
+            [val],
+          );
+          valueNode.addEventListener('click', openInline);
+          valueNode.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              openInline();
+            }
+          });
+          return div('snapshot-cell', [labelNode, valueNode]);
+        }
+
+        return div('snapshot-cell', [
+          labelNode,
           Object.assign(text('div', `snapshot-val${val === 'Not extracted' ? ' is-muted' : ''}`, val), { title: val }),
-        ]),
-      ),
+        ]);
+      }),
     ),
   ]);
 }
@@ -771,13 +900,23 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
     return wrapper;
   }
 
-  /* Step 3: Resumable Draft Review OR Finalized Profile Ceremony */
+  /* Step 3: Smart Review-by-Exception OR Approved Profile State */
   if (!draft) {
-    const reviewStatus = w.reviewMeta?.status ?? (session.justApproved ? 'draft' : 'finalized');
-    const isFinalized = reviewStatus === 'finalized' && !session.justApproved;
-    const isDraft = reviewStatus === 'draft' || session.justApproved;
+    const reviewStatus = w.reviewMeta?.status ?? (session.justApproved ? 'pending_review' : 'approved');
+    const isFinalized = isProfileApproved(reviewStatus) && !session.justApproved;
+    const isDraft = !isFinalized;
     const activePrompts = (w.reviewMeta?.pendingPrompts ?? session.missingPrompts).filter(p => !session.dismissedPrompts.has(p.id));
     const mergeNotes = w.reviewMeta?.mergeNotes ?? session.mergeNotes;
+
+    const advanceAfterApproval = (): void => {
+      if (options.onApprovedNext) {
+        options.onApprovedNext();
+      } else if (!ctx.view.campaign) {
+        ctx.go('welcome');
+      } else if (w.jobs.length) {
+        ctx.go('jobs');
+      }
+    };
 
     const primaryCta = options.onApprovedNext
       ? button('Next: Set Target Role →', 'btn btn-primary btn-lg', options.onApprovedNext)
@@ -792,18 +931,18 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
     const cardTitle = session.justApproved
       ? 'Step 3 of 3: Saved to Your Profile ✓'
       : isDraft
-        ? 'Profile Draft — Review & Finalize'
-        : 'Finalized & Ready ✓';
+        ? 'Pending Review — Verify & Approve'
+        : 'Approved & Ready ✓';
 
     const cardSub = isDraft
-      ? 'Saved as Draft. Inspect or edit your roles, degrees & skills below, then click Finalize Profile ✓ to confirm.'
-      : 'Your CV and LinkedIn profile are verified and synced across matching and autofill.';
+      ? 'Click any detail below to edit inline (auto-saves), expand roles/skills if needed, then click Approve Profile & Continue →.'
+      : 'Your CV and LinkedIn profile are approved and synced across matching and autofill.';
 
     wrapper.append(
       card(cardTitle, {
         sub: cardSub,
         link: pill(
-          session.justApproved ? 'Saved to Profile ✓' : isDraft ? 'Draft — Needs Final Sign-Off' : 'Finalized & Ready ✓',
+          session.justApproved ? 'Saved to Profile ✓' : isDraft ? 'Pending Review' : 'Approved & Ready ✓',
           isDraft && !session.justApproved ? 'amber' : 'green',
         ),
         body: [
@@ -820,20 +959,23 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
               skillsCount: w.profile.skills.length,
             },
             isFinalized ? 'finalized' : 'draft',
+            { ctx, identity: w.profile.identity },
           ),
           isDraft ? renderExpandableProfileSections(w, ctx) : null,
           renderCleanPromptsAndMergeNotes(activePrompts, mergeNotes, ctx),
           div('inline', [
             isDraft
-              ? button('Finalize Profile ✓', 'btn btn-primary btn-lg', async () => {
+              ? button('Approve Profile & Continue →', 'btn btn-primary btn-lg', async () => {
                   await ctx.run({ kind: 'workspace', action: 'finalizeProfile' });
                   session.justApproved = false;
+                  session.inlineIdentityField = null;
                   emitReviewChanged();
+                  advanceAfterApproval();
                 })
               : primaryCta,
             isDraft
               ? button('Save Draft', 'btn', () => ctx.inform('Draft saved — resume review anytime from Profile or the bottom bar.'))
-              : button('Re-open AI Review / Edit', 'btn', () => ctx.run({ kind: 'workspace', action: 'reopenProfileReview' })),
+              : button('Re-open Review', 'btn', () => ctx.run({ kind: 'workspace', action: 'reopenProfileReview' })),
             isDraft && options.onApprovedNext ? button('Next: Set Target Role →', 'btn', options.onApprovedNext) : null,
             options.cvInputId ? el('label', { class: 'btn', for: options.cvInputId }, ['Replace CV']) : null,
             button(

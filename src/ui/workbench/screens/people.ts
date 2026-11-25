@@ -59,7 +59,7 @@ function row(contact: ContactRow, ctx: Ctx, pinnedSet: Set<string>): HTMLElement
         : null,
       contact.profileUrl
         ? button('Open profile', 'btn btn-sm', () => {
-            window.open(contact.profileUrl!, '_blank', 'noopener');
+            ctx.openExternal(contact.profileUrl!);
           })
         : null,
       contact.suppressed

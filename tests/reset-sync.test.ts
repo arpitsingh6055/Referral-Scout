@@ -227,6 +227,9 @@ beforeEach(async () => {
   savedApi.value = null;
   sendMessageMock = vi.fn().mockResolvedValue(undefined);
   setPanelBehaviorMock = vi.fn().mockResolvedValue(undefined);
+  const storageLocalClear = vi.fn().mockResolvedValue(undefined);
+  const storageSessionClear = vi.fn().mockResolvedValue(undefined);
+  const alarmsClearAll = vi.fn().mockResolvedValue(true);
   vi.stubGlobal('chrome', {
     runtime: {
       id: ID,
@@ -236,6 +239,20 @@ beforeEach(async () => {
           listeners.push(fn);
         },
       },
+    },
+    storage: {
+      local: {
+        get: vi.fn().mockResolvedValue({}),
+        set: vi.fn().mockResolvedValue(undefined),
+        remove: vi.fn().mockResolvedValue(undefined),
+        clear: storageLocalClear,
+      },
+      session: {
+        clear: storageSessionClear,
+      },
+    },
+    alarms: {
+      clearAll: alarmsClearAll,
     },
     tabs: { sendMessage: vi.fn().mockResolvedValue(undefined), query: vi.fn().mockResolvedValue([]) },
     action: {
@@ -376,4 +393,37 @@ it('renders Delete everything in dashboard Settings and live connection/outreach
   const rulesText = document.body.textContent ?? '';
   expect(rulesText).toContain('Gmail outcome syncMatch replies to applications and contactsConnected');
   expect(rulesText).toContain('Automatic outreachUse the weekly budget and contact order without asking each timeOn');
+});
+
+it('Reset Generation Mutex blocks zombie pre-reset writes and wipes chrome storage & alarms cleanly', async () => {
+  await seedAllStores();
+  const dbMod = await import('../src/storage/database');
+  const progressMod = await import('../src/shared/progress-store');
+  const preResetGen = dbMod.currentResetGeneration();
+  expect(dbMod.shouldAbortStaleWrite(preResetGen)).toBe(false);
+
+  const slowZombie = (async () => {
+    dbMod.beginResetGeneration();
+    try {
+      return await saveProfile({
+        ...emptyProfile(),
+        identity: { ...emptyProfile().identity, fullName: 'Zombie Name' },
+      });
+    } finally {
+      dbMod.finishResetGeneration();
+    }
+  })();
+  await expect(slowZombie).resolves.toBeUndefined();
+
+  const res = await dispatch<{ ok: boolean }>({ kind: 'workspace', action: 'clear', confirm: true });
+  expect(res.ok).toBe(true);
+  expect(dbMod.currentResetGeneration()).toBeGreaterThan(preResetGen);
+  expect(dbMod.shouldAbortStaleWrite(preResetGen)).toBe(true);
+  expect(chrome.storage.local.clear).toHaveBeenCalledTimes(1);
+  expect(chrome.storage.session!.clear).toHaveBeenCalledTimes(1);
+  expect(chrome.alarms.clearAll).toHaveBeenCalledTimes(1);
+  await expectAllStoresCleared();
+
+  // Verify progress store resets cleanly as well.
+  expect(await progressMod.readProgressTasks()).toEqual({});
 });

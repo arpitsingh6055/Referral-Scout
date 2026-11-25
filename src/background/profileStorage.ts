@@ -16,6 +16,7 @@ import { factsFromProfileSnapshot } from '../shared/domain/facts';
 import { formatLocation, mergeCandidateIdentity, normalizeChatGptResponse } from '../shared/normalizeChatGptProfile';
 import type { CandidateProfile, EducationRecord, EmploymentRecord, ProfileReviewStatus, ProjectRecord } from '../shared/domain/profile';
 import { read, write } from '../storage/state';
+import { currentResetGeneration, isResettingData, shouldAbortStaleWrite } from '../storage/database';
 import { emptyApplyProfile } from '../shared/apply';
 import { clearProgressTask } from '../shared/progress-store';
 import { PROFILE_KEY } from './apply';
@@ -86,6 +87,7 @@ export function buildProfileSnapshot(profile: CandidateProfile): ProfileSnapshot
 /** Syncs the current CandidateProfile snapshot into `chrome.storage.local` cleanly. */
 export async function syncProfileSnapshotToLocalStorage(profile: CandidateProfile): Promise<ProfileSnapshot> {
   const snapshot = buildProfileSnapshot(profile);
+  if (isResettingData()) return snapshot;
   const area = localStorageArea();
   if (area) {
     await area.set({ [PROFILE_SNAPSHOT_KEY]: snapshot }).catch(() => undefined);
@@ -103,7 +105,7 @@ export async function readProfileSnapshotFromLocalStorage(): Promise<ProfileSnap
 
 export async function clearProfileSnapshot(): Promise<void> {
   const area = localStorageArea();
-  if (area) await area.remove(PROFILE_SNAPSHOT_KEY).catch(() => undefined);
+  if (area?.remove) await Promise.resolve(area.remove(PROFILE_SNAPSHOT_KEY)).catch(() => undefined);
 }
 
 /** Atomically saves a normalized ChatGPT profile draft and verifies persistence with a read-back check. */
@@ -190,7 +192,7 @@ export async function saveNormalizedProfileApproval(rawDraft: unknown, options: 
         ...(p.narrative.careerGoal?.trim() ? {} : draft.narrative.careerGoal ? { careerGoal: draft.narrative.careerGoal } : {}),
       },
       review: {
-        status: 'draft',
+        status: 'pending_review',
         draftSavedAt: now,
         mergeNotes: draft.mergeNotes,
         pendingPrompts: draft.structuredMissing,
@@ -251,11 +253,13 @@ export async function saveNormalizedProfileApproval(rawDraft: unknown, options: 
   };
 }
 
-/** Promotes draft AI records with user sign-off (`verifiedAt`) and marks the Candidate Profile as finalized. */
+/** Promotes draft AI records with user sign-off (`verifiedAt`) and marks the Candidate Profile as approved. */
 export async function finalizeProfileReview(): Promise<CandidateProfile> {
+  const capturedGen = currentResetGeneration();
   const current = await getProfile();
-  if (!current.identity.fullName?.trim()) throw new Error('Add your Full Name in Identity before finalizing.');
-  if (!current.identity.email?.trim()) throw new Error('Add your Email in Identity before finalizing.');
+  if (!current.identity.fullName?.trim()) throw new Error('Add your Full Name in Identity before approving.');
+  if (!current.identity.email?.trim()) throw new Error('Add your Email in Identity before approving.');
+  if (shouldAbortStaleWrite(capturedGen)) return current;
 
   const now = Date.now();
   const verifyProv = <T extends { provenance: { verifiedAt?: number; confidence: number } }>(items: readonly T[]): T[] =>
@@ -276,7 +280,7 @@ export async function finalizeProfileReview(): Promise<CandidateProfile> {
       projects: verifyProv(p.projects),
       skills: verifyProv(p.skills),
       review: {
-        status: 'finalized',
+        status: 'approved',
         ...(p.review?.draftSavedAt ? { draftSavedAt: p.review.draftSavedAt } : {}),
         finalizedAt: now,
         mergeNotes: p.review?.mergeNotes ?? [],
@@ -288,13 +292,13 @@ export async function finalizeProfileReview(): Promise<CandidateProfile> {
   return updated;
 }
 
-/** Re-opens a finalized profile for non-destructive inline review without losing any saved records. */
+/** Re-opens an approved profile for non-destructive inline review without losing any saved records. */
 export async function reopenProfileReview(): Promise<CandidateProfile> {
   const updated =
     (await changeProfile(p => ({
       ...p,
       review: {
-        status: 'draft',
+        status: 'reopened',
         draftSavedAt: Date.now(),
         ...(p.review?.finalizedAt ? { finalizedAt: p.review.finalizedAt } : {}),
         mergeNotes: p.review?.mergeNotes ?? [],

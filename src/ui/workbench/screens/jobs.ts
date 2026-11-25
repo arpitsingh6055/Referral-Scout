@@ -160,7 +160,7 @@ function detail(job: JobRow, ctx: Ctx, queuedRefs: Set<string>, pinnedSet: Set<s
           )
         : null,
       button('Open posting', 'btn', () => {
-        window.open(job.url, '_blank', 'noopener');
+        ctx.openExternal(job.url);
       }),
     ]),
   ]);

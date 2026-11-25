@@ -2631,6 +2631,34 @@ details .inline input[type='checkbox'] {
   color: var(--text-muted);
 }
 
+.snapshot-val.is-editable {
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  padding: 2px 4px;
+  margin-left: -4px;
+  transition: background var(--dur-fast) var(--ease-standard);
+}
+
+.snapshot-val.is-editable:hover {
+  background: rgba(109, 40, 217, 0.08);
+  text-decoration: underline dotted;
+}
+
+.snapshot-inline-input {
+  margin-top: 2px;
+  width: 100%;
+  padding: 4px 8px;
+  font-size: var(--text-sm);
+}
+
+.snapshot-saved-tag {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--success, #15803d);
+  text-transform: none;
+}
+
 .quick-fill-box {
   display: grid;
   gap: var(--sp-2);

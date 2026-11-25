@@ -130,7 +130,11 @@ export interface CareerNarrative {
   challengeExample?: string;
 }
 
-export type ProfileReviewStatus = 'unreviewed' | 'draft' | 'finalized';
+export type ProfileReviewStatus = 'unreviewed' | 'pending_review' | 'draft' | 'approved' | 'finalized' | 'reopened';
+
+export const isProfileApproved = (status?: ProfileReviewStatus): boolean => status === 'approved' || status === 'finalized';
+export const isProfilePendingReview = (status?: ProfileReviewStatus): boolean =>
+  status === 'pending_review' || status === 'draft' || status === 'reopened';
 
 export interface StructuredMissingPrompt {
   id: string;

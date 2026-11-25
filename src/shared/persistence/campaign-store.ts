@@ -7,7 +7,18 @@
  * transition disappearing — which is exactly the kind of lost fact that turns into a duplicate submission.
  */
 
-import { openDatabase, all, get, put, remove, type Records, type Store, type Keyed } from '../../storage/database';
+import {
+  openDatabase,
+  all,
+  get,
+  put,
+  remove,
+  currentResetGeneration,
+  shouldAbortStaleWrite,
+  type Records,
+  type Store,
+  type Keyed,
+} from '../../storage/database';
 import type { ApplicationTask } from '../state-machines/application-task';
 import type { ApplicationException } from '../domain/exceptions';
 import type { CandidateFact } from '../domain/facts';
@@ -41,7 +52,9 @@ export async function change<T extends { id: string }>(
   id: string,
   fn: (old: T | undefined) => T | undefined,
 ): Promise<T | undefined> {
+  const capturedGen = currentResetGeneration();
   const db = await openDatabase();
+  if (shouldAbortStaleWrite(capturedGen)) return undefined;
   return new Promise((resolve, reject) => {
     const tx = db.transaction(store, 'readwrite');
     const os = tx.objectStore(store);
@@ -49,6 +62,11 @@ export async function change<T extends { id: string }>(
     let result: T | undefined;
     request.onsuccess = () => {
       try {
+        if (shouldAbortStaleWrite(capturedGen)) {
+          tx.abort();
+          resolve(undefined);
+          return;
+        }
         result = fn(request.result as T | undefined);
         if (result) os.put(result as unknown as Records[CampaignStore]);
       } catch (e) {
@@ -57,7 +75,7 @@ export async function change<T extends { id: string }>(
       }
     };
     tx.oncomplete = () => resolve(result);
-    tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
+    tx.onabort = () => (shouldAbortStaleWrite(capturedGen) ? resolve(undefined) : reject(tx.error ?? new Error('Transaction aborted')));
     tx.onerror = () => reject(tx.error);
   });
 }
@@ -65,7 +83,9 @@ export async function change<T extends { id: string }>(
 /** Writes several records of one store together, so a grouped change cannot land half-applied. */
 export async function putMany<T extends { id: string }>(store: CampaignStore, records: readonly T[]): Promise<void> {
   if (!records.length) return;
+  const capturedGen = currentResetGeneration();
   const db = await openDatabase();
+  if (shouldAbortStaleWrite(capturedGen)) return;
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(store, 'readwrite');
     const os = tx.objectStore(store);
