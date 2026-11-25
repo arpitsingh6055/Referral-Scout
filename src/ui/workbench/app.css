@@ -2258,6 +2258,17 @@ details .inline input[type='checkbox'] {
   background: var(--destructive);
 }
 
+.floating-hud.is-amber {
+  border-color: color-mix(in srgb, var(--warning) 58%, var(--border-strong));
+  background: color-mix(in srgb, var(--warning-tint) 60%, var(--bg-surface));
+}
+
+.floating-hud.is-amber .hud-ring-fill,
+.floating-hud.is-amber .hud-progress-fill {
+  stroke: var(--warning);
+  background: var(--warning);
+}
+
 .floating-hud.is-collapsed {
   width: auto;
   border-radius: var(--radius-pill);

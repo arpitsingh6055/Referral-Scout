@@ -40,6 +40,7 @@ export interface HudInput {
 
 export interface HudState {
   mode: 'processing' | 'completion' | 'ready' | 'error';
+  tone?: 'amber';
   percent: number;
   title: string;
   detail: string;
@@ -48,6 +49,8 @@ export interface HudState {
   targetRoute: Route;
   targetSelector?: string;
   retryTaskId?: ProcessId;
+  inspectTabId?: number;
+  inspectTabUrl?: string;
   command?: 'findJobs' | 'openPanel';
 }
 
@@ -95,15 +98,30 @@ export function computeHudState(input: HudInput): HudState | null {
 
   /* 0. Rehydrated Cross-Context Background Task from chrome.storage.session */
   const persisted = persistedTasks ? selectPrimaryProgressTask(persistedTasks, now) : null;
+  if (persisted && (persisted.status === 'waiting' || persisted.needsIntervention) && !busyAction) {
+    return {
+      mode: 'completion',
+      tone: 'amber',
+      percent: persisted.percent,
+      title: `Action Needed: ${persisted.label}`,
+      detail: persisted.detail ?? 'Background worker paused for verification or login.',
+      ctaLabel: persisted.ctaLabel ?? 'Inspect Tab →',
+      targetRoute: (persisted.targetRoute as Route) || route,
+      ...(persisted.tabId !== undefined ? { inspectTabId: persisted.tabId } : {}),
+      ...(persisted.tabUrl ? { inspectTabUrl: persisted.tabUrl } : {}),
+    };
+  }
   if (persisted && persisted.status === 'running' && !busyAction && !cvProgress?.active) {
     return {
       mode: 'processing',
       percent: persisted.percent,
-      title: persisted.label,
-      detail: persisted.detail ?? 'Running in background · stays synced across tabs',
+      title: persisted.backgroundTab ? `Working in background tab (${persisted.percent}%)…` : persisted.label,
+      detail: persisted.detail ?? 'Running silently in background · stays synced across tabs',
       ...(persisted.etaSeconds ? { etaText: `~${persisted.etaSeconds}s left` } : {}),
-      ctaLabel: persisted.ctaLabel ?? 'View step →',
+      ctaLabel: persisted.tabId !== undefined ? 'Inspect Tab' : (persisted.ctaLabel ?? 'View step →'),
       targetRoute: (persisted.targetRoute as Route) || route,
+      ...(persisted.tabId !== undefined ? { inspectTabId: persisted.tabId } : {}),
+      ...(persisted.tabUrl ? { inspectTabUrl: persisted.tabUrl } : {}),
       ...(persisted.targetSelector ? { targetSelector: persisted.targetSelector } : {}),
     };
   }
@@ -298,7 +316,7 @@ export function createFloatingHud(host: HTMLElement): FloatingHudController {
     const state = lastState;
     const onNavigate = lastHandler ?? (() => undefined);
     element.hidden = false;
-    element.className = `floating-hud is-${state.mode}${collapsed ? ' is-collapsed' : ''}`;
+    element.className = `floating-hud is-${state.mode}${state.tone === 'amber' ? ' is-amber' : ''}${collapsed ? ' is-collapsed' : ''}`;
 
     if (collapsed) {
       const expandBtn = button(`${state.percent}% · Next`, 'hud-chip-expand', () => {
@@ -323,14 +341,15 @@ export function createFloatingHud(host: HTMLElement): FloatingHudController {
     );
     collapseBtn.replaceChildren(icon('chevronDown', 14));
 
+    const hasDirectAction = state.mode !== 'processing' || !!state.targetSelector || state.inspectTabId !== undefined;
     const ctaBtn = button(
       state.ctaLabel,
-      `btn btn-sm ${state.mode === 'ready' || state.mode === 'error' ? 'btn-primary' : 'hud-cta'}`,
+      `btn btn-sm ${state.mode === 'ready' || state.mode === 'error' || state.tone === 'amber' ? 'btn-primary' : 'hud-cta'}`,
       () => onNavigate(state),
       { 'data-allow-during-action': true },
     );
     if (state.mode === 'processing') {
-      ctaBtn.disabled = !state.targetSelector;
+      ctaBtn.disabled = !hasDirectAction;
     }
 
     const copy = div('hud-copy', [
@@ -341,7 +360,7 @@ export function createFloatingHud(host: HTMLElement): FloatingHudController {
     const body = div('hud-inner', [
       div('hud-ring-wrap', [progressRing(state.percent, state.mode), text('span', 'hud-pct', `${state.percent}%`)]),
       copy,
-      div('hud-actions', [state.mode !== 'processing' || state.targetSelector ? ctaBtn : null, collapseBtn]),
+      div('hud-actions', [hasDirectAction ? ctaBtn : null, collapseBtn]),
     ]);
 
     const bar = div('hud-progress-track', [el('span', { class: 'hud-progress-fill', style: `width:${state.percent}%` })]);

@@ -606,7 +606,6 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
     for (let i = 0; i < 3; i++) {
       window.scrollTo({ top: document.documentElement.scrollHeight });
       main?.scrollTo({ top: main.scrollHeight });
-      main?.lastElementChild?.scrollIntoView({ block: 'end' });
       await sleep(900, signal);
     }
     return { urls: recentConnections(document), ids: connectionIds(document) };
@@ -644,7 +643,6 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
       // On the live site the scrolling element is <main>, not the window; do both so either layout works.
       window.scrollTo({ top: document.documentElement.scrollHeight });
       main.scrollTo({ top: main.scrollHeight });
-      main.lastElementChild?.scrollIntoView({ block: 'end' });
       await sleep(700, signal);
       const size = main.innerText.length;
       stable = size === previous ? stable + 1 : 0;

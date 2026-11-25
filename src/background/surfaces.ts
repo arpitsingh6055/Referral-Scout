@@ -9,6 +9,7 @@
 
 import { read, write } from '../storage/state';
 import { trustedExtension } from '../validators/security';
+import { focusManagedTab, openManagedTab } from './network-browser';
 
 export type Surface = 'tab' | 'panel';
 const SURFACE_KEY = 'default-surface';
@@ -33,11 +34,16 @@ export async function openWorkbench(route = ''): Promise<void> {
   const open = await chrome.tabs.query({ url: chrome.runtime.getURL(`${WORKBENCH}*`) }).catch(() => []);
   const existing = open.find(t => t.id !== undefined);
   if (existing?.id !== undefined) {
-    await chrome.tabs.update(existing.id, { active: true, ...(route ? { url } : {}) });
-    if (existing.windowId !== undefined) await chrome.windows.update(existing.windowId, { focused: true }).catch(() => undefined);
+    await openManagedTab({
+      url: route ? url : '',
+      mode: 'foreground',
+      purpose: 'user_navigation',
+      reuseTabId: existing.id,
+      ...(existing.windowId !== undefined ? { windowId: existing.windowId } : {}),
+    });
     return;
   }
-  await chrome.tabs.create({ url, active: true });
+  await openManagedTab({ url, mode: 'foreground', purpose: 'user_navigation' });
 }
 
 export async function openPanel(tabId?: number): Promise<void> {
@@ -87,18 +93,19 @@ export async function openLinkedInWithSidePanel(targetUrl?: string): Promise<{ o
   let windowId = matching?.windowId;
 
   if (tabId !== undefined) {
-    await chrome.tabs.update(tabId, { active: true }).catch(() => undefined);
-    if (windowId !== undefined) await chrome.windows.update(windowId, { focused: true }).catch(() => undefined);
+    const handle = await openManagedTab({
+      url: '',
+      mode: 'foreground',
+      purpose: 'user_navigation',
+      reuseTabId: tabId,
+      ...(windowId !== undefined ? { windowId } : {}),
+    });
+    tabId = handle.tabId;
+    windowId = handle.windowId;
   } else {
-    const win =
-      (await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => undefined)) ??
-      (await chrome.windows.getAll({ windowTypes: ['normal'] }).catch(() => []))[0];
-    const created = await chrome.tabs
-      .create({ url, active: true, ...(win?.id !== undefined ? { windowId: win.id } : {}) })
-      .catch(() => undefined);
-    tabId = created?.id;
-    windowId = created?.windowId ?? win?.id;
-    if (windowId !== undefined) await chrome.windows.update(windowId, { focused: true }).catch(() => undefined);
+    const handle = await openManagedTab({ url, mode: 'foreground', purpose: 'user_navigation' }).catch(() => undefined);
+    tabId = handle?.tabId;
+    windowId = handle?.windowId;
   }
 
   let opened = false;
@@ -174,7 +181,7 @@ export function registerSurfaceMessages(): void {
   chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
     if (!input || typeof input !== 'object' || (input as { kind?: unknown }).kind !== 'surface') return false;
     if (!trustedExtension(sender, chrome.runtime.id)) return false;
-    const message = input as { action?: string; route?: string; url?: string; surface?: Surface };
+    const message = input as { action?: string; route?: string; url?: string; tabId?: number; surface?: Surface };
     if (message.action === 'open-tab')
       void openWorkbench(typeof message.route === 'string' ? message.route : '').then(() => respond({ ok: true }));
     else if (message.action === 'open-panel') {
@@ -185,6 +192,11 @@ export function registerSurfaceMessages(): void {
       }
     } else if (message.action === 'open-linkedin-panel')
       void openLinkedInWithSidePanel(typeof message.url === 'string' ? message.url : undefined).then(res => respond({ ok: true, ...res }));
+    else if (message.action === 'focus-tab')
+      void focusManagedTab(
+        typeof message.tabId === 'number' ? message.tabId : undefined,
+        typeof message.url === 'string' ? message.url : undefined,
+      ).then(focused => respond({ ok: true, focused }));
     else if (message.action === 'set-default' && (message.surface === 'tab' || message.surface === 'panel'))
       void setDefaultSurface(message.surface).then(() => respond({ ok: true }));
     else if (message.action === 'get-default') void defaultSurface().then(surface => respond({ ok: true, surface }));

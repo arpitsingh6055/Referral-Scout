@@ -29,6 +29,9 @@ export interface ProgressTask {
   targetRoute?: string;
   targetSelector?: string;
   tabId?: number;
+  tabUrl?: string;
+  backgroundTab?: boolean;
+  needsIntervention?: boolean;
   startedAt: number;
   updatedAt: number;
   etaSeconds?: number;

@@ -1,6 +1,38 @@
 import { networkPageCommand, networkReplySchema, type NetworkPageCommand } from '../shared/network';
 import { read, write } from '../storage/state';
 
+export type TabMode = 'background' | 'foreground';
+export type ManagedTabPurpose = 'chatgpt_extract' | 'linkedin_scrape' | 'ats_check' | 'user_navigation';
+
+export interface ManagedTabOptions {
+  url: string;
+  /** Explicit launch intent: `'background'` keeps `active: false` and guards user focus; `'foreground'` focuses intentionally. */
+  mode: TabMode;
+  purpose: ManagedTabPurpose;
+  openerTabId?: number;
+  windowId?: number;
+  autoCloseOnComplete?: boolean;
+  reuseTabId?: number;
+}
+
+export interface ManagedTabHandle {
+  tabId: number;
+  windowId: number | undefined;
+  mode: TabMode;
+  purpose: ManagedTabPurpose;
+  originalTabId?: number;
+  originalWindowId?: number;
+  releaseFocusGuard: () => void;
+  close: () => Promise<void>;
+}
+
+const activeBackgroundGuards = new Map<number, () => void>();
+
+/** Releases any active background focus-lock guard for `tabId` (for example right before user escalation). */
+export function releaseBackgroundGuard(tabId: number): void {
+  activeBackgroundGuards.get(tabId)?.();
+}
+
 export async function networkCommand(
   tabId: number,
   input: Partial<NetworkPageCommand> & Pick<NetworkPageCommand, 'action'>,
@@ -51,10 +83,10 @@ export async function readyNetworkTab(tabId: number, signal: AbortSignal): Promi
  * Pages are opened in one separate "work" window that is never brought to the front, so the
  * person can keep using their own window and tabs while outreach runs.
  */
-export async function openWorkTab(url: string, kind: 'linkedin' | 'chatgpt' = 'linkedin', active = true): Promise<number> {
+export async function openWorkTab(url: string, kind: 'linkedin' | 'chatgpt' = 'linkedin', active = false): Promise<number> {
   void kind;
-  // One window for everything done in the background, LinkedIn and ChatGPT alike. Steps run one at a time, each tab is
-  // brought to the front of that window while it is used, and ChatGPT tabs are closed as soon as their answer is read.
+  // One window for everything done in the background, LinkedIn and ChatGPT alike. Tabs default to `active: false` so
+  // background work never steals focus, and ChatGPT tabs are closed as soon as their answer is read.
   const stale = await read<number>('chatgpt-window'); // the separate ChatGPT window of earlier versions
   if (stale !== undefined && stale >= 0) {
     await chrome.windows.remove(stale).catch(() => undefined);
@@ -164,10 +196,171 @@ export async function closeWorkWindow(): Promise<void> {
     await write('work-window', -1); // closed by the person
   }
 }
-/** Shows a tab inside the work window without focusing that window. */
-export async function showWorkTab(tabId: number): Promise<void> {
-  await chrome.tabs.update(tabId, { active: true }).catch(() => undefined);
+/** Legacy hook retained for API compatibility: background tasks must never steal foreground focus mid-run. */
+export async function showWorkTab(_tabId: number): Promise<void> {
+  // Intentionally a no-op so automated LinkedIn/ChatGPT workers stay silent unless user explicitly clicks Inspect Tab.
 }
+
+/**
+ * Centralized intent-aware TabOrchestrator.
+ *
+ * - `mode: 'background'` captures the user's active tab/window, forces `active: false`, installs a focus-lock
+ *   guard against script/redirect focus hijacks, and cleans up via `handle.close()`.
+ * - `mode: 'foreground'` explicitly focuses/opens the target tab and its window for user-initiated navigation.
+ */
+export async function openManagedTab(options: ManagedTabOptions): Promise<ManagedTabHandle> {
+  if (options.mode === 'foreground') {
+    if (options.reuseTabId !== undefined) {
+      releaseBackgroundGuard(options.reuseTabId);
+      const updated = await chrome.tabs.update(options.reuseTabId, {
+        active: true,
+        ...(options.url ? { url: options.url } : {}),
+      });
+      const existing = updated ?? (await chrome.tabs.get(options.reuseTabId).catch(() => undefined));
+      const winId = existing?.windowId ?? options.windowId;
+      if (winId !== undefined) await chrome.windows.update(winId, { focused: true }).catch(() => undefined);
+      return {
+        tabId: options.reuseTabId,
+        windowId: winId,
+        mode: 'foreground',
+        purpose: options.purpose,
+        releaseFocusGuard: () => undefined,
+        close: async () => {
+          await closeWorkTab(options.reuseTabId!);
+        },
+      };
+    }
+
+    let targetWindowId = options.windowId;
+    if (targetWindowId === undefined) {
+      const win =
+        (await chrome.windows.getLastFocused?.({ windowTypes: ['normal'] }).catch(() => undefined)) ??
+        (await chrome.windows.getAll?.({ windowTypes: ['normal'] }).catch(() => []))?.[0];
+      targetWindowId = win?.id;
+    }
+    const created = await chrome.tabs.create({
+      url: options.url,
+      active: true,
+      ...(targetWindowId !== undefined ? { windowId: targetWindowId } : {}),
+      ...(options.openerTabId !== undefined ? { openerTabId: options.openerTabId } : {}),
+    });
+    if (created.id === undefined) throw new Error('Could not open browser tab.');
+    const winId = created.windowId ?? targetWindowId;
+    if (winId !== undefined) await chrome.windows.update(winId, { focused: true }).catch(() => undefined);
+    return {
+      tabId: created.id,
+      windowId: winId,
+      mode: 'foreground',
+      purpose: options.purpose,
+      releaseFocusGuard: () => undefined,
+      close: async () => {
+        await chrome.tabs.remove(created.id!).catch(() => undefined);
+      },
+    };
+  }
+
+  // `mode: 'background'`: capture current user focus before opening or reusing any worker tab.
+  const activeTabs = await chrome.tabs.query?.({ active: true, lastFocusedWindow: true }).catch(() => []);
+  const originalTabId = activeTabs?.[0]?.id;
+  const focusedWin = await chrome.windows.getLastFocused?.().catch(() => undefined);
+  const originalWindowId = focusedWin?.id ?? activeTabs?.[0]?.windowId;
+
+  let tabId: number;
+  let windowId = options.windowId;
+  if (options.reuseTabId !== undefined) {
+    await chrome.tabs.update(options.reuseTabId, { url: options.url, active: false });
+    tabId = options.reuseTabId;
+    windowId ??= (await chrome.tabs.get(tabId).catch(() => undefined))?.windowId;
+  } else if (options.windowId !== undefined || options.openerTabId !== undefined) {
+    const created = await chrome.tabs.create({
+      url: options.url,
+      active: false,
+      ...(options.windowId !== undefined ? { windowId: options.windowId } : {}),
+      ...(options.openerTabId !== undefined ? { openerTabId: options.openerTabId } : {}),
+    });
+    if (created.id === undefined) throw new Error('Could not open background worker tab.');
+    tabId = created.id;
+    windowId = created.windowId ?? options.windowId;
+  } else {
+    const kind = options.purpose === 'chatgpt_extract' ? 'chatgpt' : 'linkedin';
+    tabId = await openWorkTab(options.url, kind, false);
+    windowId = (await read<number>('work-window')) ?? undefined;
+  }
+
+  // Re-assert user's active tab/window if creation caused any focus jitter.
+  if (originalWindowId !== undefined && originalWindowId !== windowId) {
+    await chrome.windows.update(originalWindowId, { focused: true }).catch(() => undefined);
+  }
+  if (originalTabId !== undefined && originalTabId !== tabId) {
+    await chrome.tabs.update(originalTabId, { active: true }).catch(() => undefined);
+  }
+
+  let released = false;
+  const onActivated = (info: { tabId: number; windowId: number }): void => {
+    if (released || info.tabId !== tabId) return;
+    if (originalTabId !== undefined && originalTabId !== tabId) {
+      void chrome.tabs.update(originalTabId, { active: true }).catch(() => undefined);
+    }
+    if (originalWindowId !== undefined && originalWindowId !== windowId) {
+      void chrome.windows.update(originalWindowId, { focused: true }).catch(() => undefined);
+    }
+  };
+  const onRemoved = (removedId: number): void => {
+    if (removedId === tabId) releaseFocusGuard();
+  };
+  const releaseFocusGuard = (): void => {
+    if (released) return;
+    released = true;
+    activeBackgroundGuards.delete(tabId);
+    chrome.tabs.onActivated?.removeListener?.(onActivated);
+    chrome.tabs.onRemoved?.removeListener?.(onRemoved);
+  };
+
+  releaseBackgroundGuard(tabId);
+  activeBackgroundGuards.set(tabId, releaseFocusGuard);
+  chrome.tabs.onActivated?.addListener?.(onActivated);
+  chrome.tabs.onRemoved?.addListener?.(onRemoved);
+
+  return {
+    tabId,
+    windowId,
+    mode: 'background',
+    purpose: options.purpose,
+    ...(originalTabId !== undefined ? { originalTabId } : {}),
+    ...(originalWindowId !== undefined ? { originalWindowId } : {}),
+    releaseFocusGuard,
+    close: async () => {
+      releaseFocusGuard();
+      const workWin = await read<number>('work-window');
+      if (workWin !== undefined && workWin === windowId) await closeWorkTab(tabId);
+      else await chrome.tabs.remove(tabId).catch(() => undefined);
+    },
+  };
+}
+
+/** Intentionally brings a background worker tab (e.g., on human intervention / Inspect Tab) to the foreground. */
+export async function focusManagedTab(tabId?: number, fallbackUrl?: string): Promise<boolean> {
+  if (tabId !== undefined) {
+    releaseBackgroundGuard(tabId);
+    const existing = await chrome.tabs.get(tabId).catch(() => undefined);
+    if (existing?.id !== undefined) {
+      await openManagedTab({
+        url: existing.url ?? '',
+        mode: 'foreground',
+        purpose: 'user_navigation',
+        reuseTabId: existing.id,
+        ...(existing.windowId !== undefined ? { windowId: existing.windowId } : {}),
+      });
+      return true;
+    }
+  }
+  if (fallbackUrl) {
+    await openManagedTab({ url: fallbackUrl, mode: 'foreground', purpose: 'user_navigation' });
+    return true;
+  }
+  return false;
+}
+
 export async function networkTab(url: string, signal: AbortSignal): Promise<number> {
   signal.throwIfAborted();
   let id = await read<number>('network-tab');
@@ -180,9 +373,9 @@ export async function networkTab(url: string, signal: AbortSignal): Promise<numb
     }
   }
   if (id === undefined) {
-    id = await openWorkTab(url);
+    id = await openWorkTab(url, 'linkedin', false);
     await write('network-tab', id);
-  } else await chrome.tabs.update(id, { url, active: true }); // active inside the work window only; the window itself is never focused
+  } else await chrome.tabs.update(id, { url, active: false });
   await readyNetworkTab(id, signal);
   return id;
 }

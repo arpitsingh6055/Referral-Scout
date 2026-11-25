@@ -53,6 +53,17 @@ let cachedCampaignView: CampaignView | null = null;
 let cachedProgressTasks: Partial<Record<ProcessId, ProgressTask>> = getCachedProgressTasks();
 
 const handlePanelHudAction = (action: PanelHudAction): void => {
+  if (action.kind === 'focus-tab') {
+    void chrome.runtime
+      .sendMessage({
+        kind: 'surface',
+        action: 'focus-tab',
+        ...(action.tabId !== undefined ? { tabId: action.tabId } : {}),
+        ...(action.url ? { url: action.url } : {}),
+      })
+      .catch(e => notify('error', errorText(e)));
+    return;
+  }
   if (action.kind === 'open-dashboard') {
     void openDashboard(action.route ?? 'overview').catch(e => notify('error', errorText(e)));
     return;

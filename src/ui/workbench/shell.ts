@@ -548,6 +548,19 @@ function render(force = false): void {
       reviewProgress: getReviewProgressSnapshot(shop),
     });
     const navigateHud = (target: HudState): void => {
+      if (target.inspectTabId !== undefined || target.inspectTabUrl) {
+        void chrome.runtime
+          .sendMessage({
+            kind: 'surface',
+            action: 'focus-tab',
+            ...(target.inspectTabId !== undefined ? { tabId: target.inspectTabId } : {}),
+            ...(target.inspectTabUrl ? { url: target.inspectTabUrl } : {}),
+          })
+          .catch(() => {
+            if (target.inspectTabUrl) ctx.openExternal(target.inspectTabUrl);
+          });
+        return;
+      }
       if (target.mode === 'error' && target.retryTaskId) {
         void clearProgressTask(target.retryTaskId);
         if (target.retryTaskId === 'cv_ai_review') {
