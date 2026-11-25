@@ -9,6 +9,11 @@ import { referrals } from '../src/ui/workbench/screens/referrals';
 import { people } from '../src/ui/workbench/screens/people';
 import { answers } from '../src/ui/workbench/screens/answers';
 import { profile } from '../src/ui/workbench/screens/profile';
+import { welcome } from '../src/ui/workbench/screens/welcome';
+import { settings } from '../src/ui/workbench/screens/settings';
+import { applications } from '../src/ui/workbench/screens/applications';
+import { activity } from '../src/ui/workbench/screens/activity';
+import { setup } from '../src/ui/workbench/screens/setup';
 import { confirmModal, field, pageSkeleton, setFieldError } from '../src/ui/workbench/dom';
 import { computeHudState, createFloatingHud } from '../src/ui/workbench/components/floating-hud';
 import { guidedReviewWorkspace, resetReviewSession } from '../src/ui/workbench/components/guided-review';
@@ -1041,7 +1046,7 @@ it('resumable Draft review exposes expandable editable sections, filtered merge 
     { id: 'sk-1', skill: 'SQL', evidenceRefs: [], provenance: { source: 'model', confidence: 0.6, capturedAt: Date.now() } },
   ];
   ctx.workspace!.reviewMeta = {
-    status: 'draft',
+    status: 'pending_review',
     draftSavedAt: Date.now(),
     mergeNotes: ['Email & contact details verified from your CV'],
     pendingPrompts: [
@@ -1058,7 +1063,7 @@ it('resumable Draft review exposes expandable editable sections, filtered merge 
     ],
   };
 
-  // HUD highlights Draft status across every screen until finalized.
+  // HUD highlights Pending Review across every screen until approved.
   const draftHud = computeHudState({
     route: 'jobs',
     view: ctx.view,
@@ -1066,26 +1071,45 @@ it('resumable Draft review exposes expandable editable sections, filtered merge 
     busyAction: '',
     busyMessage: '',
   });
-  expect(draftHud?.title).toBe('Profile Draft • Review & Finalize');
-  expect(draftHud?.ctaLabel).toBe('Continue Review →');
+  expect(draftHud?.title).toBe('Profile Extracted • Quick 10s Review Needed');
+  expect(draftHud?.ctaLabel).toBe('Review & Approve →');
 
-  // Resumable Draft workspace shows inline sections & Finalize Profile CTA without re-running ChatGPT.
+  // Review-by-Exception workspace shows inline click-to-edit, sections & Approve Profile & Continue CTA.
   document.body.replaceChildren(guidedReviewWorkspace(ctx)!);
-  expect(document.body.textContent).toContain('Draft — Needs Final Sign-Off');
+  expect(document.body.textContent).toContain('Pending Review');
   expect(document.body.textContent).toContain('Merged CV + LinkedIn cleanly ✓');
   expect(document.body.textContent).toContain('Product Intern — TBX');
   expect(document.querySelector('[data-review-accordion="employment"]')).toBeTruthy();
 
-  const finalizeBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Finalize Profile ✓')!;
-  finalizeBtn.click();
+  // Inline click-to-edit saves edited identity cell cleanly.
+  const nameCell = document.querySelector<HTMLElement>('[data-inline-field="fullName"]')!;
+  expect(nameCell).toBeTruthy();
+  nameCell.click();
+  document.body.replaceChildren(guidedReviewWorkspace(ctx)!);
+  const inlineInput = document.querySelector<HTMLInputElement>('[data-inline-input="fullName"]')!;
+  expect(inlineInput).toBeTruthy();
+  inlineInput.value = 'Arpit Kumar Singh';
+  inlineInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await vi.waitFor(() =>
+    expect(ctx.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'workspace',
+        action: 'identity',
+        identity: expect.objectContaining({ fullName: 'Arpit Kumar Singh' }),
+      }),
+    ),
+  );
+
+  const approveBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Approve Profile & Continue →')!;
+  approveBtn.click();
   await vi.waitFor(() => expect(ctx.run).toHaveBeenCalledWith({ kind: 'workspace', action: 'finalizeProfile' }));
 
-  // Finalized state offers non-destructive Re-open AI Review / Edit button.
-  ctx.workspace!.reviewMeta.status = 'finalized';
+  // Approved state offers non-destructive Re-open Review button.
+  ctx.workspace!.reviewMeta.status = 'approved';
   ctx.workspace!.reviewMeta.pendingPrompts = [];
   document.body.replaceChildren(guidedReviewWorkspace(ctx)!);
-  expect(document.body.textContent).toContain('Finalized & Ready ✓');
-  const reopenBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Re-open AI Review / Edit')!;
+  expect(document.body.textContent).toContain('Approved & Ready ✓');
+  const reopenBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Re-open Review')!;
   reopenBtn.click();
   await vi.waitFor(() => expect(ctx.run).toHaveBeenCalledWith({ kind: 'workspace', action: 'reopenProfileReview' }));
 });
@@ -1137,4 +1161,96 @@ it('Cross-surface homing beacon & in-page Shadow DOM Re-Entry Pill sync Side Pan
   const { renderWayfinding } = await import('../src/content/floating-hud');
   renderWayfinding(mission);
   renderWayfinding({ ...mission, isSidePanelOpen: true });
+});
+
+it('Master Interactive Controls Sweep: welcome CV id, settings export/theme, jobs/people external links, and every screen renders interactively', async () => {
+  const ctx = makeCtx();
+  ctx.workspace!.cv = { hasText: true, imported: false };
+  ctx.workspace!.cvName = 'arpit-cv.pdf';
+  ctx.workspace!.jobs = [
+    {
+      id: 'job:10',
+      company: 'Razorpay',
+      title: 'PM Intern',
+      location: 'Bengaluru',
+      url: 'https://www.linkedin.com/jobs/view/10/',
+      source: 'LinkedIn Jobs',
+      applyType: 'easy-apply',
+      fit: 85,
+      fitAssessed: true,
+      tier: 'strong',
+      eligibility: 'eligible',
+      freshness: 'fresh',
+      evidence: [],
+      checks: [],
+      rejectionReasons: [],
+      preferenceNotes: [],
+      judgement: 'shortlisted',
+      rank: 85,
+    },
+  ];
+  ctx.workspace!.contacts = [
+    {
+      id: 'contact:1',
+      name: 'Neha Rao',
+      role: 'PM at Razorpay',
+      company: 'Razorpay',
+      relationship: 'alumni',
+      category: 'hiring-manager',
+      confidence: 0.9,
+      channel: 'linkedin',
+      emailConfidence: 'unverified',
+      profileUrl: 'https://www.linkedin.com/in/neha-rao/',
+    },
+  ];
+
+  // 1. Welcome screen: CV file input keeps #welcome-cv-file id wired to Replace CV label.
+  document.body.replaceChildren(welcome(ctx));
+  const cvInput = document.getElementById('welcome-cv-file') as HTMLInputElement | null;
+  expect(cvInput?.type).toBe('file');
+  const replaceLabel = document.querySelector<HTMLLabelElement>('label[for="welcome-cv-file"]');
+  expect(replaceLabel).toBeTruthy();
+
+  // 2. Settings: Export backup invokes download + ctx.inform, Open Side Panel, and Save Privacy work cleanly.
+  vi.stubGlobal('chrome', {
+    runtime: {
+      sendMessage: vi.fn().mockResolvedValue({ ok: true, view: { json: '{"version":1}' } }),
+    },
+  });
+  vi.stubGlobal('URL', { createObjectURL: vi.fn(() => 'blob:mock'), revokeObjectURL: vi.fn() });
+  const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+  document.body.replaceChildren(settings(ctx));
+  const exportBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Export a backup')!;
+  exportBtn.click();
+  await vi.waitFor(() => expect(ctx.inform).toHaveBeenCalledWith('Backup downloaded.'));
+  anchorClick.mockRestore();
+
+  const openSidePanelBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Open side panel now')!;
+  openSidePanelBtn.click();
+  await vi.waitFor(() => expect(ctx.openPanel).toHaveBeenCalledTimes(1));
+
+  const privacyBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Save privacy choice')!;
+  privacyBtn.click();
+  await vi.waitFor(() => expect(ctx.runNetwork).toHaveBeenCalled());
+
+  // 3. Jobs & People: external links route through ctx.openExternal rather than raw window.open.
+  document.body.replaceChildren(jobs(ctx));
+  const whyBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Why?')!;
+  whyBtn.click();
+  await vi.waitFor(() => expect(ctx.redraw).toHaveBeenCalled());
+  document.body.replaceChildren(jobs(ctx));
+  const openPostingBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Open posting')!;
+  openPostingBtn.click();
+  await vi.waitFor(() => expect(ctx.openExternal).toHaveBeenCalledWith('https://www.linkedin.com/jobs/view/10/'));
+
+  document.body.replaceChildren(people(ctx));
+  const openPersonBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Open profile')!;
+  openPersonBtn.click();
+  await vi.waitFor(() => expect(ctx.openExternal).toHaveBeenCalledWith('https://www.linkedin.com/in/neha-rao/'));
+
+  // 4. Smoke render all remaining screens without throwing.
+  for (const renderScreen of [overview, referrals, applications, needsYou, answers, activity, setup, profile]) {
+    document.body.replaceChildren(renderScreen(ctx));
+    expect(document.body.childElementCount).toBeGreaterThan(0);
+  }
 });

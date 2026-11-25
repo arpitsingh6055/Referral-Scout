@@ -323,6 +323,7 @@ export function settings(ctx: Ctx): HTMLElement {
                 a.download = `referral-scout-backup-${new Date().toISOString().slice(0, 10)}.json`;
                 a.click();
                 setTimeout(() => URL.revokeObjectURL(url), 10_000);
+                ctx.inform('Backup downloaded.');
               } catch (error) {
                 ctx.fail(error instanceof Error ? error.message : 'The backup could not be written.');
               }

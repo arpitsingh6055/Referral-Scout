@@ -6,6 +6,9 @@
  * percentages, stage copy, and error/retry actions immediately without resetting back to 0%.
  */
 
+import { currentResetGeneration, shouldAbortStaleWrite } from '../storage/database';
+import { isProfilePendingReview, type ProfileReviewStatus } from './domain/profile';
+
 export type ProcessId =
   | 'cv_parse'
   | 'cv_ai_review'
@@ -157,8 +160,10 @@ export function getCachedProgressTasks(now = Date.now()): Partial<Record<Process
 
 /** Atomically writes or updates a named background/interactive progress task. */
 export function publishProgressTask(input: ProgressTaskInput): Promise<void> {
+  const capturedGen = currentResetGeneration();
   writeChain = writeChain
     .then(async () => {
+      if (shouldAbortStaleWrite(capturedGen)) return;
       const now = input.updatedAt ?? Date.now();
       const current = await readProgressTasks(now);
       const prev = current[input.id];
@@ -208,8 +213,8 @@ export function clearAllProgressTasks(): Promise<void> {
     .then(async () => {
       memoryTasks = {};
       const area = storageArea();
-      if (area) {
-        await area.remove(PROGRESS_STORAGE_KEY).catch(() => undefined);
+      if (area?.remove) {
+        await Promise.resolve(area.remove(PROGRESS_STORAGE_KEY)).catch(() => undefined);
       }
       notifySameContext({});
     })
@@ -252,10 +257,13 @@ function notifyMissionSameContext(next: ActiveMissionState): void {
 
 /** Atomically merges partial mission state updates into `rs_active_mission_v1`. */
 export function publishActiveMission(patch: Partial<ActiveMissionState>): Promise<ActiveMissionState> {
+  const capturedGen = currentResetGeneration();
   let result = memoryMission;
   missionWriteChain = missionWriteChain
     .then(async () => {
+      if (shouldAbortStaleWrite(capturedGen)) return;
       const cur = await readActiveMission();
+      if (shouldAbortStaleWrite(capturedGen)) return;
       const next: ActiveMissionState = {
         ...cur,
         ...patch,
@@ -426,7 +434,7 @@ export interface JourneySnapshotInput {
   cvHasText: boolean;
   cvImported: boolean;
   hasAiDraft: boolean;
-  profileReviewStatus?: 'unreviewed' | 'draft' | 'finalized' | undefined;
+  profileReviewStatus?: ProfileReviewStatus | undefined;
   pendingConflictsCount: number;
   missingRequiredIdentity: 'fullName' | 'email' | null;
   hasCampaign: boolean;
@@ -555,16 +563,16 @@ export function resolveMacroJourney(input: JourneySnapshotInput): JourneyStepSta
     };
   }
 
-  // Resumable AI Profile Draft awaiting explicit user sign-off
-  if (input.profileReviewStatus === 'draft') {
+  // Resumable Smart Profile Review awaiting explicit user approval
+  if (isProfilePendingReview(input.profileReviewStatus)) {
     return {
       stage: 2,
       totalStages: 6,
       mode: 'completion',
       percent: 54,
-      title: 'Profile Draft • Review & Finalize',
-      detail: 'Inspect extracted roles, degrees & skills, then click Finalize Profile ✓',
-      ctaLabel: input.route === 'profile' ? 'Finalize Below ↓' : 'Continue Review →',
+      title: 'Profile Extracted • Quick 10s Review Needed',
+      detail: 'Verify identity, roles & skills, then click Approve Profile & Continue →',
+      ctaLabel: input.route === 'profile' ? 'Review & Approve ↓' : 'Review & Approve →',
       targetRoute: 'profile',
       targetSelector: '[data-hud-target="cv-review"]',
     };

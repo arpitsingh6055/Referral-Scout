@@ -232,21 +232,21 @@ it('filters resolved CV/LinkedIn merge diagnostics into mergeNotes and supports 
       'The TBX Internship entry does not list exact start/end dates.',
     ],
   });
-  expect(draftRes.profile.review?.status).toBe('draft');
+  expect(draftRes.profile.review?.status).toBe('pending_review');
   expect(draftRes.profile.review?.mergeNotes).toContain('Email & contact details verified from your CV');
   expect(draftRes.profile.review?.pendingPrompts).toHaveLength(1);
-  expect(draftRes.snapshot.reviewStatus).toBe('draft');
+  expect(draftRes.snapshot.reviewStatus).toBe('pending_review');
 
   const promptId = draftRes.profile.review!.pendingPrompts[0]!.id;
   const afterDismiss = await dismissReviewPrompt(promptId);
   expect(afterDismiss.review?.pendingPrompts).toHaveLength(0);
 
   const finalized = await finalizeProfileReview();
-  expect(finalized.review?.status).toBe('finalized');
+  expect(finalized.review?.status).toBe('approved');
   expect(finalized.employment[0]?.provenance.verifiedAt).toBeTruthy();
-  expect((await readProfileSnapshotFromLocalStorage())?.reviewStatus).toBe('finalized');
+  expect((await readProfileSnapshotFromLocalStorage())?.reviewStatus).toBe('approved');
 
   const reopened = await reopenProfileReview();
-  expect(reopened.review?.status).toBe('draft');
+  expect(reopened.review?.status).toBe('reopened');
   expect(reopened.employment).toHaveLength(1);
 });

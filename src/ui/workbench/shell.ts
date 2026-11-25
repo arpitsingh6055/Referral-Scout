@@ -8,6 +8,7 @@ import './app.css';
 import { createToaster } from '../toast';
 import * as api from './api';
 import { send, sendNetwork, sendWorkspace, view, workspace, type CampaignView, type Request, type WorkspaceView } from './api';
+import { isProfileApproved, isProfilePendingReview } from '../../shared/domain/profile';
 import type { NetworkRequest } from '../../shared/network';
 import { button, div, el, icon, isEditing, pageSkeleton, restoreForm, snapshotForm, text } from './dom';
 import { computeHudState, createFloatingHud, type HudState } from './components/floating-hud';
@@ -133,10 +134,13 @@ const floatingHud = createFloatingHud(document.body);
 
 const resetToWelcome = (push = false): void => {
   try {
-    localStorage.removeItem('rs-apply-setup-skipped');
+    localStorage.clear();
   } catch {
     // Ignore storage restrictions.
   }
+  persistedTasks = {};
+  cachedMission = getCachedActiveMission();
+  resetReviewSession();
   current = 'welcome';
   mobileDrawerOpen = false;
   if (push) history.pushState({ route: 'welcome' }, '', '#welcome');
@@ -174,10 +178,10 @@ function rail(ctx: Ctx): { aside: HTMLElement; backdrop: HTMLElement } {
     if (current === item.route) b.setAttribute('aria-current', 'page');
     if (item.route === 'needs-you' && ctx.view.inboxCounts.open)
       b.append(el('span', { class: 'nav-badge' }, [String(ctx.view.inboxCounts.open)]));
-    if (item.route === 'profile' && ctx.workspace?.reviewMeta?.status === 'draft')
-      b.append(el('span', { class: 'nav-badge nav-badge-draft' }, ['Draft']));
-    else if (item.route === 'profile' && ctx.workspace?.reviewMeta?.status === 'finalized')
-      b.append(el('span', { class: 'nav-badge nav-badge-ready', 'aria-label': 'Finalized profile' }, ['✓']));
+    if (item.route === 'profile' && isProfilePendingReview(ctx.workspace?.reviewMeta?.status))
+      b.append(el('span', { class: 'nav-badge nav-badge-draft' }, ['Review']));
+    else if (item.route === 'profile' && isProfileApproved(ctx.workspace?.reviewMeta?.status))
+      b.append(el('span', { class: 'nav-badge nav-badge-ready', 'aria-label': 'Approved profile' }, ['✓']));
     nav.append(b);
   }
 
@@ -379,10 +383,15 @@ function render(force = false): void {
     theme: currentTheme(),
     setTheme: theme => {
       applyTheme(theme);
+      floatingToasts.show('info', `Theme: ${theme === 'system' ? 'Auto' : theme === 'light' ? 'Light' : 'Dark'}`);
       render(true);
     },
     run: async request => {
-      if (busyAction) return;
+      const isPriorityClear = request.kind === 'workspace' && request.action === 'clear';
+      if (busyAction && !isPriorityClear) {
+        floatingToasts.show('info', 'Another task is still finishing.');
+        return;
+      }
       busyAction = `${request.kind}:${request.action}`;
       busyMessage = actionProgress(request.action);
       busyStartedAt = Date.now();
@@ -395,14 +404,26 @@ function render(force = false): void {
           shop = await sendWorkspace(request);
           note = api.lastMessage;
         } else state = await send(request);
-        const [a, b] = await Promise.all([view(), workspace().catch(() => shop)]);
-        state = a;
-        shop = b;
-        if (request.kind === 'workspace' && request.action === 'clear') resetToWelcome(true);
+        if (isPriorityClear) {
+          resetToWelcome(true);
+          floatingToasts.show('success', 'All local data deleted.');
+          try {
+            state = await view();
+            shop = await workspace().catch(() => shop);
+          } catch {
+            // Keep cleared empty state.
+          }
+        } else {
+          const [a, b] = await Promise.all([view(), workspace().catch(() => shop)]);
+          state = a;
+          shop = b;
+          if (note) floatingToasts.show('success', note);
+        }
         if (request.action === 'processProfileWithChatGPT') aiError = '';
         error = '';
       } catch (e) {
         error = e instanceof Error ? e.message : 'Something went wrong.';
+        floatingToasts.show('error', error);
         if (request.action === 'processProfileWithChatGPT') aiError = error;
       } finally {
         busyAction = '';
@@ -412,7 +433,10 @@ function render(force = false): void {
       render(true);
     },
     runNetwork: async request => {
-      if (busyAction) return;
+      if (busyAction) {
+        floatingToasts.show('info', 'Another task is still finishing.');
+        return;
+      }
       busyAction = `network:${request.action}`;
       busyStartedAt = Date.now();
       busyMessage =
@@ -432,6 +456,7 @@ function render(force = false): void {
           }
         } else if (request.action === 'findJobs') {
           note = 'Searching LinkedIn jobs in background…';
+          floatingToasts.show('info', 'Searching LinkedIn jobs in background.');
           void publishProgressTask({
             id: 'job_search',
             status: 'running',
@@ -449,6 +474,7 @@ function render(force = false): void {
               : request.action === 'revokeConsent'
                 ? 'Optional usage counting is disabled.'
                 : result.status || 'Connection preference saved.';
+          floatingToasts.show('success', note);
         }
         const [a, b] = await Promise.all([
           view().catch(() => state!),
@@ -462,10 +488,12 @@ function render(force = false): void {
           note = b.failed
             ? `${result.profile!.name || 'LinkedIn'} saved · Reopen Profile to run AI review.`
             : `${result.profile!.name || 'LinkedIn'} saved · Add CV next.`;
+          floatingToasts.show('success', note);
         }
         error = '';
       } catch (e) {
         error = e instanceof Error ? e.message : 'Something went wrong.';
+        floatingToasts.show('error', error);
       } finally {
         busyAction = '';
         busyMessage = '';

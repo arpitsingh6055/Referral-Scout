@@ -112,6 +112,7 @@ export function welcome(ctx: Ctx): HTMLElement {
   profileCard.dataset.hudTarget = 'linkedin';
 
   const cvFile = el('input', { type: 'file', accept: cvAccept, class: 'setup-file', 'aria-label': 'Choose CV file' });
+  cvFile.id = 'welcome-cv-file';
   cvFile.addEventListener('change', () => {
     const file = cvFile.files?.[0];
     if (!file) return;
@@ -147,6 +148,7 @@ export function welcome(ctx: Ctx): HTMLElement {
       linkedInReady
         ? guidedReviewWorkspace(ctx, {
             variant: 'welcome',
+            cvInputId: 'welcome-cv-file',
             ...(ctx.cvLiveMessage ? { cvLiveMessage: ctx.cvLiveMessage } : {}),
             ...(ctx.aiError ? { aiError: ctx.aiError } : {}),
             ...(ctx.busyMessage ? { busyMessage: ctx.busyMessage } : {}),
