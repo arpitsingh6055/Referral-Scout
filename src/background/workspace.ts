@@ -671,6 +671,33 @@ async function handle(req: WorkspaceRequest): Promise<WorkspaceResult | { json: 
     case 'saveFact': {
       const fact = makeFact({ canonicalKey: req.key, value: req.value, source: 'user' });
       await saveFacts([fact]);
+      const identityKeyMap: Record<string, keyof CandidateProfile['identity']> = {
+        full_name: 'fullName',
+        email: 'email',
+        phone: 'phone',
+        city: 'city',
+        state: 'state',
+        country: 'country',
+        linkedin_url: 'profileUrl',
+      };
+      const idField = identityKeyMap[req.key];
+      if (idField || req.key === 'portfolio_url' || req.key === 'expected_ctc') {
+        const updated = await changeProfile(p => {
+          if (idField) {
+            return { ...p, identity: { ...p.identity, [idField]: req.value.trim() } };
+          }
+          if (req.key === 'portfolio_url') {
+            const links = req.value
+              .split(',')
+              .map(s => s.trim())
+              .filter(Boolean);
+            return { ...p, identity: { ...p.identity, portfolioLinks: [...new Set([...p.identity.portfolioLinks, ...links])] } };
+          }
+          return { ...p, preferences: { ...p.preferences, expectedCompensation: req.value.trim() } };
+        });
+        if (updated) void syncProfileSnapshotToLocalStorage(updated).catch(() => undefined);
+      }
+      message = 'Saved to your profile and Answer Bank.';
       break;
     }
     case 'clearFact':

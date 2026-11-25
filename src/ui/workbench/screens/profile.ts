@@ -345,53 +345,53 @@ export function profile(ctx: Ctx): HTMLElement {
   const profileUrl = input(p.identity.profileUrl ?? '', { placeholder: 'https://www.linkedin.com/in/…' });
   const portfolioLinks = input((p.identity.portfolioLinks ?? []).join(', '), { placeholder: 'https://github.com/…, https://…' });
 
-  page.append(
-    card('Identity and contact', {
-      sub: 'The details most forms ask for first.',
-      body: [
-        div('form-grid', [
-          field('Full name', fullName),
-          field('Email', email),
-          field('Phone', phone),
-          field('Current city', city),
-          field('State', state),
-          field('Country', country),
-          field('Address', address),
-          field('PIN / postal code', postalCode),
-          field('LinkedIn profile URL', profileUrl),
-          field('Portfolio or GitHub links (comma separated)', portfolioLinks),
-        ]),
-        div('inline', [
-          button('Save', 'btn btn-primary', () =>
-            ctx.run({
-              kind: 'workspace',
-              action: 'identity',
-              identity: {
-                fullName: fullName.value.trim(),
-                email: email.value.trim(),
-                phone: phone.value.trim(),
-                city: city.value.trim(),
-                state: state.value.trim(),
-                country: country.value.trim(),
-                address: address.value.trim(),
-                postalCode: postalCode.value.trim(),
-                profileUrl: profileUrl.value.trim(),
-                portfolioLinks: portfolioLinks.value
-                  .split(',')
-                  .map(link => link.trim())
-                  .filter(Boolean),
-              },
-            }),
-          ),
-        ]),
-      ],
-    }),
-  );
+  const identityCard = card('Identity and contact', {
+    sub: 'Core fields every job application needs first.',
+    body: [
+      div('form-grid', [
+        field('Full name', fullName),
+        field('Email', email),
+        field('Phone', phone),
+        field('Current city', city),
+        field('State', state),
+        field('Country', country),
+        field('Address', address),
+        field('PIN / postal code', postalCode),
+        field('LinkedIn profile URL', profileUrl),
+        field('Portfolio or GitHub links (comma separated)', portfolioLinks),
+      ]),
+      div('inline', [
+        button('Save', 'btn btn-primary', () =>
+          ctx.run({
+            kind: 'workspace',
+            action: 'identity',
+            identity: {
+              fullName: fullName.value.trim(),
+              email: email.value.trim(),
+              phone: phone.value.trim(),
+              city: city.value.trim(),
+              state: state.value.trim(),
+              country: country.value.trim(),
+              address: address.value.trim(),
+              postalCode: postalCode.value.trim(),
+              profileUrl: profileUrl.value.trim(),
+              portfolioLinks: portfolioLinks.value
+                .split(',')
+                .map(link => link.trim())
+                .filter(Boolean),
+            },
+          }),
+        ),
+      ]),
+    ],
+  });
+  identityCard.dataset.hudTarget = 'identity';
+  page.append(identityCard);
 
   if (p.narrative.strengths || p.narrative.careerGoal) {
     page.append(
-      card('Profile summary (from ChatGPT reconciliation)', {
-        sub: 'Prepared from your CV and LinkedIn sources to guide job matching and written answers.',
+      card('AI Career Summary', {
+        sub: 'Prepared from your CV and LinkedIn profile to support role matching and written questions.',
         body: [
           p.narrative.strengths
             ? div('rule-row', [div('', [text('div', 'rule-name', 'Key strengths'), text('div', 'rule-note', p.narrative.strengths)])])

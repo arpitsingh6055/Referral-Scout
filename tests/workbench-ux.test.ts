@@ -12,7 +12,13 @@ import { profile } from '../src/ui/workbench/screens/profile';
 import { confirmModal, field, pageSkeleton, setFieldError } from '../src/ui/workbench/dom';
 import { computeHudState, createFloatingHud } from '../src/ui/workbench/components/floating-hud';
 import { guidedReviewWorkspace, resetReviewSession } from '../src/ui/workbench/components/guided-review';
-import { clearAllProgressTasks, publishProgressTask, readProgressTasks, selectPrimaryProgressTask } from '../src/shared/progress-store';
+import {
+  clearAllProgressTasks,
+  publishProgressTask,
+  readProgressTasks,
+  resolveMacroJourney,
+  selectPrimaryProgressTask,
+} from '../src/shared/progress-store';
 import { computePanelHudState, createSidePanelHud } from '../src/ui/side-panel/floating-hud';
 
 function makeCtx(overrides: Partial<Ctx> = {}): Ctx {
@@ -239,7 +245,7 @@ it('needsYou and answers validate empty saves and support Enter-to-save', async 
 it('profile screen exposes profileUrl, portfolioLinks, and narrative summary', async () => {
   const ctx = makeCtx();
   document.body.replaceChildren(profile(ctx));
-  expect(document.body.textContent).toContain('Profile summary (from ChatGPT reconciliation)');
+  expect(document.body.textContent).toContain('AI Career Summary');
   expect(document.body.textContent).toContain('Product analytics & SQL');
   expect(document.querySelector<HTMLInputElement>('input[data-k="linkedin-profile-url"]')?.value).toBe(
     'https://www.linkedin.com/in/example/',
@@ -397,6 +403,18 @@ it('FloatingProgressHUD tracks active processing, setup completeness, ready stat
   ctx.workspace!.cv.hasText = true;
   ctx.workspace!.cv.imported = true;
   ctx.workspace!.completeness = { complete: 5, total: 5, missing: [] };
+  const missingIdHud = computeHudState({
+    route: 'profile',
+    view: ctx.view,
+    workspace: ctx.workspace,
+    busyAction: '',
+    busyMessage: '',
+  })!;
+  expect(missingIdHud.ctaLabel).toBe('Add Full Name →');
+  expect(missingIdHud.targetSelector).toBe('[data-hud-target="identity"]');
+
+  ctx.workspace!.profile.identity.fullName = 'Arpit Singh';
+  ctx.workspace!.profile.identity.email = 'a@b.com';
   const ready = computeHudState({
     route: 'profile',
     view: ctx.view,
@@ -406,6 +424,7 @@ it('FloatingProgressHUD tracks active processing, setup completeness, ready stat
   })!;
   expect(ready.mode).toBe('ready');
   expect(ready.percent).toBe(100);
+  expect(ready.ctaLabel).toBe('Find Jobs on LinkedIn →');
 
   const host = document.createElement('div');
   const hud = createFloatingHud(host);
@@ -416,7 +435,7 @@ it('FloatingProgressHUD tracks active processing, setup completeness, ready stat
   await vi.waitFor(() => expect(host.querySelector('.hud-chip-expand')?.getAttribute('aria-expanded')).toBe('false'));
   host.querySelector<HTMLButtonElement>('.hud-chip-expand')!.click();
   const cta = await vi.waitFor(() => {
-    const b = [...host.querySelectorAll('button')].find(btn => btn.textContent?.includes('Open side panel'));
+    const b = [...host.querySelectorAll('button')].find(btn => btn.textContent?.includes('Find Jobs on LinkedIn'));
     if (!b) throw new Error('waiting for expanded HUD CTA');
     return b;
   });
@@ -664,4 +683,88 @@ it('referrals, jobs, people and HUD surface company rank breakdowns, pin boosts 
   expect(document.body.textContent).toContain('Referral Scout never solves security checks');
   expect(document.body.textContent).toContain('1 discovered roles are waiting for your shortlist picks');
   expect([...document.querySelectorAll('button')].find(b => b.textContent === 'Skip')).toBeTruthy();
+});
+
+it('resolveMacroJourney transitions cleanly across all 6 stages and GuidedReview supports conflict-free fast path', async () => {
+  const s1 = resolveMacroJourney({
+    route: 'welcome',
+    linkedinConnected: false,
+    cvHasText: false,
+    cvImported: false,
+    hasAiDraft: false,
+    pendingConflictsCount: 0,
+    missingRequiredIdentity: null,
+    hasCampaign: false,
+    jobsCount: 0,
+    shortlistedCount: 0,
+    queuedCount: 0,
+    submittedCount: 0,
+    inboxOpen: 0,
+    inboxUrgent: 0,
+    peopleCount: 0,
+  });
+  expect(s1.stage).toBe(1);
+  expect(s1.ctaLabel).toBe('Connect LinkedIn →');
+
+  const s3 = resolveMacroJourney({
+    route: 'profile',
+    linkedinConnected: true,
+    cvHasText: true,
+    cvImported: true,
+    hasAiDraft: false,
+    pendingConflictsCount: 0,
+    missingRequiredIdentity: null,
+    hasCampaign: false,
+    jobsCount: 0,
+    shortlistedCount: 0,
+    queuedCount: 0,
+    submittedCount: 0,
+    inboxOpen: 0,
+    inboxUrgent: 0,
+    peopleCount: 0,
+  });
+  expect(s3.stage).toBe(3);
+  expect(s3.ctaLabel).toBe('Set Target Role →');
+
+  const s6 = resolveMacroJourney({
+    route: 'applications',
+    linkedinConnected: true,
+    cvHasText: true,
+    cvImported: true,
+    hasAiDraft: false,
+    pendingConflictsCount: 0,
+    missingRequiredIdentity: null,
+    hasCampaign: true,
+    jobsCount: 4,
+    shortlistedCount: 2,
+    queuedCount: 2,
+    submittedCount: 1,
+    inboxOpen: 0,
+    inboxUrgent: 0,
+    peopleCount: 3,
+  });
+  expect(s6.stage).toBe(6);
+  expect(s6.ctaLabel).toBe('Open Referrals →');
+
+  resetReviewSession();
+  const ctx = makeCtx();
+  ctx.workspace!.connections.linkedin = true;
+  ctx.workspace!.cv.hasText = true;
+  ctx.workspace!.aiProfileDraft = {
+    schemaVersion: 3,
+    identity: { fullName: 'Arpit Singh', email: 'a@b.com', phone: '', city: 'Delhi', state: '', country: 'India', profileUrl: '' },
+    education: [],
+    employment: [],
+    projects: [],
+    skills: ['SQL'],
+    narrative: { strengths: 'Product analytics', careerGoal: 'PM' },
+    conflicts: [],
+    missingInformation: ['Current PIN code'],
+  };
+  document.body.replaceChildren(guidedReviewWorkspace(ctx)!);
+  expect(document.body.textContent).toContain('Step 2 of 3: Accept & Apply Improvements');
+  expect(document.querySelector('details.review-details')).toBeTruthy();
+  const fastBtn = [...document.querySelectorAll('button')].find(b => b.textContent?.includes('Accept & Apply Changes'))!;
+  fastBtn.click();
+  await vi.waitFor(() => expect(ctx.run).toHaveBeenCalledWith({ kind: 'workspace', action: 'approveAiProfileDraft' }));
 });
