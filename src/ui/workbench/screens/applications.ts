@@ -215,5 +215,5 @@ export function applications(ctx: Ctx): HTMLElement {
 
 export const applicationsHeader = (): { title: string; sub: string } => ({
   title: 'Application queue',
-  sub: 'A durable queue turns each shortlisted job into a managed application task.',
+  sub: 'Shortlisted jobs move step-by-step from queue to filled application.',
 });

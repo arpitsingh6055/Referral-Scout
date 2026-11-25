@@ -17,6 +17,8 @@ interface ReviewSession {
   step: 1 | 2 | 3;
   resolvedConflicts: Set<number>;
   skippedConflicts: Set<number>;
+  skippedRoles: Set<number>;
+  skippedEdu: Set<number>;
   justApproved: boolean;
   lastDraftStamp: string;
 }
@@ -25,6 +27,8 @@ const session: ReviewSession = {
   step: 1,
   resolvedConflicts: new Set(),
   skippedConflicts: new Set(),
+  skippedRoles: new Set(),
+  skippedEdu: new Set(),
   justApproved: false,
   lastDraftStamp: '',
 };
@@ -37,6 +41,8 @@ export function resetReviewSession(): void {
   session.step = 1;
   session.resolvedConflicts.clear();
   session.skippedConflicts.clear();
+  session.skippedRoles.clear();
+  session.skippedEdu.clear();
   session.justApproved = false;
   session.lastDraftStamp = '';
 }
@@ -67,6 +73,8 @@ function syncDraftSession(draft: AiProfileDraft | undefined): void {
     session.step = draft.conflicts.length || draft.missingInformation.length ? 1 : 2;
     session.resolvedConflicts.clear();
     session.skippedConflicts.clear();
+    session.skippedRoles.clear();
+    session.skippedEdu.clear();
     session.justApproved = false;
   }
 }
@@ -420,9 +428,9 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
     return wrapper;
   }
 
-  /* Step 2: Before -> After Structured Additions Preview + 1-Click Apply */
-  const newRolesCount = draft.employment.length;
-  const newEduCount = draft.education.length;
+  /* Step 2: Before -> After Structured Additions Preview + Per-Item Include/Skip + 1-Click Apply */
+  const includedRolesCount = draft.employment.filter((_, i) => !session.skippedRoles.has(i)).length;
+  const includedEduCount = draft.education.filter((_, i) => !session.skippedEdu.has(i)).length;
   const newProjCount = draft.projects.length;
   const newSkillsCount = draft.skills.length;
 
@@ -433,22 +441,31 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
         text('div', 'diff-summary-val', `${p.employment.length} roles · ${p.education.length} degrees · ${p.skills.length} skills`),
       ]),
       div('diff-summary-cell is-after', [
-        text('span', 'diff-tag', 'AI Additions Prepared (After)'),
+        text('span', 'diff-tag', 'Selected Additions (After)'),
         text(
           'div',
           'diff-summary-val',
-          `+${newRolesCount} roles · +${newEduCount} degrees · +${newProjCount} projects · +${newSkillsCount} skills`,
+          `+${includedRolesCount} roles · +${includedEduCount} degrees · +${newProjCount} projects · +${newSkillsCount} skills`,
         ),
       ]),
     ]),
   ];
 
-  for (const role of draft.employment.slice(0, 4)) {
+  draft.employment.slice(0, 4).forEach((role, idx) => {
+    const skipped = session.skippedRoles.has(idx);
     previewItems.push(
-      div('diff-card is-accepted', [
+      div(`diff-card${skipped ? ' is-skipped' : ' is-accepted'}`, [
         div('diff-card-head', [
           text('span', 'diff-field', `${role.title} — ${role.employer}`),
-          pill(`${role.startDate || 'Date ?'}–${role.current ? 'Present' : role.endDate || 'Date ?'}`, 'green'),
+          div('inline', [
+            pill(`${role.startDate || 'Date ?'}–${role.current ? 'Present' : role.endDate || 'Date ?'}`, skipped ? 'grey' : 'green'),
+            button(skipped ? 'Include' : 'Skip', skipped ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-ghost', () => {
+              if (skipped) session.skippedRoles.delete(idx);
+              else session.skippedRoles.add(idx);
+              emitReviewChanged();
+              ctx.redraw();
+            }),
+          ]),
         ]),
         role.achievements.length
           ? diffBox(
@@ -466,19 +483,28 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
           : null,
       ]),
     );
-  }
+  });
 
-  for (const edu of draft.education.slice(0, 3)) {
+  draft.education.slice(0, 3).forEach((edu, idx) => {
+    const skipped = session.skippedEdu.has(idx);
     previewItems.push(
-      div('diff-card', [
+      div(`diff-card${skipped ? ' is-skipped' : ''}`, [
         div('diff-card-head', [
           text('span', 'diff-field', `${edu.qualification || edu.level} — ${edu.institution}`),
-          pill([edu.startDate, edu.endDate].filter(Boolean).join('–') || 'Education', 'grey'),
+          div('inline', [
+            pill([edu.startDate, edu.endDate].filter(Boolean).join('–') || 'Education', 'grey'),
+            button(skipped ? 'Include' : 'Skip', skipped ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-ghost', () => {
+              if (skipped) session.skippedEdu.delete(idx);
+              else session.skippedEdu.add(idx);
+              emitReviewChanged();
+              ctx.redraw();
+            }),
+          ]),
         ]),
         edu.grade ? text('p', 'field-help', `Grade captured: ${edu.grade}${edu.gradeScale ? ` (${edu.gradeScale})` : ''}`) : null,
       ]),
     );
-  }
+  });
 
   if (draft.narrative.strengths || draft.narrative.careerGoal) {
     previewItems.push(
@@ -514,7 +540,23 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
             ctx.busyAction === 'workspace:approveAiProfileDraft' ? 'Applying changes…' : 'Accept & Apply Changes →',
             'btn btn-primary btn-lg',
             async () => {
+              const skippedRoleKeys = [...session.skippedRoles].flatMap(i => (draft.employment[i] ? [draft.employment[i]!] : []));
+              const skippedEduKeys = [...session.skippedEdu].flatMap(i => (draft.education[i] ? [draft.education[i]!] : []));
               await ctx.run({ kind: 'workspace', action: 'approveAiProfileDraft' });
+              if ((skippedRoleKeys.length || skippedEduKeys.length) && ctx.workspace) {
+                for (const sr of skippedRoleKeys) {
+                  const added = ctx.workspace.profile.employment.find(
+                    e => e.employer === sr.employer && e.title === sr.title && e.provenance.source === 'model',
+                  );
+                  if (added) await ctx.run({ kind: 'workspace', action: 'removeRecord', list: 'employment', id: added.id });
+                }
+                for (const se of skippedEduKeys) {
+                  const added = ctx.workspace.profile.education.find(
+                    e => e.institution === se.institution && e.provenance.source === 'model',
+                  );
+                  if (added) await ctx.run({ kind: 'workspace', action: 'removeRecord', list: 'education', id: added.id });
+                }
+              }
               session.justApproved = true;
               session.step = 3;
               emitReviewChanged();

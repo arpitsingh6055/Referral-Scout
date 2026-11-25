@@ -15,6 +15,7 @@ import { getReviewProgressSnapshot, resetReviewSession } from './components/guid
 import {
   clearProgressTask,
   getCachedProgressTasks,
+  publishProgressTask,
   readProgressTasks,
   subscribeProgressTasks,
   type ProcessId,
@@ -211,8 +212,24 @@ function rail(ctx: Ctx): { aside: HTMLElement; backdrop: HTMLElement } {
     c
       ? div('rail-foot', [
           div('rail-foot-label', [
-            el('span', { class: running ? 'dot dot-running' : ctx.view.inboxCounts.open ? 'dot dot-attention' : 'dot dot-paused' }),
-            running ? 'Campaign active' : ctx.view.inboxCounts.open ? 'Needs you' : 'Paused',
+            el('span', {
+              class: running
+                ? 'dot dot-running'
+                : ctx.view.inboxCounts.open
+                  ? 'dot dot-attention'
+                  : c.status === 'paused'
+                    ? 'dot dot-paused'
+                    : 'dot dot-ready',
+            }),
+            running
+              ? 'Campaign active'
+              : ctx.view.inboxCounts.open
+                ? 'Needs you'
+                : c.status === 'paused'
+                  ? 'Paused'
+                  : c.status === 'completed'
+                    ? 'Completed'
+                    : 'Ready to start',
           ]),
           text('div', 'rail-foot-name', c.name),
           text(
@@ -400,6 +417,18 @@ function render(force = false): void {
               'LinkedIn did not return a verified profile. Check that you are signed in to the correct account, then try again.',
             );
           }
+        } else if (request.action === 'findJobs') {
+          note = 'Opened LinkedIn search in the background. Qualified matches appear under Jobs as they finish.';
+          void publishProgressTask({
+            id: 'job_search',
+            status: 'running',
+            percent: 16,
+            label: 'Searching LinkedIn Jobs…',
+            detail: 'Scanning your target roles in a background LinkedIn tab',
+            ctaLabel: 'View jobs →',
+            targetRoute: 'jobs',
+            etaSeconds: 30,
+          });
         } else {
           note =
             request.action === 'consent'

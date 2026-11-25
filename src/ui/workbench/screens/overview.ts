@@ -11,16 +11,16 @@ import type { Ctx } from '../shell';
 
 const statusPill = (status: string, needsYou: number): HTMLElement =>
   needsYou > 0 && status === 'running'
-    ? pill('Running · needs you', 'amber')
+    ? pill('Active · needs you', 'amber')
     : status === 'running'
-      ? pill('Running', 'green')
+      ? pill('Active', 'green')
       : status === 'stopping'
         ? pill('Finishing current work', 'amber')
         : status === 'paused'
           ? pill('Paused', 'grey')
           : status === 'completed'
             ? pill('Completed', 'green')
-            : pill('Draft', 'grey');
+            : pill('Ready to start', 'violet');
 
 export function overview(ctx: Ctx): HTMLElement {
   const { campaign, counts, inbox, inboxCounts, queue, stages, events, peopleIdentified } = ctx.view;
@@ -28,28 +28,100 @@ export function overview(ctx: Ctx): HTMLElement {
     return emptyState({
       icon: 'target',
       title: 'Set your target role once',
-      description: 'Referral Scout will find the jobs, work through the applications and line up the people who can refer you.',
+      description: 'Referral Scout will find the jobs, prepare your applications and line up the people who can refer you.',
       action: button('Create a campaign', 'btn btn-primary btn-lg', () => ctx.go('setup')),
     });
 
   const page = div('stack');
   const discovery = ctx.workspace?.jobSearch;
+  const discoveredJobs = ctx.workspace?.jobs ?? [];
+
   if (discovery?.status === 'finding') {
+    const pct = discovery.ranking
+      ? `${discovery.ranking.done} of ${discovery.ranking.total} descriptions scored`
+      : `Found ${discovery.found} matching roles (${discovery.cursor} of ${discovery.totalTerms || 'several'} searches done)`;
     page.append(
-      card('Job discovery is running', {
-        sub: discovery.ranking
-          ? `Reviewing ${discovery.ranking.done} of ${discovery.ranking.total} job descriptions against your profile.`
-          : `Found ${discovery.found} jobs so far; checked ${discovery.cursor} of ${discovery.totalTerms || 'several'} related search titles.`,
-        body: [button('View live search progress', 'btn btn-primary', () => ctx.go('jobs'))],
-      }),
+      div('handoff-bridge', [
+        div('card-head', [
+          div('', [
+            text('div', 'card-title', 'Searching LinkedIn in another tab'),
+            text('p', 'card-sub', `${pct}. Keep using this dashboard—we’ll surface top matches here automatically.`),
+          ]),
+          pill('Live on LinkedIn', 'violet'),
+        ]),
+        div('handoff-rail', [
+          div('launchpad-step is-done', [
+            div('launchpad-step-head', [div('launchpad-dot', [icon('check', 13)]), pill('Done', 'green')]),
+            text('div', 'rule-name', 'Search started'),
+            text('p', 'rule-note', `${campaign.targetRoles[0]} in ${campaign.location}`),
+          ]),
+          div('launchpad-step is-active', [
+            div('launchpad-step-head', [div('launchpad-dot', ['2']), pill('Running', 'violet')]),
+            text('div', 'rule-name', 'Scoring against your CV'),
+            text('p', 'rule-note', discovery.ranking ? 'Comparing requirements with your experience' : 'Reading LinkedIn search results'),
+          ]),
+          div('launchpad-step', [
+            div('launchpad-step-head', [div('launchpad-dot', ['3']), pill('Next', 'grey')]),
+            text('div', 'rule-name', 'Review & shortlist'),
+            text('p', 'rule-note', 'Pick your favorite roles to apply & ask for referrals'),
+          ]),
+        ]),
+        div('inline', [
+          button('View Live Results →', 'btn btn-primary', () => ctx.go('jobs')),
+          button('Open LinkedIn Tab', 'btn', () => ctx.openExternal('https://www.linkedin.com/jobs/')),
+        ]),
+      ]),
     );
   } else if (discovery?.status === 'choosing') {
     page.append(
       card('Your jobs are ready to review', {
-        sub: `${discovery.found} results are ready. Review the match reasoning and choose which roles to pursue.`,
-        body: [button('Review discovered jobs', 'btn btn-primary', () => ctx.go('jobs'))],
+        sub: `${discovery.found} results are scored and ready. Pick the roles worth applying to.`,
+        link: pill('Action needed', 'amber'),
+        body: [button('Review Discovered Jobs →', 'btn btn-primary btn-lg', () => ctx.go('jobs'))],
       }),
     );
+  } else if (counts.total === 0 && discoveredJobs.length === 0 && peopleIdentified === 0 && inbox.length === 0 && events.length === 0) {
+    /* Replace cold empty wall of zeros with a guided 3-step Post-Setup Launchpad */
+    const linkedinConnected = !!ctx.workspace?.connections.linkedin;
+    page.append(
+      div('launchpad-hero', [
+        div('', [
+          text('h2', 'launchpad-title', 'You’re all set to find your first roles.'),
+          text(
+            'p',
+            'launchpad-sub',
+            `Your search goal (${campaign.targetRoles.join(', ')} · ${campaign.location}) is ready. Kick off a LinkedIn search now—we’ll read listings and score them against your profile automatically.`,
+          ),
+        ]),
+        div('launchpad-steps', [
+          div('launchpad-step is-done', [
+            div('launchpad-step-head', [div('launchpad-dot', [icon('check', 13)]), pill('Done', 'green')]),
+            text('div', 'rule-name', '1. Search goal saved'),
+            text('p', 'rule-note', `${campaign.employmentType} · ${campaign.location}`),
+          ]),
+          div('launchpad-step is-active', [
+            div('launchpad-step-head', [div('launchpad-dot', ['2']), pill('Next step', 'violet')]),
+            text('div', 'rule-name', '2. Find matching jobs on LinkedIn'),
+            text('p', 'rule-note', 'Opens LinkedIn quietly, checks descriptions, and ranks fits against your profile.'),
+          ]),
+          div('launchpad-step', [
+            div('launchpad-step-head', [div('launchpad-dot', ['3']), pill('Up next', 'grey')]),
+            text('div', 'rule-name', '3. Apply & request referrals'),
+            text('p', 'rule-note', 'Approve top matches, autofill forms, and line up referrers at each company.'),
+          ]),
+        ]),
+        div('inline', [
+          linkedinConnected
+            ? button('Find Jobs on LinkedIn →', 'btn btn-primary btn-lg', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' }), {
+                'data-busy-label': 'Starting LinkedIn Search…',
+                'data-progress': 'Opening LinkedIn Jobs search…',
+              })
+            : button('Connect LinkedIn First →', 'btn btn-primary btn-lg', () => ctx.go('profile')),
+          button('Edit Search Goal', 'btn btn-ghost', () => ctx.go('setup')),
+        ]),
+      ]),
+    );
+    return page;
   }
 
   page.append(
@@ -72,7 +144,7 @@ export function overview(ctx: Ctx): HTMLElement {
     ]),
   );
 
-  // Stage progress. Each stage reports its own count; nothing here implies one pipeline gates the other.
+  // Stage progress strip
   const strip = div('stages');
   stages.forEach((s, i) => {
     if (i) strip.append(div(s.done ? 'stage-join done' : 'stage-join'));
@@ -85,7 +157,12 @@ export function overview(ctx: Ctx): HTMLElement {
       ]),
     );
   });
-  page.append(card('Campaign progress', { sub: 'The two engines run independently; neither waits for the other.', body: [strip] }));
+  page.append(
+    card('Campaign progress', {
+      sub: 'Applications and referral outreach move ahead side-by-side so neither holds up the other.',
+      body: [strip],
+    }),
+  );
 
   const nextUp = queue.filter(q => q.state !== 'submitted' && q.state !== 'skipped').slice(0, 3);
   const interactiveRow = (rowEl: HTMLElement, target: 'applications' | 'needs-you'): HTMLElement => {

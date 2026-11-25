@@ -498,12 +498,12 @@ it('GuidedReviewWorkspace walks through live bridge, Before/After diffs, and 1-c
   expect(document.body.textContent).toContain('Step 3 of 3: Your Profile is Organized');
 });
 
-it('progress-store rehydrates chrome.storage.session and SidePanel HUD prioritizes active jobs', async () => {
+it('progress-store rehydrates chrome.storage.local and SidePanel HUD prioritizes active jobs', async () => {
   await clearAllProgressTasks();
   const backing: Record<string, unknown> = {};
   vi.stubGlobal('chrome', {
     storage: {
-      session: {
+      local: {
         get: vi.fn(async (key: string) => ({ [key]: backing[key] })),
         set: vi.fn(async (patch: Record<string, unknown>) => Object.assign(backing, patch)),
         remove: vi.fn(async (key: string) => {
@@ -552,4 +552,19 @@ it('progress-store rehydrates chrome.storage.session and SidePanel HUD prioritiz
 
   await clearAllProgressTasks();
   expect(Object.keys(await readProgressTasks())).toHaveLength(0);
+});
+
+it('overview renders guided Launchpad instead of empty zeros and shows LinkedIn cross-tab handoff when searching', () => {
+  const ctx = makeCtx();
+  expect(overviewHeader(ctx).status?.textContent).toBe('Ready to start');
+
+  document.body.replaceChildren(overview(ctx));
+  expect(document.body.textContent).toContain('You’re all set to find your first roles.');
+  expect(document.body.textContent).toContain('Find Jobs on LinkedIn');
+  expect(document.body.textContent).not.toContain('two engines run independently');
+
+  ctx.workspace!.jobSearch = { status: 'finding', cursor: 1, totalTerms: 4, found: 3 };
+  document.body.replaceChildren(overview(ctx));
+  expect(document.body.textContent).toContain('Searching LinkedIn in another tab');
+  expect(document.body.textContent).toContain('Open LinkedIn Tab');
 });
