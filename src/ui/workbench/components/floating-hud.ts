@@ -13,7 +13,7 @@
 import { button, div, el, icon, text } from '../dom';
 import type { CampaignView, WorkspaceView } from '../api';
 import type { Route } from '../shell';
-import { selectPrimaryProgressTask, type ProcessId, type ProgressTask } from '../../../shared/progress-store';
+import { selectPrimaryProgressTask, resolveMacroJourney, type ProcessId, type ProgressTask } from '../../../shared/progress-store';
 
 export interface ReviewProgressSnapshot {
   /** Current 1-based step inside GuidedReviewWorkspace (1..3). */
@@ -48,6 +48,7 @@ export interface HudState {
   targetRoute: Route;
   targetSelector?: string;
   retryTaskId?: ProcessId;
+  command?: 'findJobs' | 'openPanel';
 }
 
 const AI_STAGE_PERCENT: [RegExp, number, number][] = [
@@ -184,121 +185,59 @@ export function computeHudState(input: HudInput): HudState | null {
     return {
       mode: 'completion',
       percent: pct,
-      title: `CV Review · Step ${step} of ${total}`,
+      title: `Stage 2 of 6 · CV Review (${step}/${total})`,
       detail:
         step === 1
           ? conflictsLeft
-            ? `${conflictsLeft} ${conflictsLeft === 1 ? 'difference' : 'differences'} to confirm`
-            : 'Ready to inspect extracted changes'
-          : '1 click to save improvements to profile',
-      ctaLabel: step === 1 ? 'Review diff →' : 'Apply changes →',
+            ? `${conflictsLeft} source difference${conflictsLeft === 1 ? '' : 's'} highlighted below`
+            : 'Confirm your AI-organized identity and summary in 1 click'
+          : 'Next: Confirm & save profile to unlock campaign search',
+      ctaLabel: route === 'welcome' ? 'Open Full Review →' : step === 1 ? 'Review Diffs ↓' : 'Confirm & Save →',
       targetRoute: 'profile',
       targetSelector: '[data-hud-target="cv-review"]',
     };
   }
 
-  /* 2b. Urgent Human-in-the-Loop Blockers ("Stop Here" gates across any route) */
-  if (view.inboxCounts.open > 0 && (view.inboxCounts.urgent > 0 || (w.cv.imported && w.completeness.complete >= w.completeness.total))) {
-    const queueTotal = Math.max(1, view.counts.total);
-    const pct = Math.min(96, Math.max(25, Math.round((view.counts.submitted / queueTotal) * 100) || 88));
-    return {
-      mode: view.inboxCounts.urgent > 0 ? 'error' : 'completion',
-      percent: pct,
-      title:
-        view.inboxCounts.urgent > 0
-          ? `Urgent · ${view.inboxCounts.urgent} item${view.inboxCounts.urgent === 1 ? '' : 's'} need confirmation`
-          : `${view.inboxCounts.open} paused application${view.inboxCounts.open === 1 ? '' : 's'}`,
-      detail: view.inbox[0]?.prompt ?? 'Answer once in Needs you to resume automatically',
-      ctaLabel: route === 'needs-you' ? 'Resolve above ↑' : 'Resolve now →',
-      targetRoute: 'needs-you',
-      targetSelector: '.inbox-item',
-    };
-  }
-
-  /* 3. Overall Setup & Profile Completion Mode */
+  /* 3. Multi-Tier End-to-End 6-Stage Journey & Blocker State Machine */
   const hasProfileRecords = w.cv.imported || w.profile.employment.length > 0 || w.profile.education.length > 0;
-  const answerFraction = w.completeness.total > 0 ? Math.min(1, w.completeness.complete / w.completeness.total) : 1;
-  const milestones: { done: boolean; weight: number; label: string; route: Route; selector: string }[] = [
-    {
-      done: w.connections.linkedin,
-      weight: 20,
-      label: 'Connect LinkedIn profile',
-      route: view.campaign ? 'profile' : 'welcome',
-      selector: '[data-hud-target="linkedin"]',
-    },
-    {
-      done: w.cv.hasText,
-      weight: 20,
-      label: 'Upload your CV',
-      route: view.campaign ? 'profile' : 'welcome',
-      selector: '[data-hud-target="cv-upload"]',
-    },
-    {
-      done: !w.aiProfileDraft && hasProfileRecords,
-      weight: 25,
-      label: w.aiProfileDraft ? 'Approve AI CV review' : w.cv.hasText ? 'Organize CV with AI' : 'Add role or degree',
-      route: 'profile',
-      selector: '[data-hud-target="cv-review"]',
-    },
-    {
-      done: answerFraction >= 1,
-      weight: 15,
-      label: `${w.completeness.missing.length || 1} core answer${w.completeness.missing.length === 1 ? '' : 's'} left`,
-      route: 'answers',
-      selector: '[data-hud-target="answers"]',
-    },
-    {
-      done: !!view.campaign,
-      weight: 20,
-      label: 'Set target roles & campaign',
-      route: view.campaign ? 'setup' : 'welcome',
-      selector: '[data-hud-target="campaign-goal"]',
-    },
-  ];
+  const missingRequiredIdentity =
+    hasProfileRecords || w.connections.linkedin
+      ? !w.profile.identity.fullName?.trim()
+        ? 'fullName'
+        : !w.profile.identity.email?.trim()
+          ? 'email'
+          : null
+      : null;
 
-  let score = 0;
-  for (const m of milestones) {
-    if (m.label.includes('core answer')) score += m.done ? m.weight : Math.round(m.weight * answerFraction);
-    else if (m.done) score += m.weight;
-  }
-  const percent = Math.max(0, Math.min(100, Math.round(score)));
-  const incomplete = milestones.filter(m => !m.done);
-  const next = incomplete[0];
-
-  if (percent >= 100 && view.inboxCounts.open === 0) {
-    return {
-      mode: 'ready',
-      percent: 100,
-      title: '100% Ready',
-      detail: w.jobs.length ? 'Profile verified & campaign ready' : 'Profile & CV ready for job search',
-      ctaLabel: w.jobs.length ? 'Review top jobs →' : 'Open side panel →',
-      targetRoute: w.jobs.length ? 'jobs' : 'overview',
-    };
-  }
-
-  if (percent >= 100 && view.inboxCounts.open > 0) {
-    return {
-      mode: 'completion',
-      percent: 92,
-      title: `92% Complete · ${view.inboxCounts.open} waiting`,
-      detail: 'A paused application needs your quick answer',
-      ctaLabel: 'Resolve now →',
-      targetRoute: 'needs-you',
-      targetSelector: '.inbox-item',
-    };
-  }
+  const journey = resolveMacroJourney({
+    route,
+    linkedinConnected: w.connections.linkedin,
+    cvHasText: w.cv.hasText,
+    cvImported: hasProfileRecords,
+    hasAiDraft: !!w.aiProfileDraft,
+    pendingConflictsCount: w.aiProfileDraft?.conflicts.length ?? 0,
+    missingRequiredIdentity,
+    hasCampaign: !!view.campaign,
+    jobSearchStatus: w.jobSearch?.status,
+    jobsCount: w.jobs.length,
+    shortlistedCount: w.jobs.filter(j => j.judgement === 'shortlisted').length,
+    queuedCount: (view.counts.queued ?? 0) + (view.counts.running ?? 0),
+    submittedCount: view.counts.submitted ?? 0,
+    inboxOpen: view.inboxCounts.open,
+    inboxUrgent: view.inboxCounts.urgent,
+    inboxPrompt: view.inbox[0]?.prompt,
+    peopleCount: view.peopleIdentified,
+  });
 
   return {
-    mode: 'completion',
-    percent,
-    title:
-      w.cv.imported && w.profile.identity.fullName && !w.aiProfileDraft
-        ? `${percent}% Ready · Profile Saved`
-        : `${percent}% Complete · ${incomplete.length} step${incomplete.length === 1 ? '' : 's'} left`,
-    detail: `Next: ${next?.label ?? 'Finish profile'}`,
-    ctaLabel: route === next?.route ? 'Jump to next ↓' : 'Fix next →',
-    targetRoute: next?.route ?? 'profile',
-    ...(next?.selector ? { targetSelector: next.selector } : {}),
+    mode: journey.mode,
+    percent: journey.percent,
+    title: journey.title,
+    detail: journey.detail,
+    ctaLabel: journey.ctaLabel,
+    targetRoute: journey.targetRoute as Route,
+    ...(journey.targetSelector ? { targetSelector: journey.targetSelector } : {}),
+    ...(journey.command ? { command: journey.command } : {}),
   };
 }
 

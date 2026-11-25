@@ -547,7 +547,12 @@ function render(force = false): void {
           return;
         }
       }
-      if (target.mode === 'ready' && target.targetRoute === 'overview' && !shop?.jobs.length) {
+      if (target.command === 'findJobs') {
+        if (current !== 'jobs') ctx.go('jobs');
+        void ctx.runNetwork({ kind: 'network', action: 'findJobs' });
+        return;
+      }
+      if (target.command === 'openPanel' || (target.mode === 'ready' && target.targetRoute === 'overview' && !shop?.jobs.length)) {
         ctx.openPanel();
         return;
       }

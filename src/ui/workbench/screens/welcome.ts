@@ -156,11 +156,7 @@ export function welcome(ctx: Ctx): HTMLElement {
             },
           })
         : null,
-      text(
-        'p',
-        'field-help',
-        'Your CV is the priority source when details disagree with LinkedIn. Nothing enters your profile until you confirm.',
-      ),
+      text('p', 'field-help', 'Whenever your CV and LinkedIn differ, your CV wins by default. Nothing is saved until you confirm.'),
     ],
   });
   cvCard.dataset.hudTarget = 'cv-upload';

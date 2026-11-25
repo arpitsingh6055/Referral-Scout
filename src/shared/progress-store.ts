@@ -243,3 +243,216 @@ export function selectPrimaryProgressTask(tasks: Partial<Record<ProcessId, Progr
     ...(etaSeconds !== undefined ? { etaSeconds } : {}),
   };
 }
+
+/* ---------- End-to-End 6-Stage Macro Journey State Machine ---------- */
+export type JourneyRoute = 'welcome' | 'profile' | 'setup' | 'overview' | 'jobs' | 'needs-you' | 'applications' | 'referrals';
+
+export interface JourneySnapshotInput {
+  route: string;
+  linkedinConnected: boolean;
+  cvHasText: boolean;
+  cvImported: boolean;
+  hasAiDraft: boolean;
+  pendingConflictsCount: number;
+  missingRequiredIdentity: 'fullName' | 'email' | null;
+  hasCampaign: boolean;
+  jobSearchStatus?: 'finding' | 'choosing' | 'working' | undefined;
+  jobsCount: number;
+  shortlistedCount: number;
+  queuedCount: number;
+  submittedCount: number;
+  inboxOpen: number;
+  inboxUrgent: number;
+  inboxPrompt?: string | undefined;
+  peopleCount: number;
+}
+
+export interface JourneyStepState {
+  stage: 1 | 2 | 3 | 4 | 5 | 6;
+  totalStages: 6;
+  mode: 'completion' | 'ready' | 'error';
+  percent: number;
+  title: string;
+  detail: string;
+  ctaLabel: string;
+  targetRoute: JourneyRoute;
+  targetSelector?: string;
+  command?: 'findJobs' | 'openPanel';
+}
+
+/**
+ * Resolves the user's true end-to-end macro stage and next highest-leverage CTA without trapping
+ * them on non-blocking micro-fields (like optional Answer Bank answers).
+ */
+export function resolveMacroJourney(input: JourneySnapshotInput): JourneyStepState {
+  // Priority Blocker A: Needs-You / Uncertain Submissions
+  if (input.inboxOpen > 0) {
+    return {
+      stage: 5,
+      totalStages: 6,
+      mode: input.inboxUrgent > 0 ? 'error' : 'completion',
+      percent: 82,
+      title: input.inboxUrgent
+        ? `Action needed · ${input.inboxUrgent} confirmation${input.inboxUrgent === 1 ? '' : 's'}`
+        : `Stage 5 of 6 · ${input.inboxOpen} waiting for you`,
+      detail: input.inboxPrompt ?? 'Answer once in Needs you to keep applications moving',
+      ctaLabel: input.route === 'needs-you' ? 'Resolve card above ↑' : 'Resolve now →',
+      targetRoute: 'needs-you',
+      targetSelector: '.inbox-item',
+    };
+  }
+
+  // Priority Blocker B: Pending AI Profile Draft awaiting 1-click confirmation
+  if (input.hasAiDraft) {
+    const conflicts = input.pendingConflictsCount;
+    return {
+      stage: 2,
+      totalStages: 6,
+      mode: 'completion',
+      percent: conflicts > 0 ? 35 : 42,
+      title: `Stage 2 of 6 · 42% Complete`,
+      detail:
+        conflicts > 0
+          ? `Next: Review ${conflicts} source difference${conflicts === 1 ? '' : 's'} & save profile`
+          : 'Next: Confirm AI profile summary in 1 click',
+      ctaLabel: input.route === 'profile' ? 'Confirm Profile Below ↓' : 'Review & Confirm CV →',
+      targetRoute: 'profile',
+      targetSelector: '[data-hud-target="cv-review"]',
+    };
+  }
+
+  // Stage 1: Connect LinkedIn OR Upload CV
+  if (!input.linkedinConnected) {
+    return {
+      stage: 1,
+      totalStages: 6,
+      mode: 'completion',
+      percent: input.cvHasText ? 20 : 10,
+      title: `Stage 1 of 6 · ${input.cvHasText ? 20 : 10}% Complete`,
+      detail: 'Next: Connect LinkedIn so jobs and contacts match you',
+      ctaLabel: 'Connect LinkedIn →',
+      targetRoute: input.hasCampaign ? 'profile' : 'welcome',
+      targetSelector: '[data-hud-target="linkedin"]',
+    };
+  }
+
+  if (!input.cvHasText && !input.cvImported) {
+    return {
+      stage: 2,
+      totalStages: 6,
+      mode: 'completion',
+      percent: 25,
+      title: 'Stage 2 of 6 · 25% Complete',
+      detail: 'Next: Upload your PDF or DOCX CV for AI profile setup',
+      ctaLabel: 'Upload CV →',
+      targetRoute: input.hasCampaign ? 'profile' : 'welcome',
+      targetSelector: '[data-hud-target="cv-upload"]',
+    };
+  }
+
+  // Stage 2b: CV uploaded, needs AI organization
+  if (input.cvHasText && !input.cvImported) {
+    return {
+      stage: 2,
+      totalStages: 6,
+      mode: 'completion',
+      percent: 38,
+      title: 'Stage 2 of 6 · 38% Complete',
+      detail: 'Next: Let AI organize your CV into a ready-to-apply profile',
+      ctaLabel: 'Start AI Review →',
+      targetRoute: 'profile',
+      targetSelector: '[data-hud-target="cv-review"]',
+    };
+  }
+
+  // Priority Blocker C: Missing required Name or Email after import
+  if (input.missingRequiredIdentity) {
+    const label = input.missingRequiredIdentity === 'fullName' ? 'Full Name' : 'Email';
+    return {
+      stage: 2,
+      totalStages: 6,
+      mode: 'completion',
+      percent: 48,
+      title: 'Stage 2 of 6 · Required Detail Missing',
+      detail: `1 required detail before applying: Add your ${label}`,
+      ctaLabel: `Add ${label} →`,
+      targetRoute: 'profile',
+      targetSelector: '[data-hud-target="identity"]',
+    };
+  }
+
+  // Stage 3: Set Target Role & Campaign
+  if (!input.hasCampaign) {
+    return {
+      stage: 3,
+      totalStages: 6,
+      mode: 'completion',
+      percent: 58,
+      title: 'Stage 3 of 6 · Profile Ready (58% Complete)',
+      detail: 'Next: Pick your target roles and preferred location',
+      ctaLabel: 'Set Target Role →',
+      targetRoute: 'welcome',
+      targetSelector: '[data-hud-target="campaign-goal"]',
+    };
+  }
+
+  // Stage 4: Choose discovered jobs
+  if (input.jobSearchStatus === 'choosing' && input.jobsCount > 0) {
+    return {
+      stage: 5,
+      totalStages: 6,
+      mode: 'completion',
+      percent: 78,
+      title: 'Stage 5 of 6 · 78% Complete',
+      detail: `Next: Shortlist from ${input.jobsCount} matched roles`,
+      ctaLabel: 'Review Matched Jobs →',
+      targetRoute: 'jobs',
+    };
+  }
+
+  // Stage 4: Campaign exists, ready to search LinkedIn Jobs
+  if (input.jobsCount === 0 && input.queuedCount === 0) {
+    return {
+      stage: 4,
+      totalStages: 6,
+      mode: 'ready',
+      percent: 100,
+      title: 'Setup 100% Ready · Find Jobs',
+      detail: 'Profile & campaign ready — search LinkedIn roles now',
+      ctaLabel: 'Find Jobs on LinkedIn →',
+      targetRoute: 'jobs',
+      command: 'findJobs',
+    };
+  }
+
+  // Stage 5: Jobs exist, shortlist or enqueue
+  if (input.queuedCount === 0 && input.submittedCount === 0) {
+    return {
+      stage: 5,
+      totalStages: 6,
+      mode: 'ready',
+      percent: 100,
+      title: input.shortlistedCount ? `${input.shortlistedCount} Shortlisted · Ready to Queue` : `${input.jobsCount} Jobs Matched`,
+      detail: input.shortlistedCount
+        ? 'Next: Add shortlisted roles to your application queue'
+        : 'Next: Shortlist top roles & queue applications',
+      ctaLabel: input.shortlistedCount ? 'View Shortlist & Queue →' : 'Review Top Jobs →',
+      targetRoute: 'jobs',
+    };
+  }
+
+  // Stage 6: Queue & Referral Outreach Active / Complete
+  return {
+    stage: 6,
+    totalStages: 6,
+    mode: 'ready',
+    percent: 100,
+    title: 'Pipeline Active · 100% Ready',
+    detail:
+      input.peopleCount > 0
+        ? `${input.submittedCount} applied · ${input.peopleCount} referral contacts ranked`
+        : `${input.queuedCount} in queue · ${input.submittedCount} submitted`,
+    ctaLabel: input.route === 'applications' ? 'Open Referrals →' : 'View Queue & Progress →',
+    targetRoute: input.route === 'applications' ? 'referrals' : 'applications',
+  };
+}

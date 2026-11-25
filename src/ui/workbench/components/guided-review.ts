@@ -12,6 +12,7 @@ import type { Ctx } from '../shell';
 import type { WorkspaceView } from '../api';
 import type { AiProfileDraft } from '../../../shared/profile-draft';
 import { formatLocation } from '../../../shared/normalizeChatGptProfile';
+import { getCachedProgressTasks } from '../../../shared/progress-store';
 import type { ReviewProgressSnapshot } from './floating-hud';
 
 interface ReviewSession {
@@ -77,7 +78,8 @@ function syncDraftSession(draft: AiProfileDraft | undefined): void {
   const stamp = `${draft.identity.fullName}:${draft.education.length}:${draft.employment.length}:${draft.conflicts.length}:${draft.skills.length}`;
   if (stamp !== session.lastDraftStamp) {
     session.lastDraftStamp = stamp;
-    session.step = draft.conflicts.length || draft.missingInformation.length ? 1 : 2;
+    // Skip Step 1 whenever sources agree instead of trapping users on optional missing fields.
+    session.step = draft.conflicts.length > 0 ? 1 : 2;
     session.resolvedConflicts.clear();
     session.skippedConflicts.clear();
     session.skippedRoles.clear();
@@ -197,23 +199,22 @@ function quickFillFactKey(prompt: string): string | null {
 function renderQuickFillPrompts(prompts: string[], ctx: Ctx): HTMLElement | null {
   const active = prompts.filter(p => !session.dismissedPrompts.has(p)).slice(0, 3);
   if (!active.length) return null;
-  return div('quick-fill-box', [
-    text('div', 'field-label', 'Optional quick-fill details ChatGPT noticed missing'),
+  const box = div('quick-fill-box', [
     div(
       'quick-fill-list',
       active.map(prompt => {
         const factKey = quickFillFactKey(prompt);
-        const box = input('', { placeholder: `Enter answer for “${prompt}”…`, 'aria-label': prompt });
+        const inp = input('', { placeholder: `Enter answer for “${prompt}”…`, 'aria-label': prompt });
         return div('quick-fill-row', [
           div('', [
             text('div', 'rule-name', prompt),
-            text('span', 'field-help', factKey ? 'Saves straight to Answer Bank' : 'Saves to Profile Summary'),
+            text('span', 'field-help', factKey ? 'Optional — saves directly to your profile' : 'Optional detail in Profile'),
           ]),
           factKey
             ? div('inline', [
-                box,
+                inp,
                 button('Save', 'btn btn-sm btn-primary', async () => {
-                  const val = box.value.trim();
+                  const val = inp.value.trim();
                   if (!val) return;
                   await ctx.run({ kind: 'workspace', action: 'saveFact', key: factKey, value: val });
                   session.dismissedPrompts.add(prompt);
@@ -238,6 +239,11 @@ function renderQuickFillPrompts(prompts: string[], ctx: Ctx): HTMLElement | null
       }),
     ),
   ]);
+  const disclosure = el('details', { class: 'review-details' }, [
+    el('summary', {}, [`Optional details missing (${active.length}) — fill now or skip anytime`]),
+    box,
+  ]);
+  return disclosure;
 }
 
 function stepHeader(activeStep: 1 | 2 | 3): HTMLElement {
@@ -300,11 +306,19 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
     return wrapper;
   }
 
-  if (ctx.busyAction === 'workspace:processProfileWithChatGPT') {
+  const persistedAi = getCachedProgressTasks().cv_ai_review;
+  const aiRunningCrossTab = persistedAi?.status === 'running' && !w.aiProfileDraft && !options.aiError;
+  if (ctx.busyAction === 'workspace:processProfileWithChatGPT' || aiRunningCrossTab) {
     wrapper.append(
       card('AI Review in Progress', {
-        sub: 'Your signed-in ChatGPT session is organizing your CV and comparing it against LinkedIn.',
-        body: [renderLiveBridge('ai', options.busyMessage ?? 'Analyzing your CV and LinkedIn evidence…')],
+        sub: 'ChatGPT is comparing your CV with LinkedIn and organizing changes safely.',
+        link: button('Open ChatGPT tab', 'btn btn-sm', () => ctx.openExternal('https://chatgpt.com/')),
+        body: [
+          renderLiveBridge(
+            'ai',
+            options.busyMessage || persistedAi?.detail || persistedAi?.label || 'Analyzing your CV and LinkedIn details…',
+          ),
+        ],
       }),
     );
     return wrapper;
@@ -389,20 +403,21 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
 
   /* Step 3: Celebratory completion right after applying draft (or already imported without pending draft) */
   if (!draft) {
-    const missingCount = w.completeness.missing.length;
     const primaryCta = options.onApprovedNext
-      ? button('Continue to Search Goal →', 'btn btn-primary btn-lg', options.onApprovedNext)
-      : missingCount
-        ? button(`Finish ${missingCount} Core Answer${missingCount === 1 ? '' : 's'} →`, 'btn btn-primary btn-lg', () => ctx.go('answers'))
-        : button(ctx.view.campaign ? 'Review Matching Jobs →' : 'Create Search Campaign →', 'btn btn-primary btn-lg', () =>
-            ctx.go(ctx.view.campaign ? 'jobs' : 'welcome'),
-          );
+      ? button('Next: Set Target Role →', 'btn btn-primary btn-lg', options.onApprovedNext)
+      : !ctx.view.campaign
+        ? button('Next: Set Target Role →', 'btn btn-primary btn-lg', () => ctx.go('welcome'))
+        : w.jobs.length
+          ? button('Next: Review Top Jobs →', 'btn btn-primary btn-lg', () => ctx.go('jobs'))
+          : button('Next: Find Jobs on LinkedIn →', 'btn btn-primary btn-lg', () =>
+              ctx.runNetwork({ kind: 'network', action: 'findJobs' }),
+            );
 
     wrapper.append(
       card('Step 3 of 3: Saved to Your Profile ✓', {
         sub: session.justApproved
-          ? 'Your Name, Email, Contact Details, Roles, Education and Skills are durably saved in your Candidate Profile and Answer Bank.'
-          : 'Your CV has been reconciled with LinkedIn. Re-run anytime after uploading a newer CV.',
+          ? 'Your Name, Email, Contact Details, Experience, Education and Skills are saved and ready for job matching.'
+          : 'Your CV and LinkedIn profile are in sync. Upload a new CV or re-run whenever anything changes.',
         link: pill('Saved to Profile ✓', 'green'),
         body: [
           snapshotCard(
@@ -421,6 +436,7 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
           renderQuickFillPrompts(session.missingPrompts, ctx),
           div('inline', [
             primaryCta,
+            options.cvInputId ? el('label', { class: 'btn', for: options.cvInputId }, ['Replace CV']) : null,
             button(
               'Re-run AI Review',
               'btn btn-ghost',
@@ -437,6 +453,22 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
     return wrapper;
   }
 
+  const approveDraftNow = async (): Promise<void> => {
+    session.missingPrompts = [...draft.missingInformation];
+    const skippedEmp = [...session.skippedRoles];
+    const skippedEdu = [...session.skippedEdu];
+    await ctx.run({
+      kind: 'workspace',
+      action: 'approveAiProfileDraft',
+      ...(skippedEmp.length ? { skippedEmploymentIndexes: skippedEmp } : {}),
+      ...(skippedEdu.length ? { skippedEducationIndexes: skippedEdu } : {}),
+    });
+    session.justApproved = true;
+    session.step = 3;
+    emitReviewChanged();
+    ctx.redraw();
+  };
+
   /* Active Guided 3-Step Review when `draft` exists */
   const p = w.profile;
   const conflicts = draft.conflicts;
@@ -444,13 +476,17 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
 
   if (options.variant === 'welcome') {
     wrapper.append(
-      card('AI Review Ready (1–2 minutes)', {
-        sub: `${conflicts.length ? `${conflicts.length} differences found · ` : ''}${draft.employment.length} roles, ${draft.education.length} degrees, ${draft.skills.length} skills ready for your 1-click confirmation.`,
-        link: pill('Ready to review', 'amber'),
+      card('AI Review Ready (Under 30 seconds)', {
+        sub: `${conflicts.length ? `${conflicts.length} differences to glance over · ` : ''}${draft.employment.length} roles, ${draft.education.length} degrees and ${draft.skills.length} skills extracted.`,
+        link: pill('Ready to confirm', 'amber'),
         body: [
           stepHeader(1),
           div('inline', [
-            button('Open Guided Review →', 'btn btn-primary btn-lg', () => {
+            button('Looks Good — Save All →', 'btn btn-primary btn-lg', approveDraftNow, {
+              disabled: ctx.busyAction === 'workspace:approveAiProfileDraft',
+              'data-busy-label': 'Saving profile…',
+            }),
+            button('Inspect Before Saving', 'btn', () => {
               ctx.go('profile');
             }),
             button('Re-analyze CV', 'btn btn-ghost', () => ctx.run({ kind: 'workspace', action: 'processProfileWithChatGPT' })),
@@ -495,29 +531,17 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
             ]),
           ]);
         })
-      : [
-          div('note note-green', [
-            text('p', '', 'No discrepancies found between your CV and LinkedIn profile. Both sources align cleanly.'),
-          ]),
-        ];
-
-    const missingBlock = draft.missingInformation.length
-      ? div('note note-amber', [
-          text('strong', '', `${draft.missingInformation.length} details still absent from your CV`),
-          text('p', 'field-help', draft.missingInformation.slice(0, 4).join(' · ')),
-        ])
-      : null;
+      : [div('note note-green', [text('p', '', 'No differences found between your CV and LinkedIn profile.')])];
 
     wrapper.append(
       card('Step 1 of 3: Confirm Differences (Before → After)', {
         sub: conflicts.length
-          ? `${handledCount} of ${conflicts.length} reviewed. Your CV takes priority wherever LinkedIn was outdated.`
-          : 'Quick check passed. Continue to inspect the structured improvements AI prepared for your profile.',
+          ? `${handledCount} of ${conflicts.length} reviewed. Your CV takes priority wherever LinkedIn differed.`
+          : 'Your CV and LinkedIn agree cleanly.',
         link: pill('Step 1 of 3', 'violet'),
         body: [
           stepHeader(1),
           ...conflictCards,
-          missingBlock,
           div('wizard-foot', [
             button(conflicts.length ? 'Confirm & Review Improvements →' : 'Continue to Improvements →', 'btn btn-primary btn-lg', () => {
               conflicts.forEach((_, idx) => {
@@ -526,6 +550,10 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
               session.step = 2;
               emitReviewChanged();
               ctx.redraw();
+            }),
+            button('Looks Good — Save All Now', 'btn', approveDraftNow, {
+              disabled: ctx.busyAction === 'workspace:approveAiProfileDraft',
+              'data-busy-label': 'Saving profile…',
             }),
             button('Skip step', 'btn btn-ghost', () => {
               session.step = 2;
@@ -539,33 +567,20 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
     return wrapper;
   }
 
-  /* Step 2: Before -> After Structured Additions Preview + Per-Item Include/Skip + 1-Click Apply */
+  /* Step 2: Scannable Must-Confirm Snapshot + Fast-Path CTA + Progressive Disclosure for Roles/Degrees */
   const includedRolesCount = draft.employment.filter((_, i) => !session.skippedRoles.has(i)).length;
   const includedEduCount = draft.education.filter((_, i) => !session.skippedEdu.has(i)).length;
   const newProjCount = draft.projects.length;
   const newSkillsCount = draft.skills.length;
 
-  const previewItems: HTMLElement[] = [
-    snapshotCard(
-      {
-        fullName: draft.identity.fullName || p.identity.fullName || '',
-        email: draft.identity.email || p.identity.email || '',
-        phone: draft.identity.phone || p.identity.phone || '',
-        location: formatLocation(draft.identity) || formatLocation(p.identity),
-        profileUrl: draft.identity.profileUrl || p.identity.profileUrl || '',
-        rolesCount: includedRolesCount,
-        eduCount: includedEduCount,
-        skillsCount: newSkillsCount,
-      },
-      false,
-    ),
+  const detailCards: HTMLElement[] = [
     div('diff-summary-grid', [
       div('diff-summary-cell', [
         text('span', 'diff-tag', 'Current Profile (Before)'),
         text('div', 'diff-summary-val', `${p.employment.length} roles · ${p.education.length} degrees · ${p.skills.length} skills`),
       ]),
       div('diff-summary-cell is-after', [
-        text('span', 'diff-tag', 'Selected Additions (After)'),
+        text('span', 'diff-tag', 'Additions Ready (After)'),
         text(
           'div',
           'diff-summary-val',
@@ -577,7 +592,7 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
 
   draft.employment.slice(0, 4).forEach((role, idx) => {
     const skipped = session.skippedRoles.has(idx);
-    previewItems.push(
+    detailCards.push(
       div(`diff-card${skipped ? ' is-skipped' : ' is-accepted'}`, [
         div('diff-card-head', [
           text('span', 'diff-field', `${role.title} — ${role.employer}`),
@@ -593,9 +608,9 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
         ]),
         role.achievements.length
           ? diffBox(
-              'Raw CV bullet text',
-              role.responsibilities[0] || 'Unstructured experience bullet',
-              'Structured Achievement Highlight',
+              'Original CV bullet',
+              role.responsibilities[0] || 'Experience bullet from CV',
+              'Highlighted Achievement',
               role.achievements.slice(0, 2).join(' · '),
             )
           : text('p', 'field-help', role.responsibilities.slice(0, 2).join(' · ') || 'Role details captured from your CV.'),
@@ -611,7 +626,7 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
 
   draft.education.slice(0, 3).forEach((edu, idx) => {
     const skipped = session.skippedEdu.has(idx);
-    previewItems.push(
+    detailCards.push(
       div(`diff-card${skipped ? ' is-skipped' : ''}`, [
         div('diff-card-head', [
           text('span', 'diff-field', `${edu.qualification || edu.level} — ${edu.institution}`),
@@ -630,20 +645,10 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
     );
   });
 
-  if (draft.narrative.strengths || draft.narrative.careerGoal) {
-    previewItems.push(
-      div('note note-violet', [
-        text('strong', '', 'AI Profile Summary'),
-        draft.narrative.strengths ? text('p', 'field-help', draft.narrative.strengths) : null,
-        draft.narrative.careerGoal ? text('p', 'field-help', `Target direction: ${draft.narrative.careerGoal}`) : null,
-      ]),
-    );
-  }
-
   if (draft.skills.length) {
-    previewItems.push(
+    detailCards.push(
       div('stack-xs', [
-        text('div', 'field-label', `Verified skills to add (${draft.skills.length})`),
+        text('div', 'field-label', `Skills extracted (${draft.skills.length})`),
         div(
           'chips',
           draft.skills.slice(0, 16).map(s => pill(s, 'violet')),
@@ -652,9 +657,38 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
     );
   }
 
+  const previewItems: HTMLElement[] = [
+    snapshotCard(
+      {
+        fullName: draft.identity.fullName || p.identity.fullName || '',
+        email: draft.identity.email || p.identity.email || '',
+        phone: draft.identity.phone || p.identity.phone || '',
+        location: formatLocation(draft.identity) || formatLocation(p.identity),
+        profileUrl: draft.identity.profileUrl || p.identity.profileUrl || '',
+        rolesCount: includedRolesCount,
+        eduCount: includedEduCount,
+        skillsCount: newSkillsCount,
+      },
+      false,
+    ),
+    draft.narrative.strengths || draft.narrative.careerGoal
+      ? div('note note-violet', [
+          text('strong', '', 'AI Career Summary'),
+          draft.narrative.strengths ? text('p', 'field-help', draft.narrative.strengths) : null,
+          draft.narrative.careerGoal ? text('p', 'field-help', `Target direction: ${draft.narrative.careerGoal}`) : null,
+        ])
+      : el('div', { style: 'display:none' }),
+    el('details', { class: 'review-details' }, [
+      el('summary', {}, [
+        `Inspect or customize roles, degrees & skills (+${includedRolesCount} roles, +${includedEduCount} degrees, +${newSkillsCount} skills)`,
+      ]),
+      div('stack', detailCards),
+    ]),
+  ];
+
   wrapper.append(
     card('Step 2 of 3: Accept & Apply Improvements', {
-      sub: 'Everything below will be saved to your Candidate Profile so you can review or edit anytime — no manual copying needed.',
+      sub: 'Confirm your contact snapshot below to save everything into your profile and unlock job matching.',
       link: pill('Step 2 of 3', 'violet'),
       body: [
         stepHeader(2),
@@ -663,33 +697,21 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
           button(
             ctx.busyAction === 'workspace:approveAiProfileDraft' ? 'Applying changes…' : 'Accept & Apply Changes →',
             'btn btn-primary btn-lg',
-            async () => {
-              session.missingPrompts = [...draft.missingInformation];
-              const skippedEmp = [...session.skippedRoles];
-              const skippedEdu = [...session.skippedEdu];
-              await ctx.run({
-                kind: 'workspace',
-                action: 'approveAiProfileDraft',
-                ...(skippedEmp.length ? { skippedEmploymentIndexes: skippedEmp } : {}),
-                ...(skippedEdu.length ? { skippedEducationIndexes: skippedEdu } : {}),
-              });
-              session.justApproved = true;
-              session.step = 3;
-              emitReviewChanged();
-              ctx.redraw();
-            },
+            approveDraftNow,
             {
               disabled: ctx.busyAction === 'workspace:approveAiProfileDraft',
               'aria-busy': ctx.busyAction === 'workspace:approveAiProfileDraft',
               'data-busy-label': 'Applying to profile…',
-              'data-progress': 'Saving verified improvements to your Candidate Profile…',
+              'data-progress': 'Saving verified details to your Candidate Profile…',
             },
           ),
-          button('← Back', 'btn', () => {
-            session.step = 1;
-            emitReviewChanged();
-            ctx.redraw();
-          }),
+          conflicts.length
+            ? button('← Back to differences', 'btn', () => {
+                session.step = 1;
+                emitReviewChanged();
+                ctx.redraw();
+              })
+            : null,
           button('Re-analyze CV', 'btn btn-ghost', () => ctx.run({ kind: 'workspace', action: 'processProfileWithChatGPT' }), {
             disabled: !!ctx.busyAction,
           }),
