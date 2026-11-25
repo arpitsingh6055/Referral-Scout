@@ -54,7 +54,9 @@ function toJob(found: FoundJob, now: number, profileVersion: number): Job {
     // match against. It is thin evidence and the Jobs screen says so rather than inventing bullet points.
     requirements: found.matched?.length ? [...found.matched] : [],
     ...(typeof found.fit === 'number' && found.fitSource === 'chatgpt' ? { aiFit: Math.max(0, Math.min(100, Math.round(found.fit))) } : {}),
-    ...(typeof found.fit === 'number' && found.fitSource === 'specialization' ? { profileFit: Math.max(0, Math.min(100, Math.round(found.fit))) } : {}),
+    ...(typeof found.fit === 'number' && found.fitSource === 'specialization'
+      ? { profileFit: Math.max(0, Math.min(100, Math.round(found.fit))) }
+      : {}),
     ...(found.fitSource ? { fitSource: found.fitSource, fitProfileVersion: profileVersion } : {}),
     ...(found.why ? { aiWhy: found.why } : {}),
     responsibilities: [],
@@ -121,7 +123,14 @@ export async function importJobs(now = Date.now()): Promise<{ added: number; upd
         state: 'met' as const,
         matchedWith: fresh.fitSource === 'chatgpt' ? 'ChatGPT profile assessment' : 'Profile evidence',
       }));
-      q.tier = q.eligibility === 'ineligible' ? 'blocked' : q.fit >= 70 && q.preferenceFit >= 60 && q.freshness !== 'stale' ? 'strong' : q.fit >= 45 ? 'possible' : 'weak';
+      q.tier =
+        q.eligibility === 'ineligible'
+          ? 'blocked'
+          : q.fit >= 70 && q.preferenceFit >= 60 && q.freshness !== 'stale'
+            ? 'strong'
+            : q.fit >= 45
+              ? 'possible'
+              : 'weak';
     }
     write.push(job);
     if (previous) updated++;

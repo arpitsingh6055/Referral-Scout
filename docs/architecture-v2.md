@@ -31,15 +31,17 @@ consult it. A duplicate application is worse than a missing one, and it cannot b
 
 | Path | What |
 | --- | --- |
-| `shared/domain/` | Campaign, Job + Company + qualification, CandidateProfile, Contact + OutreachTask, facts, exceptions, system records |
-| `shared/state-machines/application-task.ts` | Queue states, transitions, leases, admission, ordering |
-| `shared/scoring/allocator.ts` | Global invitation allocation |
+| `shared/domain/` | Campaign, Job + Company + qualification, CandidateProfile, Contact + OutreachTask, facts (`detectCandidateMode`, `buildStudentSmartDefaults`, `factsFromProfileSnapshot`, `essentialReadiness`), exceptions, system records |
+| `shared/progress-store.ts` | Cross-context `chrome.storage.local` progress store + 6-stage `resolveMacroJourney()` HUD navigator |
+| `shared/state-machines/application-task.ts` | Queue states (`queued` through `submitted`/`uncertain`), transitions, leases, `staleNeedsYou()`, admission, ordering |
+| `shared/scoring/allocator.ts` | Global weekly outreach allocator + transparent `rankCompanies()` breakdowns + pinned company priority |
 | `shared/persistence/campaign-store.ts` | Typed IndexedDB access; `change()` is read-modify-write in one transaction |
-| `connectors/job-sources/` | Adapter contract and the five sources |
-| `background/runner.ts` | Scheduler, worker, recovery, reconciliation |
-| `background/campaign.ts` | Services and the message API; returns one `CampaignView` the whole UI draws from |
-| `ui/workbench/` | The six extension-hosted screens |
-| `ui/side-panel/campaign-card.ts` | Compact control surface in the panel |
+| `connectors/job-sources/` | Adapter contract and 6 source declarations (`linkedin` & `user-url` active; external boards cleanly health-reported) |
+| `background/runner.ts` | Scheduler, worker, startup/lease/orphan recovery, `staleNeedsYou` self-healing, reconciliation |
+| `background/profileStorage.ts` & `normalizeChatGptProfile.ts` | Atomic ChatGPT V3 profile normalization, read-back verification, full CV->Answer Bank hydration & snapshot sync |
+| `background/campaign.ts` & `workspace.ts` | Campaign/workspace message API returning `CampaignView` & `WorkspaceView` including `pinCompany`, `applyStudentDefaults`, and bi-directional fact sync |
+| `ui/workbench/` | Dashboard screens (`overview`, `jobs`, `applications`, `needs-you`, `referrals`, `people`, `answers`, `profile`, `setup`, `settings`, `welcome`, `activity`), `GuidedReviewWorkspace`, and `FloatingProgressHUD` |
+| `ui/side-panel/` & `content/floating-hud.ts` | Compact Side Panel control surface & Closed-Shadow-DOM host page HUD |
 
 ## Decisions worth knowing
 
@@ -80,23 +82,23 @@ chose, per specification 17.4.
 
 ## What is built, and what is not
 
-Built and tested: durable queue with leases and idempotent transitions; scheduler and worker; recovery and
-reconciliation; Needs-you with semantic grouping and scoped reuse; Answer Bank with migration; canonical Job,
-Company, CandidateProfile, Contact, OutreachTask with its stop rules, AI context correlation, Gmail
-classification thresholds, notifications, audit; global allocator; source adapter contract with LinkedIn wired
-and four sources declared with honest health states; six workbench screens and the side-panel card.
+Built and tested (**43 test files, 713 passing tests**):
+- Durable queue with leases (`90s` TTL), idempotent transitions, startup recovery (`recoverQueue`), `staleNeedsYou()` self-healing, and submission reconciliation (`reconcile`, explicit `uncertain -> queued` only upon user `"It did not"` confirmation);
+- Semantic `Needs you` exception inbox + 3-Tier Student-Friendly Answer Bank with `detectCandidateMode()`, `buildStudentSmartDefaults()`, 1-click pill presets, `Auto-learned` ATS Q&A view, and bi-directional profile/legacy detail sync;
+- Guided CV & AI Review workspace (`GuidedReviewWorkspace`) with conflict Before/After diffs, 1-click fast-path confirmation, collapsible optional details, cross-tab Live Bridge recovery, and atomic `profileStorage.ts` read-back verification;
+- 6-Stage Macro Floating HUD (`resolveMacroJourney()`) synchronized across Workbench, Side Panel, and Closed-Shadow-DOM host overlays;
+- Global referrer budget allocator with transparent `rankCompanies()` score breakdowns and persisted `Pin company` priority across Jobs, Referrals, and People screens;
+- Session-based Gmail draft/reply helpers, strict sender validation (`trustedExtension`), and all 12 Workbench screens cleanly wired.
 
-Not yet built: live Gmail OAuth and thread sync; discovery adapters for Internshala, Naukri, Instahyre and
-Wellfound (contract and normalisation exist, search does not); the Jobs and People workbench screens, which still
-point at the side panel; CV parsing into the structured profile; the allocator wired to live contact records.
+Remaining planned adapter expansion: live multi-board search scrapers for Internshala, Naukri, Instahyre, and Wellfound beyond URL ingestion (declared honestly via health states in `connectors/job-sources/`).
 
 ## Running it
 
-```
-pnpm test        # 608 tests
-pnpm typecheck
-pnpm build       # dist/ — loads unpacked in Edge
-npx vite build --mode preview   # preview/ — the workbench with sample data, for design review
+```bash
+pnpm check       # prettier + 713 tests + tsc --noEmit + vite builds + scripts/check-build.mjs
+pnpm package     # packages verified dist/ into referral-scout.zip
+pnpm build       # dist/ — loads unpacked in Chrome or Edge
+npx vite build --mode preview   # preview/ — workbench sample review build
 ```
 
 `preview.ts` and `preview.html` never ship in the extension package; they build to `preview/`, not `dist/`.

@@ -63,8 +63,7 @@ export const workspace = (): Promise<WorkspaceView> => sendWorkspace({ kind: 'wo
 /** Tests the user's signed-in ChatGPT website session from the dashboard's Connections settings. */
 export async function testChatGpt(): Promise<void> {
   const reply = (await chrome.runtime.sendMessage({ kind: 'apply', action: 'testAi' }).catch(() => undefined)) as
-    | { ok?: boolean; error?: string }
-    | undefined;
+    { ok?: boolean; error?: string } | undefined;
   if (!reply) throw new Error('Referral Scout did not respond. Reload the extension and try again.');
   if (!reply.ok) throw new Error(reply.error ?? 'ChatGPT could not be reached. Open chatgpt.com and check your sign-in.');
 }

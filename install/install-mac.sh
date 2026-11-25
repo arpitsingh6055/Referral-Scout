@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-VERSION="0.45.5"
+VERSION="0.58.2"
 URL="https://github.com/arpitsingh6055/Referral-Scout/releases/download/v${VERSION}/referral-scout-${VERSION}.zip"
 ROOT="$HOME/Library/Application Support/ReferralScout"
 TARGET="$ROOT/extension"

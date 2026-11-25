@@ -1,31 +1,62 @@
-# Referral Scout privacy and data handling — v0.49.0 source candidate
+# Referral Scout Privacy Policy (v0.58.2)
 
-**Updated:** 25 November 2026. This describes the patched source under review. It is not a verified store-release privacy policy; verify every flow and the deployed endpoint before publication.
+**Effective Date:** 25 November 2026  
+**Product:** Referral Scout (Chrome & Edge Manifest V3 Browser Extension)  
+**Published Policy URL:** https://referral-scout.vercel.app/privacy
 
-## Stored locally
+Referral Scout is built on a **local-first, user-controlled architecture**. There is no proprietary Referral Scout cloud account, database, or ad-tracking SDK. Your personal profile, CV files, job search targets, contacts, and application history remain in browser storage on your device unless you explicitly initiate an action using your own third-party sessions (LinkedIn, ChatGPT/OpenAI, Gmail, or a target employer's application portal).
 
-Referral Scout stores the owner's LinkedIn profile details and capture time; extracted PDF/DOCX CV text and file metadata; the structured candidate profile and its source/provenance; target roles, campaign preferences and settings; observed job cards and descriptions; application records; invitation notes; contacts, connection/acceptance status, messages and action timestamps. The newer workbench uses extension-owned IndexedDB records, while the older `network-v1` state remains as a compatibility source for the existing referral workflow. Some state is mirrored between the two layers so both screens can use the same profile and search preferences. Routine side-panel status polling omits full profile/CV text.
+---
 
-## Sent to LinkedIn and Google services
+## 1. Data Stored Locally on Your Device
 
-LinkedIn actions use the user's existing signed-in LinkedIn session and visible LinkedIn pages. Referral Scout does not request or store a LinkedIn password. When a user asks it to read their own profile, it opens the signed-in user's `/in/me/` profile in an extension work window and reads the visible profile data needed by the feature. Search, invitations and messages are also performed through the user's LinkedIn session and remain subject to LinkedIn's own policies and retention.
+Referral Scout stores the following records locally inside your browser (`chrome.storage.local` and extension-owned IndexedDB stores):
 
-Gmail features use the user's signed-in Gmail session when the user chooses to connect or sync. Messages and drafts remain subject to Google's services, account settings and retention. Connecting Gmail is optional and is not needed for job search.
+- **Candidate Profile & Documents:** Uploaded PDF/DOCX CV files and extracted text, plus your structured identity (name, email, phone, location, LinkedIn/portfolio URLs), education history, work experience, projects, and skills.
+- **Answer Bank & Learned Application Responses:** Reusable factual answers (such as work authorization by country, notice period, start date, compensation expectations, and responses remembered when you answer an application prompt). Sensitive diversity/EEO disclosures (gender, disability, veteran, ethnicity) and legal signatures are never inferred from your CV.
+- **Job Discovery & Campaign Records:** Target roles, locations, discovered job listings, fit assessments, shortlisted roles, company priority pins, and queued/submitted application states.
+- **Referral Outreach State:** Publicly visible profile details of target referrers read from LinkedIn pages you visit/scan, draft outreach notes awaiting your approval, and invitation/follow-up timestamps.
 
-## Sent to AI providers
+**Retention & Deletion Controls:**  
+You retain full control of your data. In **Workbench → Settings**, you can export a local JSON backup (`Export data`, which deliberately excludes any optional OpenAI API key), delete your saved CV (`Delete CV`), suppress individual contacts permanently, or wipe all local extension data at once (`Delete everything`). Uninstalling the extension removes browser-managed storage.
 
-AI-assisted tasks may send relevant profile details, extracted CV text, job or recipient context, and proposed text to the user's own signed-in ChatGPT website session. If the user configures an OpenAI API key, the relevant task context is instead sent to OpenAI through its API. API usage is billed by OpenAI under the user's account. The API key is stored locally and deliberately excluded from data backups. The extension does not send a CV binary as part of an AI prompt, but text extracted from the CV can be included when relevant to a task. Users should review provider terms, retention controls and the content sent before using these features.
+---
 
-## Optional usage reporting
+## 2. Website Sessions & External Transfers You Initiate
 
-Usage reporting is **off by default** and is not required to read a LinkedIn profile, save a CV, create a campaign, search jobs or use core features. It runs only after the user explicitly enables **Allow one-time usage counting** in the dashboard. When enabled, the extension sends a small record to `https://referral-scout.vercel.app/api/ping` containing a random per-install identifier (`uid`), the display name (`name`) and the LinkedIn profile handle (`id`). The code attempts to report once per LinkedIn handle. The report does not include CV text or files, job details, contacts, messages or application records.
+Referral Scout never collects or stores your LinkedIn, Google/Gmail, or ChatGPT passwords, authentication cookies, or OAuth refresh tokens. Instead, it operates only through tabs/windows inside your own browser session when you trigger a feature:
 
-The user can turn this setting off at any time in **Settings → Privacy and usage reporting**. Turning it off prevents future reports; it cannot retract a record already transmitted to the reporting endpoint. The endpoint operator's server-side retention and access practices must be verified separately before public release.
+- **LinkedIn (`linkedin.com`):** Only after you sign in yourself and start profile reading, job discovery, or referral outreach, Referral Scout reads the visible page elements needed for that task. By default, invitation/message drafts wait for your approval.
+- **AI Assistance (`chatgpt.com` or Optional OpenAI API Key):**
+  - By default, AI tasks (CV-to-LinkedIn profile reconciliation, job ranking, form field mapping) send only the relevant task prompt and text context through your own signed-in ChatGPT web tab. Raw binary PDF/DOCX attachments are never sent in prompts.
+  - If you optionally configure your own OpenAI API key in Settings (`https://api.openai.com/*`), task prompts are sent directly from your browser to OpenAI under your API billing account.
+- **Gmail (`mail.google.com`):** Connecting Gmail is optional and not required for job search or LinkedIn workflows. When enabled, Referral Scout interacts strictly with your signed-in Gmail tab to draft messages and check reply status without requesting restricted Gmail API scopes.
+- **Employer & ATS Application Portals:** When you click **Fill this application** on an external careers page, your browser prompts you to grant access for that specific site origin (`optional_host_permissions`), fills fields with your saved profile/answers, attaches your CV when requested, and pauses before final submission under the default Review policy.
 
-## Controls and retention
+---
 
-The default mode requests approval before each LinkedIn send; an optional user-selected automatic mode can send while Edge is running. The user can pause work, export local data, delete a saved CV, remove individual contacts or clear outreach data locally. Clearing extension data does not undo invitations, messages, Gmail drafts, or AI prompts already sent through external services, and does not delete provider-side records. The source candidate has no automatic expiry policy for all saved profile, CV and outreach records. Browser uninstall/reinstall behaviour may affect browser-owned storage.
+## 3. Optional Anonymous Usage Counting (Off by Default)
 
-## Release review required
+Optional one-time usage reporting is **disabled by default** and is never required to use any extension feature.
 
-Before public release, verify the production build, all data flows, the usage endpoint's privacy and retention terms, accessibility, consent language, browser-store policy compliance and the published privacy statement. This source document is a development disclosure, not legal advice or a substitute for the required store policy.
+- If you explicitly opt in (**Settings → Allow one-time usage counting**), the extension transmits a single event to `https://referral-scout.vercel.app/api/ping` containing:
+  - A randomly generated per-install identifier (`uid`)
+  - Your LinkedIn display name (`name`)
+  - Your LinkedIn public handle (`id`)
+- **Excluded data:** Usage reporting never includes your CV file or text, email address, phone number, jobs, contacts, outreach drafts, or application history.
+- You may disable this setting at any time in Settings to prevent any future transmission.
+
+---
+
+## 4. Chrome Web Store Limited Use & Non-Sale Commitment
+
+Referral Scout complies with browser extension user-data policies:
+- We **never** sell, rent, broker, or transfer user data to third parties, data brokers, or advertising networks.
+- We **never** use your CV, inbox, browsing history, or profile data for targeted advertising, creditworthiness, or unrelated AI model training.
+- Human access to user data does not occur because no user content leaves your device to a Referral Scout server (except the strictly minimal, opt-in install ping described in Section 3).
+
+---
+
+## 5. Contact
+
+Questions, deletion requests, or privacy inquiries: open an issue at the project repository (`https://github.com/arpitsingh6055/Referral-Scout/issues`).

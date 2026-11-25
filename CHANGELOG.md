@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.58.2: End-to-End UX, Guided AI Review, 6-Stage HUD, 3-Tier Answer Bank & Store Release Readiness
+- **3-Tier Student-Friendly Answer Bank (`answers.ts`, `facts.ts`, `profileStorage.ts`):** Replaced upfront corporate interrogation walls with Tier 1 Core Essentials (`1`-click pill presets & auto-save), Tier 2 adapted Role/Compensation preferences, `Student / Fresher Mode` smart-defaults, full CV/education hydration into Answer Bank facts, and a collapsible Tier 3 accordion showing `Auto-learned` ATS application answers.
+- **Upgraded Guided CV Review & 6-Stage Macro HUD (`guided-review.ts`, `progress-store.ts`, `floating-hud.ts`):** Added conflict-free fast-path & `"Looks Good — Save All"` confirmation, progressive role/missing-info disclosure, cross-tab Live Bridge recovery, Answer Bank quick-fill sync back into `CandidateProfile`, and `resolveMacroJourney()` to advance users cleanly from setup through job discovery and queue/referrals.
+- **Company Ranking, Pin Priority & Self-Healing Queue (`allocator.ts`, `referrals.ts`, `jobs.ts`, `people.ts`, `runner.ts`, `campaign.ts`):** Replaced hardcoded `70` contact opportunity fit with canonical company-matched job scores, added `rankCompanies()` explanations + 1-click `Pin company` boosts, fixed `uncertain -> queued` `"It did not"` transition, resolved stale `submission-uncertain` inbox entries on confirm/reconcile, and added `staleNeedsYou()` self-healing.
+- **Release & Store Compliance Hardening:** Synchronized installers, added version parity / zero source-map / CSP / asset checks to `scripts/check-build.mjs`, added SHA-256 package output to `scripts/package-extension.mjs`, and finalized store-ready documentation (`docs/privacy.md`, `SECURITY.md`, `README.md`, `docs/store-submission.md`).
+
+## 0.58.1: Cross-Context Progress HUD, Onboarding Launchpad & Profile Approval Durability
+- Fixed React/Workbench form-restoration snapshot overwrite bug so approved ChatGPT identity values persist durably across IndexedDB, Answer Bank `facts`, legacy `ApplyProfile`, and `chrome.storage.local` snapshots.
+- Added persistent cross-context `<FloatingProgressHUD />` across Workbench tabs, Side Panel, and Closed-Shadow-DOM host page overlays plus 3-Step Overview Launchpad and live LinkedIn handoff bridge.
+
+## 0.58.0: ChatGPT-Mediated CV + LinkedIn Profile Reconciliation & V3 Schema Normalizer
+- Introduced defensive V3/legacy ChatGPT profile reconciliation (`normalizeChatGptProfile.ts`) keeping raw LinkedIn/CV captures read-only until explicit user approval.
+
+## 0.57.0: Campaign Architecture, Workbench Overhaul & Answer Bank Scope Safety
+- Launched Workbench multi-screen workspace (`Overview`, `Jobs`, `Applications`, `Needs you`, `Referrals`, `People`, `Answer Bank`, `Profile`, `Setup`, `Activity`, `Settings`) with lease-backed background runner and semantic scoping.
+
 ## 0.56.3: progress you can follow, actions that cannot double-fire, and honest partial saves
 - LinkedIn profile import now reports its actual background milestones to the dashboard: opening the profile, checking the signed-in identity, reading profile details, and saving locally.
 - Import success is only shown after the response contains a verified LinkedIn profile and capture timestamp. If the profile record saves but the Candidate profile view cannot refresh, the dashboard says so and gives the recovery step.

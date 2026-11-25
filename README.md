@@ -4,93 +4,134 @@
 
 # Referral Scout
 
-**Find jobs that fit you, apply faster, and get referred.**
+**Find jobs that match your CV, prioritize target companies, line up referrers, and autofill applications—always under your review.**
 
-A Microsoft Edge extension that searches LinkedIn for jobs that fit your background, finds the people at each company whose referral counts, drafts your messages, and helps complete job applications. By default, it pauses for your review; optional automation settings can send or submit only when you explicitly enable them.
+[![MV3 Extension](https://img.shields.io/badge/Manifest-V3-5b5bd6)](#architecture)
+[![Node 22+](https://img.shields.io/badge/Node-22%2B-10b981)](#for-developers)
+[![Tests](https://img.shields.io/badge/Vitest-43%20suites%20%E2%80%A2%20713%20tests-0ea5e9)](#verification--packaging)
 
-**[Get it on Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/referral-scout-jobs-and-/lhfibhgokebhefdagadklckepkbbljhc)**
+**[Install on Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/referral-scout-jobs-and-/lhfibhgokebhefdagadklckepkbbljhc)** · **[Privacy Policy](docs/privacy.md)** · **[Store Submission Packet](docs/store-submission.md)** · **[Architecture](docs/architecture-v2.md)**
 
 </div>
 
 <p align="center">
-  <img src="docs/screenshots/home.png" alt="Home" width="260" />
+  <img src="docs/screenshots/home.png" alt="Side Panel Home" width="260" />
   &nbsp;
-  <img src="docs/screenshots/tracker.png" alt="Live progress" width="260" />
+  <img src="docs/screenshots/tracker.png" alt="Live Progress & Referral Tracker" width="260" />
   &nbsp;
-  <img src="docs/screenshots/jobs.png" alt="Jobs and the people at each company" width="260" />
+  <img src="docs/screenshots/jobs.png" alt="Jobs and Referrers per Company" width="260" />
 </p>
 
-## What it does
+---
 
-- **Finds jobs that fit you.** Searches LinkedIn for your target role and similar titles, then ranks the results against your profile and CV.
-- **Finds who can refer you.** At each company you pick: people you already know, alumni of your school, recruiters, and the team you would join.
-- **Writes your messages.** Personal connection notes and follow-ups, each waiting for your approval.
-- **Fills applications.** LinkedIn Easy Apply and company career sites, every step, with your CV attached. It stops at the final review: you press Submit.
-- **Keeps track.** Who accepted, who replied, who said they will refer you, and every application you sent.
+## Core Capabilities
 
-## Get started
+- **Guided CV & LinkedIn Review (`src/ui/workbench/components/guided-review.ts`):** Upload a PDF or DOCX CV and read your signed-in LinkedIn profile locally. ChatGPT compares both (giving CV priority on conflicts), highlights Before/After differences, and commits verified fields atomically into your Candidate Profile and Answer Bank only after you click **Accept & Apply**.
+- **6-Stage Floating Progress HUD (`src/shared/progress-store.ts`):** Persistent cross-context bottom HUD synchronized via `chrome.storage.local` across Workbench tabs, Side Panel, and host pages (closed Shadow DOM). Guides you across stages (`Connect LinkedIn` → `CV AI Review` → `Target Role` → `Find Jobs` → `Needs You / Shortlist` → `Queue & Referrals`).
+- **CV-Ranked Job Discovery & Application Queue:** Searches LinkedIn Jobs across parallel role titles, filters out mismatches and spam, scores fit against your CV, and runs an unattended, lease-backed application queue supporting LinkedIn Easy Apply and **27+ external ATS portals** (Greenhouse, Lever, Workday, Ashby, SmartRecruiters, iCIMS, BambooHR, Workable, Recruitee, Teamtailor, Naukri, Instahyre, Wellfound, Zoho Recruit, Keka, Darwinbox, Personio, and more).
+- **Transparent Company Ranking & Pin Boost (`src/shared/scoring/allocator.ts`):** Ranks target employers and contacts with plain-English score breakdowns (`Relationship`, `Role relevance`, `Hiring relevance`, `Opportunity fit`, `Evidence`) and 1-click **Pin company** boosts that prioritize outreach slots and bypass cooldown delays.
+- **Human-in-the-Loop "Needs You" & Answer Bank (`src/ui/workbench/screens/answers.ts`):** Automatically pauses an application (without blocking the queue) whenever it hits sign-in, CAPTCHA/security challenges, final submission review, or unknown fields. Includes a **3-Tier Student-Friendly Answer Bank** with 1-click pill presets, **Student Smart-Defaults**, country-scoped authorization, and Just-in-Time learning from forms.
+- **Dual-Engine Safety & Pacing:** Separates the Application Engine from the LinkedIn Referral Engine, respects daily/weekly limits and random pauses, never auto-solves CAPTCHAs, and never submits unreviewed forms unless you explicitly opt in.
 
-1. **Install** from [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/referral-scout-jobs-and-/lhfibhgokebhefdagadklckepkbbljhc) and click the Referral Scout toolbar icon. A compact side panel opens first and gives you one clear next step: open the setup dashboard.
-2. **Sign in to LinkedIn** from the dashboard. The sign-in happens on LinkedIn itself; then choose **Read my LinkedIn profile**. Referral Scout never asks for or stores your LinkedIn password. Profile reading works whether usage reporting is enabled or not.
-3. **Add your CV** from **Candidate profile**. Upload a PDF or DOCX. The file and LinkedIn capture remain separate source evidence; neither is copied directly into your candidate profile.
-4. **Ask ChatGPT to reconcile both sources.** Referral Scout uses your existing signed-in ChatGPT website session by default (no API key required). The CV is authoritative when details disagree; conflicts are surfaced in the draft. Review the proposed education, roles, projects and skills, then explicitly approve before suggestions are added to your profile.
-5. **Set your search goal** in the guided setup: target role, location and employment type. Create your campaign when you're ready. The role and location are also synced to the side-panel referral workflow.
-6. **Connect optional services** only when useful. Open ChatGPT and sign in for browser-based AI assistance; connect Gmail only if you want email drafts and reply tracking. An OpenAI API key is an optional alternative to the ChatGPT website.
-7. **Work from the dashboard.** Review jobs, applications, referrals, people and activity there. The side panel remains available as a quick control surface beside LinkedIn.
+---
 
-### First-run privacy choice
+## End-to-End User Flow
 
-Usage counting is optional and off by default. It is not required to read your profile, create a campaign or use core features. If enabled, one usage report sends a random install ID, your display name and LinkedIn profile handle to the developer. It does not include your CV, jobs, contacts or messages. Change this choice at any time in **Settings → Privacy and usage reporting**.
-
-### Applying for a job
-
-Open any job on LinkedIn or on a company's careers site and press **Fill this application** in the panel. Referral Scout fills every step, adds entries such as your education and work history, and attaches your CV. It asks you only what it can't know, such as salary or notice period, and remembers the answer. When you have submitted, it can start looking for people at that company who can refer you.
-
-It never types passwords or answers diversity questions for you. With the default review policy, it leaves the final Submit action to you; automatic submission is a separate campaign setting that you must explicitly choose.
-
-## Your account stays safe
-
-LinkedIn does not allow automated activity, so Referral Scout works slowly, the way a careful person would. Use it at your own risk.
-
-| | Default |
-|---|---|
-| Invitations | 30 a day, 80 a week |
-| Pause between sends | 30 seconds or more, never a fixed rhythm |
-| People per company | 3 |
-| Approval | Every message waits for you by default (automatic sending is optional) |
-
-**Pause everything** stops all activity at once. If LinkedIn signs you out or shows a security check, Referral Scout pauses and tells you why.
-
-## Your data
-
-- Candidate profile, CV, jobs, contacts, messages and application records are stored locally in your browser.
-- AI-assisted tasks send the relevant context to your own signed-in ChatGPT session, or to OpenAI if you configure an API key. API usage is billed by OpenAI.
-- Usage counting is a separate opt-in. The report contains only a random install ID, display name and LinkedIn profile handle; it excludes CV, jobs, contacts and messages.
-- **Settings → Export a backup** downloads a local copy. OpenAI API keys are deliberately excluded from exports.
-
-Full privacy policy: https://referral-scout.vercel.app/privacy
-
-## If something goes wrong
-
-| What you see | What to do |
-|---|---|
-| ChatGPT is not responding | Sign in at chatgpt.com in the same browser, then press **Test ChatGPT** in Settings. |
-| Buttons are missing on LinkedIn | Refresh the LinkedIn tab after installing or updating. |
-| Nothing seems to happen | Open **Activity**: the newest line says what Referral Scout is waiting for. |
-| A page is read wrongly | Open the page and press **Check this LinkedIn page** in Activity. |
-
-## For developers
-
-TypeScript, Manifest V3, Vite, Zod and Vitest. With Node.js 22+:
-
-```bash
-corepack pnpm install --frozen-lockfile
-corepack pnpm build    # outputs dist/ (load it in edge://extensions with "Load unpacked")
-corepack pnpm check    # formatting, tests, types and build
+```mermaid
+flowchart LR
+  S1["1. Connect LinkedIn & Upload CV<br/>(Local PDF/DOCX + /in/me)"] --> S2["2. Guided AI Profile Review<br/>(Before/After diffs + Fast-Path Save)"]
+  S2 --> S3["3. Answer Bank & Campaign Goal<br/>(Tier-1 Presets + Student Smart-Defaults)"]
+  S3 --> S4["4. Discover & Rank Jobs<br/>(LinkedIn Search + CV Fit Scoring)"]
+  S4 --> S5A["5a. Application Queue<br/>(Easy Apply & 27+ ATS Forms)"]
+  S4 --> S5B["5b. Company Ranking & Referrals<br/>(Pin Boost + Weekly Budget Allocator)"]
+  S5A -->|"Unknown field, login, CAPTCHA or review"| NY["Needs You Inbox & HUD Jump<br/>(Answer once -> Saved to Answer Bank)"]
+  NY -->|"Self-healing resume"| S5A
+  S5B -->|"Approval queue + Gmail drafts"| OUT["Tracked Replies & Outcomes"]
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md) and [SECURITY.md](SECURITY.md).
+---
+
+## Extension Architecture
+
+```mermaid
+flowchart TB
+  subgraph Browser_UI["Extension Surfaces (MV3 CSP strict)"]
+    WB["Workbench Dashboard<br/>(workbench.html / workbench.js)<br/>Launchpad, Jobs, Needs You, Referrals, Answers, Profile"]
+    SP["Side Panel<br/>(sidepanel.html / sidepanel.js)<br/>Quick Fill, Live Referrals & Compact HUD"]
+    HUD["Shared 6-Stage HUD Store<br/>(chrome.storage.local + events)"]
+  end
+
+  subgraph SW["Background Service Worker (service-worker.js)"]
+    WK["workspace.ts & profileStorage.ts<br/>Profile, CV, Facts & Read-Back Sync"]
+    CM["campaign.ts & runner.ts<br/>Lease-Backed Queue & Exceptions"]
+    NW["network.ts & bridge.ts<br/>LinkedIn Discovery, Outreach & Sync"]
+    SEC["security.ts<br/>Sender Validation & Consent Gates"]
+  end
+
+  subgraph Pages["Host Web Pages (User-Initiated & Session-Scoped)"]
+    LI["linkedin.com<br/>(health.js + remember.ts Shadow HUD)"]
+    GPT["chatgpt.com<br/>(DOM AI Automation)"]
+    GM["mail.google.com<br/>(Draft & Reply Checks)"]
+    ATS["External ATS Portals<br/>(apply.js via runtime optional_host_permissions)"]
+  end
+
+  subgraph LocalDB["Local-First Storage"]
+    IDB["IndexedDB<br/>(profiles, jobs, companies, applications, exceptions, facts, contacts, events)"]
+    CS["chrome.storage.local<br/>(rs_live_progress_v1, rs_profile_snapshot_v1, settings)"]
+  end
+
+  WB <-->|"chrome.runtime.sendMessage (trustedExtension)"| SW
+  SP <-->|"chrome.runtime.sendMessage (trustedExtension)"| SW
+  WB <--> HUD
+  SP <--> HUD
+  SW <--> IDB
+  SW <--> CS
+  SW <-->|"tabs / scripting"| Pages
+```
+
+---
+
+## Quick Start & Installation
+
+### Option A — Microsoft Edge Add-ons / Unpacked Store ZIP
+- **Microsoft Edge Add-ons:** [Install Referral Scout](https://microsoftedge.microsoft.com/addons/detail/referral-scout-jobs-and-/lhfibhgokebhefdagadklckepkbbljhc)
+- **Quick Local Install Scripts (v0.58.2):**
+  - **Windows (PowerShell):** `powershell -ExecutionPolicy Bypass -File install/install-windows.ps1`
+  - **macOS (Bash):** `bash install/install-mac.sh`
+
+### Option B — Build Unpacked from Source (`Chrome` & `Edge`)
+Requires **Node.js 22+** (Node 24 recommended) and **pnpm 11.25.0**:
+
+```bash
+corepack pnpm install --frozen-lockfile --ignore-scripts
+corepack pnpm build    # builds dist/ and runs MV3 manifest, CSP, icon & asset checks
+```
+
+Then load [`dist/`](dist/) in `chrome://extensions` or `edge://extensions` with **Developer mode** enabled → **Load unpacked**.
+
+---
+
+## Verification & Packaging
+
+```bash
+pnpm format:check   # Prettier check (src, tests, scripts)
+pnpm typecheck      # Strict TypeScript check (tsc --noEmit)
+pnpm test           # Vitest suite (43 test files, 713 tests)
+pnpm check          # Full CI gate: format + vitest + tsc + vite builds + scripts/check-build.mjs
+pnpm package        # Builds & verifies referral-scout.zip with SHA-256 summary
+```
+
+---
+
+## Privacy, Safety & Data Control
+
+- **100% Local-First Storage:** Profiles, CVs, job listings, Answer Bank facts, contacts, and logs reside in local IndexedDB / `chrome.storage.local` on your device.
+- **No Credential Storage:** Referral Scout never collects passwords, cookies, or Gmail OAuth refresh tokens; it operates inside your own active browser sessions.
+- **Opt-In Usage Counting Only:** Disabled by default. When explicitly enabled in Settings, sends only a random install ID, display name, and LinkedIn handle to `https://referral-scout.vercel.app/api/ping`—never CVs, jobs, emails, contacts, or messages.
+- **Instant User Controls:** Pause/drain queues, export JSON backups (API keys excluded), or wipe all local state cleanly via **Settings → Delete everything**.
+
+See [PRIVACY POLICY](docs/privacy.md), [SECURITY.md](SECURITY.md), [CONTRIBUTING.md](CONTRIBUTING.md), and [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-All rights reserved. Please ask before reusing or redistributing the code.
+All rights reserved. Contact the maintainer before reusing or redistributing source code.

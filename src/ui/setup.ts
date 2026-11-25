@@ -24,7 +24,14 @@ export function welcome(s?: NetworkState): HTMLElement {
   hero.append(
     node('div', 'RS', 'mark'),
     node('p', 'Referral Scout', 'eyebrow'),
-    node('h1', hasProfile && hasTarget ? 'Your workspace is ready.' : hasProfile || hasTarget ? 'Finish setting up your workspace.' : 'Start with your profile.'),
+    node(
+      'h1',
+      hasProfile && hasTarget
+        ? 'Your workspace is ready.'
+        : hasProfile || hasTarget
+          ? 'Finish setting up your workspace.'
+          : 'Start with your profile.',
+    ),
     node(
       'p',
       hasProfile && hasTarget
@@ -37,11 +44,7 @@ export function welcome(s?: NetworkState): HTMLElement {
       'lede',
     ),
     steps,
-    button(
-      'Open setup dashboard',
-      async () => openDashboard('welcome'),
-      'btn primary block',
-    ),
+    button('Open setup dashboard', async () => openDashboard('welcome'), 'btn primary block'),
     button(
       'Open LinkedIn sign-in',
       async () => {
@@ -49,7 +52,11 @@ export function welcome(s?: NetworkState): HTMLElement {
       },
       'btn block',
     ),
-    node('p', 'Profile and CV data stay in this browser. Optional usage counting is off unless you choose to enable it in the dashboard.', 'fine'),
+    node(
+      'p',
+      'Profile and CV data stay in this browser. Optional usage counting is off unless you choose to enable it in the dashboard.',
+      'fine',
+    ),
   );
   return hero;
 }
@@ -98,7 +105,11 @@ export function buildSetup(
   const who = node('section', '', 'card');
   who.append(
     node('h2', 'Campaign targeting', 'card-title'),
-    node('p', 'Target roles and location are managed in the dashboard Campaign screen so job search and referrals stay aligned.', 'card-sub'),
+    node(
+      'p',
+      'Target roles and location are managed in the dashboard Campaign screen so job search and referrals stay aligned.',
+      'card-sub',
+    ),
     node('div', `${settings.roles.join(', ') || s.target || 'No target role saved'} · ${s.location || 'No location saved'}`, 'cell-strong'),
     button('Edit campaign in dashboard', () => openDashboard('setup'), 'btn sm primary'),
     quals.wrap,

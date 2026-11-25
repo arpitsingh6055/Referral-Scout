@@ -10,7 +10,7 @@
 #   or: powershell -ExecutionPolicy Bypass -File install-windows.ps1
 
 $ErrorActionPreference = 'Stop'
-$Version = '0.45.5'
+$Version = '0.58.2'
 $Url = "https://github.com/arpitsingh6055/Referral-Scout/releases/download/v$Version/referral-scout-$Version.zip"
 $Root = Join-Path $env:LOCALAPPDATA 'ReferralScout'
 $Target = Join-Path $Root 'extension'
