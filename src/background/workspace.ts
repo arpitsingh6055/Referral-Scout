@@ -46,8 +46,10 @@ import {
   type DocumentRecord,
   type EducationRecord,
   type EmploymentRecord,
+  type ProfileReviewStatus,
   type ProjectRecord,
   type SkillRecord,
+  type StructuredMissingPrompt,
 } from '../shared/domain/profile';
 import { qualify, rankScore, type CandidateRequirements, type Job } from '../shared/domain/job';
 import type { Contact } from '../shared/domain/outreach';
@@ -66,7 +68,13 @@ import { trustedExtension } from '../validators/security';
 import { clearAllLocalData } from './reset';
 import { publishProgressTask } from '../shared/progress-store';
 import { normalizeChatGptResponse } from '../shared/normalizeChatGptProfile';
-import { saveNormalizedProfileApproval, syncProfileSnapshotToLocalStorage } from './profileStorage';
+import {
+  dismissReviewPrompt,
+  finalizeProfileReview,
+  reopenProfileReview,
+  saveNormalizedProfileApproval,
+  syncProfileSnapshotToLocalStorage,
+} from './profileStorage';
 
 const id = (prefix: string): string => `${prefix}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 7)}`;
 
@@ -180,7 +188,18 @@ export interface WorkspaceView {
   surface: Surface;
   /** Whether there is CV text saved. CV and LinkedIn evidence is only committed after ChatGPT processing and user approval. */
   cv: { hasText: boolean; imported: boolean };
-  aiProfileDraft?: AiProfileDraft;
+  aiProfileDraft?: AiProfileDraft & {
+    identity: AiProfileDraft['identity'] & { formattedLocation?: string };
+    mergeNotes?: string[];
+    structuredMissing?: StructuredMissingPrompt[];
+  };
+  reviewMeta?: {
+    status: ProfileReviewStatus;
+    draftSavedAt?: number;
+    finalizedAt?: number;
+    mergeNotes: string[];
+    pendingPrompts: StructuredMissingPrompt[];
+  };
   /** Optional, opt-in usage reporting preference. */
   usageReporting: boolean;
   /** True when side-panel outreach settings allow invitations to send automatically. */
@@ -331,6 +350,7 @@ export async function workspaceView(): Promise<WorkspaceView> {
         me.projects.some(e => e.provenance.source === 'cv' || e.provenance.source === 'model') ||
         me.skills.some(e => e.provenance.source === 'cv' || e.provenance.source === 'model'),
     },
+    ...(me.review ? { reviewMeta: me.review } : {}),
     usageReporting: network?.usageConsent === true,
     outreachAutomatic: network?.settings?.outreachMode === 'automatic',
     storage: {
@@ -576,6 +596,9 @@ export const workspaceRequest = z.discriminatedUnion('action', [
     skippedEmploymentIndexes: z.array(z.number().int().min(0).max(50)).max(50).optional(),
     skippedEducationIndexes: z.array(z.number().int().min(0).max(50)).max(50).optional(),
   }),
+  z.object({ kind: z.literal('workspace'), action: z.literal('finalizeProfile') }),
+  z.object({ kind: z.literal('workspace'), action: z.literal('reopenProfileReview') }),
+  z.object({ kind: z.literal('workspace'), action: z.literal('dismissReviewPrompt'), promptId: z.string().max(80) }),
   z.object({ kind: z.literal('workspace'), action: z.literal('export') }),
   z.object({ kind: z.literal('workspace'), action: z.literal('clear'), confirm: z.literal(true) }),
 ]);
@@ -842,7 +865,21 @@ async function handle(req: WorkspaceRequest): Promise<WorkspaceResult | { json: 
         ...(req.skippedEmploymentIndexes ? { skippedEmploymentIndexes: req.skippedEmploymentIndexes } : {}),
         ...(req.skippedEducationIndexes ? { skippedEducationIndexes: req.skippedEducationIndexes } : {}),
       });
-      message = `Saved to your Candidate Profile (${added} records added).`;
+      message = `Draft saved (${added} records). Review details or click Finalize Profile when ready.`;
+      break;
+    }
+    case 'finalizeProfile': {
+      await finalizeProfileReview();
+      message = 'Candidate profile finalized and ready for applications.';
+      break;
+    }
+    case 'reopenProfileReview': {
+      await reopenProfileReview();
+      message = 'Profile review re-opened for edits.';
+      break;
+    }
+    case 'dismissReviewPrompt': {
+      await dismissReviewPrompt(req.promptId);
       break;
     }
     case 'export':

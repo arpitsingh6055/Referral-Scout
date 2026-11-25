@@ -130,6 +130,28 @@ export interface CareerNarrative {
   challengeExample?: string;
 }
 
+export type ProfileReviewStatus = 'unreviewed' | 'draft' | 'finalized';
+
+export interface StructuredMissingPrompt {
+  id: string;
+  rawText: string;
+  shortLabel: string;
+  helperQuestion: string;
+  inputPlaceholder: string;
+  targetSection: 'identity' | 'employment' | 'education' | 'projects' | 'facts';
+  factKey?: string;
+  targetHint?: string;
+  suggestedAction: 'inline-fact' | 'edit-section' | 'skip';
+}
+
+export interface ProfileReviewState {
+  status: ProfileReviewStatus;
+  draftSavedAt?: number;
+  finalizedAt?: number;
+  mergeNotes: string[];
+  pendingPrompts: StructuredMissingPrompt[];
+}
+
 export interface CandidateProfile {
   id: string;
   /** Bumped on every edit. An application records the version it filled from, so later edits never rewrite history. */
@@ -154,6 +176,7 @@ export interface CandidateProfile {
   eligibility: ProfileEligibility;
   narrative: CareerNarrative;
   documents: DocumentRecord[];
+  review?: ProfileReviewState;
   createdAt: number;
   updatedAt: number;
 }

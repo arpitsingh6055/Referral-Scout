@@ -14,7 +14,7 @@
 import { allFacts, changeProfile, getProfile, saveFacts } from '../shared/persistence/campaign-store';
 import { factsFromProfileSnapshot } from '../shared/domain/facts';
 import { formatLocation, mergeCandidateIdentity, normalizeChatGptResponse } from '../shared/normalizeChatGptProfile';
-import type { CandidateProfile, EducationRecord, EmploymentRecord, ProjectRecord } from '../shared/domain/profile';
+import type { CandidateProfile, EducationRecord, EmploymentRecord, ProfileReviewStatus, ProjectRecord } from '../shared/domain/profile';
 import { read, write } from '../storage/state';
 import { emptyApplyProfile } from '../shared/apply';
 import { clearProgressTask } from '../shared/progress-store';
@@ -35,6 +35,7 @@ export interface ProfileSnapshot {
   employmentCount: number;
   projectsCount: number;
   skillsCount: number;
+  reviewStatus: ProfileReviewStatus;
   profileVersion: number;
   updatedAt: number;
 }
@@ -76,6 +77,7 @@ export function buildProfileSnapshot(profile: CandidateProfile): ProfileSnapshot
     employmentCount: profile.employment.length,
     projectsCount: profile.projects.length,
     skillsCount: profile.skills.length,
+    reviewStatus: profile.review?.status ?? 'unreviewed',
     profileVersion: profile.profileVersion,
     updatedAt: profile.updatedAt,
   };
@@ -187,6 +189,12 @@ export async function saveNormalizedProfileApproval(rawDraft: unknown, options: 
         ...(p.narrative.strengths?.trim() ? {} : draft.narrative.strengths ? { strengths: draft.narrative.strengths } : {}),
         ...(p.narrative.careerGoal?.trim() ? {} : draft.narrative.careerGoal ? { careerGoal: draft.narrative.careerGoal } : {}),
       },
+      review: {
+        status: 'draft',
+        draftSavedAt: now,
+        mergeNotes: draft.mergeNotes,
+        pendingPrompts: draft.structuredMissing,
+      },
     };
   });
 
@@ -241,4 +249,75 @@ export async function saveNormalizedProfileApproval(rawDraft: unknown, options: 
     profile: persistedProfile,
     snapshot: writtenSnapshot,
   };
+}
+
+/** Promotes draft AI records with user sign-off (`verifiedAt`) and marks the Candidate Profile as finalized. */
+export async function finalizeProfileReview(): Promise<CandidateProfile> {
+  const current = await getProfile();
+  if (!current.identity.fullName?.trim()) throw new Error('Add your Full Name in Identity before finalizing.');
+  if (!current.identity.email?.trim()) throw new Error('Add your Email in Identity before finalizing.');
+
+  const now = Date.now();
+  const verifyProv = <T extends { provenance: { verifiedAt?: number; confidence: number } }>(items: readonly T[]): T[] =>
+    items.map(item => ({
+      ...item,
+      provenance: {
+        ...item.provenance,
+        verifiedAt: item.provenance.verifiedAt ?? now,
+        confidence: Math.max(item.provenance.confidence, 0.9),
+      },
+    }));
+
+  const updated =
+    (await changeProfile(p => ({
+      ...p,
+      education: verifyProv(p.education),
+      employment: verifyProv(p.employment),
+      projects: verifyProv(p.projects),
+      skills: verifyProv(p.skills),
+      review: {
+        status: 'finalized',
+        ...(p.review?.draftSavedAt ? { draftSavedAt: p.review.draftSavedAt } : {}),
+        finalizedAt: now,
+        mergeNotes: p.review?.mergeNotes ?? [],
+        pendingPrompts: [],
+      },
+    }))) ?? (await getProfile());
+  await syncProfileSnapshotToLocalStorage(updated);
+  await clearProgressTask('cv_ai_review');
+  return updated;
+}
+
+/** Re-opens a finalized profile for non-destructive inline review without losing any saved records. */
+export async function reopenProfileReview(): Promise<CandidateProfile> {
+  const updated =
+    (await changeProfile(p => ({
+      ...p,
+      review: {
+        status: 'draft',
+        draftSavedAt: Date.now(),
+        ...(p.review?.finalizedAt ? { finalizedAt: p.review.finalizedAt } : {}),
+        mergeNotes: p.review?.mergeNotes ?? [],
+        pendingPrompts: p.review?.pendingPrompts ?? [],
+      },
+    }))) ?? (await getProfile());
+  await syncProfileSnapshotToLocalStorage(updated);
+  return updated;
+}
+
+/** Persistently dismisses or resolves a single structured gap prompt inside the active review draft. */
+export async function dismissReviewPrompt(promptId: string): Promise<CandidateProfile> {
+  const updated =
+    (await changeProfile(p => {
+      const existing = p.review ?? { status: 'draft' as const, mergeNotes: [], pendingPrompts: [] };
+      return {
+        ...p,
+        review: {
+          ...existing,
+          pendingPrompts: existing.pendingPrompts.filter(item => item.id !== promptId),
+        },
+      };
+    })) ?? (await getProfile());
+  await syncProfileSnapshotToLocalStorage(updated);
+  return updated;
 }

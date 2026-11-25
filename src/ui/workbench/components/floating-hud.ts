@@ -233,6 +233,7 @@ export function computeHudState(input: HudInput): HudState | null {
     cvHasText: w.cv.hasText,
     cvImported: hasProfileRecords,
     hasAiDraft: !!w.aiProfileDraft,
+    profileReviewStatus: w.reviewMeta?.status,
     pendingConflictsCount: w.aiProfileDraft?.conflicts.length ?? 0,
     missingRequiredIdentity,
     hasCampaign: !!view.campaign,

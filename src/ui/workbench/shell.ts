@@ -168,6 +168,10 @@ function rail(ctx: Ctx): { aside: HTMLElement; backdrop: HTMLElement } {
     if (current === item.route) b.setAttribute('aria-current', 'page');
     if (item.route === 'needs-you' && ctx.view.inboxCounts.open)
       b.append(el('span', { class: 'nav-badge' }, [String(ctx.view.inboxCounts.open)]));
+    if (item.route === 'profile' && ctx.workspace?.reviewMeta?.status === 'draft')
+      b.append(el('span', { class: 'nav-badge nav-badge-draft' }, ['Draft']));
+    else if (item.route === 'profile' && ctx.workspace?.reviewMeta?.status === 'finalized')
+      b.append(el('span', { class: 'nav-badge nav-badge-ready', 'aria-label': 'Finalized profile' }, ['✓']));
     nav.append(b);
   }
 

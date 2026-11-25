@@ -256,6 +256,7 @@ export interface JourneySnapshotInput {
   cvHasText: boolean;
   cvImported: boolean;
   hasAiDraft: boolean;
+  profileReviewStatus?: 'unreviewed' | 'draft' | 'finalized' | undefined;
   pendingConflictsCount: number;
   missingRequiredIdentity: 'fullName' | 'email' | null;
   hasCampaign: boolean;
@@ -381,6 +382,21 @@ export function resolveMacroJourney(input: JourneySnapshotInput): JourneyStepSta
       ctaLabel: `Add ${label} →`,
       targetRoute: 'profile',
       targetSelector: '[data-hud-target="identity"]',
+    };
+  }
+
+  // Resumable AI Profile Draft awaiting explicit user sign-off
+  if (input.profileReviewStatus === 'draft') {
+    return {
+      stage: 2,
+      totalStages: 6,
+      mode: 'completion',
+      percent: 54,
+      title: 'Profile Draft • Review & Finalize',
+      detail: 'Inspect extracted roles, degrees & skills, then click Finalize Profile ✓',
+      ctaLabel: input.route === 'profile' ? 'Finalize Below ↓' : 'Continue Review →',
+      targetRoute: 'profile',
+      targetSelector: '[data-hud-target="cv-review"]',
     };
   }
 

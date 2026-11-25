@@ -693,10 +693,31 @@ export function profile(ctx: Ctx): HTMLElement {
   return page;
 }
 
-export const profileHeader = (ctx: Ctx): { title: string; sub: string; actions: HTMLElement[] } => ({
-  title: 'Candidate profile',
-  sub: 'Review the information Referral Scout uses before it matches jobs or prepares applications.',
-  actions: [button('Answer Bank', 'btn', () => ctx.go('answers'))],
-});
+export const profileHeader = (ctx: Ctx): { title: string; sub: string; status?: HTMLElement; actions: HTMLElement[] } => {
+  const reviewStatus = ctx.workspace?.reviewMeta?.status;
+  const actions: HTMLElement[] = [];
+  if (reviewStatus === 'draft') {
+    actions.push(button('Finalize Profile ✓', 'btn btn-primary', () => ctx.run({ kind: 'workspace', action: 'finalizeProfile' })));
+  } else if (reviewStatus === 'finalized') {
+    actions.push(button('Re-open AI Review / Edit', 'btn', () => ctx.run({ kind: 'workspace', action: 'reopenProfileReview' })));
+  }
+  actions.push(button('Answer Bank', 'btn', () => ctx.go('answers')));
+
+  return {
+    title: 'Candidate profile',
+    sub:
+      reviewStatus === 'draft'
+        ? 'Draft in progress — inspect your extracted roles, degrees and skills below, then click Finalize Profile ✓.'
+        : reviewStatus === 'finalized'
+          ? 'Finalized & ready for matching and autofill. You can re-open review or edit records anytime.'
+          : 'Review the information Referral Scout uses before it matches jobs or prepares applications.',
+    ...(reviewStatus === 'draft'
+      ? { status: pill('Draft — Needs Final Sign-Off', 'amber') }
+      : reviewStatus === 'finalized'
+        ? { status: pill('Finalized & Ready ✓', 'green') }
+        : {}),
+    actions,
+  };
+};
 
 export const describeRecords = (n: number): string => plural(n, 'record');
