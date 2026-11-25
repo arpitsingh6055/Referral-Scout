@@ -348,12 +348,28 @@ it('renders Delete everything in dashboard Settings and live connection/outreach
   const deleteBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Delete everything');
   expect(deleteBtn).toBeTruthy();
 
-  vi.stubGlobal('confirm', vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true));
   deleteBtn!.click();
-  await new Promise(r => setTimeout(r, 10));
+  const firstDialog = await vi.waitFor(() => {
+    const dlg = document.querySelector('[role="dialog"][aria-modal="true"]');
+    if (!dlg) throw new Error('waiting for first confirm modal');
+    return dlg;
+  });
+  const cancelBtn = [...firstDialog.querySelectorAll('button')].find(b => b.textContent === 'Cancel');
+  cancelBtn!.click();
+  await vi.waitFor(() => {
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(deleteBtn!.disabled).toBe(false);
+  });
   expect(run).not.toHaveBeenCalled();
 
   deleteBtn!.click();
+  const secondDialog = await vi.waitFor(() => {
+    const dlg = document.querySelector('[role="dialog"][aria-modal="true"]');
+    if (!dlg) throw new Error('waiting for second confirm modal');
+    return dlg;
+  });
+  const confirmBtn = secondDialog.querySelector<HTMLButtonElement>('.btn-danger-solid')!;
+  confirmBtn.click();
   await vi.waitFor(() => expect(run).toHaveBeenCalledWith({ kind: 'workspace', action: 'clear', confirm: true }));
 
   document.body.replaceChildren(setup(fakeCtx));

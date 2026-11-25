@@ -7,7 +7,7 @@
  * selection defaults to visible rather than implied.
  */
 
-import { button, card, div, empty, input as makeInput, pill, plural, text } from '../dom';
+import { button, card, div, emptyState, input as makeInput, pill, plural, setFieldError, text } from '../dom';
 import type { Ctx } from '../shell';
 import type { InboxRow } from '../../../background/campaign';
 
@@ -48,6 +48,7 @@ function itemCard(item: InboxRow, ctx: Ctx): HTMLElement {
 
   if (item.resolution === 'answer' || item.resolution === 'choose') {
     const box = makeInput(item.suggestedValue ?? '', { placeholder: 'Your answer', 'aria-label': item.prompt });
+    box.addEventListener('input', () => setFieldError(box));
     const chooser = preview(item);
     const details = document.createElement('details');
     details.append(document.createElement('summary'));
@@ -57,9 +58,12 @@ function itemCard(item: InboxRow, ctx: Ctx): HTMLElement {
     const submitAnswer = async (): Promise<void> => {
       const value = box.value.trim();
       if (!value) {
+        setFieldError(box, 'Enter an answer before saving.');
+        box.focus();
         ctx.fail('Enter an answer before saving.');
         return;
       }
+      setFieldError(box);
       await ctx.run({
         kind: 'campaign',
         action: 'resolve',
@@ -123,7 +127,13 @@ function itemCard(item: InboxRow, ctx: Ctx): HTMLElement {
 
 export function needsYou(ctx: Ctx): HTMLElement {
   const { inbox, inboxCounts, factSections, completeness, campaign } = ctx.view;
-  if (!campaign) return empty('No campaign yet', 'Questions from your applications collect here once a campaign is running.');
+  if (!campaign)
+    return emptyState({
+      icon: 'bell',
+      title: 'No campaign yet',
+      description: 'Questions from your applications collect here once a campaign is running.',
+      action: button('Create a campaign', 'btn btn-primary', () => ctx.go('setup')),
+    });
 
   const inboxCard = card('Needs you inbox', {
     sub: 'Exceptions are isolated; unrelated applications carry on.',
@@ -134,10 +144,11 @@ export function needsYou(ctx: Ctx): HTMLElement {
             '',
             inbox.map(i => itemCard(i, ctx)),
           )
-        : div('empty', [
-            text('div', 'empty-title', 'Nothing is waiting on you'),
-            text('p', '', 'The queue will bring anything it cannot decide for itself here.'),
-          ]),
+        : emptyState({
+            icon: 'check',
+            title: 'Nothing is waiting on you',
+            description: 'The queue will bring anything it cannot decide for itself here.',
+          }),
     ],
   });
 

@@ -7,6 +7,7 @@ import { jobs } from '../src/ui/workbench/screens/jobs';
 import { needsYou } from '../src/ui/workbench/screens/needs-you';
 import { answers } from '../src/ui/workbench/screens/answers';
 import { profile } from '../src/ui/workbench/screens/profile';
+import { confirmModal, field, pageSkeleton, setFieldError } from '../src/ui/workbench/dom';
 
 function makeCtx(overrides: Partial<Ctx> = {}): Ctx {
   const baseProfile = emptyProfile();
@@ -279,4 +280,84 @@ it('withHint points to chatgpt.com instead of legacy menus, and campaign card re
   btn.click();
   await vi.waitFor(() => expect(btn.disabled).toBe(false));
   expect(document.body.textContent).toContain('Background unavailable');
+});
+
+it('design system primitives support skeletons, Esc modal dismissal, inline field errors, and jobs live search', async () => {
+  const sk = pageSkeleton();
+  expect(sk.getAttribute('aria-busy')).toBe('true');
+  expect(sk.querySelectorAll('.skeleton').length).toBeGreaterThanOrEqual(4);
+
+  const input = document.createElement('input');
+  input.className = 'input';
+  const wrapped = field('Target role', input);
+  document.body.replaceChildren(wrapped);
+  setFieldError(input, 'Required field');
+  expect(input.classList.contains('is-invalid')).toBe(true);
+  expect(input.getAttribute('aria-invalid')).toBe('true');
+  expect(wrapped.querySelector('.field-error')?.textContent).toBe('Required field');
+  setFieldError(input);
+  expect(input.classList.contains('is-invalid')).toBe(false);
+  expect(wrapped.querySelector<HTMLElement>('.field-error')?.hidden).toBe(true);
+
+  const modalPromise = confirmModal({
+    title: 'Delete CV',
+    description: 'Remove parsed CV text?',
+    confirmLabel: 'Delete',
+    tone: 'danger',
+  });
+  expect(document.querySelector('[role="dialog"][aria-modal="true"]')).toBeTruthy();
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  expect(await modalPromise).toBe(false);
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+  const ctx = makeCtx();
+  ctx.workspace!.jobs = [
+    {
+      id: 'job:1',
+      url: 'https://www.linkedin.com/jobs/view/1/',
+      company: 'Acme',
+      title: 'PM Intern',
+      location: 'India',
+      source: 'LinkedIn Jobs',
+      applyType: 'easy-apply',
+      fit: 88,
+      fitAssessed: true,
+      tier: 'strong',
+      eligibility: 'eligible',
+      freshness: 'fresh',
+      evidence: [],
+      checks: [],
+      rejectionReasons: [],
+      preferenceNotes: [],
+      judgement: 'shortlisted',
+      rank: 88,
+    },
+    {
+      id: 'job:2',
+      url: 'https://www.linkedin.com/jobs/view/2/',
+      company: 'Beta',
+      title: 'Design Fellow',
+      location: 'India',
+      source: 'LinkedIn Jobs',
+      applyType: 'easy-apply',
+      fit: 79,
+      fitAssessed: true,
+      tier: 'strong',
+      eligibility: 'eligible',
+      freshness: 'fresh',
+      evidence: [],
+      checks: [],
+      rejectionReasons: [],
+      preferenceNotes: [],
+      judgement: 'shortlisted',
+      rank: 79,
+    },
+  ];
+  document.body.replaceChildren(jobs(ctx));
+  const search = document.querySelector<HTMLInputElement>('input[type="search"]')!;
+  search.value = 'Beta';
+  search.dispatchEvent(new Event('input', { bubbles: true }));
+  const rowsText = document.querySelector('.rows')?.textContent ?? '';
+  expect(rowsText).toContain('Design Fellow');
+  expect(rowsText).not.toContain('PM Intern');
 });

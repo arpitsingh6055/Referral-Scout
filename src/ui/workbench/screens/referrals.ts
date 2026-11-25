@@ -7,7 +7,7 @@
  */
 
 import { allocate, summarise, type Allocation, type ContactCandidate } from '../../../shared/scoring/allocator';
-import { button, card, div, el, empty, metric, pill, plural, text } from '../dom';
+import { button, card, div, emptyState, metric, pill, plural, text } from '../dom';
 import type { Ctx } from '../shell';
 
 const RELATIONSHIP: Record<string, ContactCandidate['relationship']> = {
@@ -56,7 +56,13 @@ function candidates(ctx: Ctx): ContactCandidate[] {
 
 export function referrals(ctx: Ctx, override?: ContactCandidate[]): HTMLElement {
   const { campaign } = ctx.view;
-  if (!campaign) return empty('No campaign yet', 'Referral contacts are found per company once a campaign is running.');
+  if (!campaign)
+    return emptyState({
+      icon: 'target',
+      title: 'No campaign yet',
+      description: 'Referral contacts are found per company once a campaign is running.',
+      action: button('Create a campaign', 'btn btn-primary', () => ctx.go('setup')),
+    });
   const contacts = override ?? candidates(ctx);
 
   const rules = campaign.referral;
@@ -91,7 +97,10 @@ export function referrals(ctx: Ctx, override?: ContactCandidate[]): HTMLElement 
         text('div', 'cell-muted', why),
       ]),
       div('col-hide', [pill(a.priority, a.priority === 'P1' ? 'green' : a.priority === 'P2' ? 'amber' : 'grey')]),
-      div('', [text('div', 'cell-strong', `${a.score}/100`), text('div', 'cell-muted clamp', a.reason)]),
+      div('', [
+        text('div', 'cell-strong', `${a.score}/100`),
+        Object.assign(text('div', 'cell-muted clamp', a.reason), { title: a.reason }),
+      ]),
       div('col-hide', [
         pill(
           a.contact.channel === 'email-verified'
@@ -111,16 +120,13 @@ export function referrals(ctx: Ctx, override?: ContactCandidate[]): HTMLElement 
     body: [
       allocations.length
         ? div('rows', allocations.map(row))
-        : div('empty', [
-            text('div', 'empty-title', 'No contacts ranked yet'),
-            text(
-              'p',
-              '',
+        : emptyState({
+            icon: 'people',
+            title: 'No contacts ranked yet',
+            description:
               'Find people for a company from the side panel, and everyone found appears here ranked against one shared weekly budget.',
-            ),
-            el('div', { style: 'height:12px' }),
-            button('Open the side panel', 'btn btn-primary', () => ctx.openPanel()),
-          ]),
+            action: button('Open the side panel', 'btn btn-primary', () => ctx.openPanel()),
+          }),
     ],
   });
 

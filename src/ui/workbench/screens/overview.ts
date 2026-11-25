@@ -6,7 +6,7 @@
  * about outreach and a single bar would imply one is waiting for the other.
  */
 
-import { ago, button, card, div, empty, icon, metric, pill, plural, progress, text } from '../dom';
+import { ago, button, card, div, emptyState, icon, metric, pill, plural, progress, text } from '../dom';
 import type { Ctx } from '../shell';
 
 const statusPill = (status: string, needsYou: number): HTMLElement =>
@@ -25,26 +25,31 @@ const statusPill = (status: string, needsYou: number): HTMLElement =>
 export function overview(ctx: Ctx): HTMLElement {
   const { campaign, counts, inbox, inboxCounts, queue, stages, events, peopleIdentified } = ctx.view;
   if (!campaign)
-    return empty(
-      'Set your target role once',
-      'Referral Scout will find the jobs, work through the applications and line up the people who can refer you.',
-      button('Create a campaign', 'btn btn-primary', () => ctx.go('setup')),
-    );
+    return emptyState({
+      icon: 'target',
+      title: 'Set your target role once',
+      description: 'Referral Scout will find the jobs, work through the applications and line up the people who can refer you.',
+      action: button('Create a campaign', 'btn btn-primary btn-lg', () => ctx.go('setup')),
+    });
 
   const page = div('stack');
   const discovery = ctx.workspace?.jobSearch;
   if (discovery?.status === 'finding') {
-    page.append(card('Job discovery is running', {
-      sub: discovery.ranking
-        ? `Reviewing ${discovery.ranking.done} of ${discovery.ranking.total} job descriptions against your profile.`
-        : `Found ${discovery.found} jobs so far; checked ${discovery.cursor} of ${discovery.totalTerms || 'several'} related search titles.`,
-      body: [button('View live search progress', 'btn btn-primary', () => ctx.go('jobs'))],
-    }));
+    page.append(
+      card('Job discovery is running', {
+        sub: discovery.ranking
+          ? `Reviewing ${discovery.ranking.done} of ${discovery.ranking.total} job descriptions against your profile.`
+          : `Found ${discovery.found} jobs so far; checked ${discovery.cursor} of ${discovery.totalTerms || 'several'} related search titles.`,
+        body: [button('View live search progress', 'btn btn-primary', () => ctx.go('jobs'))],
+      }),
+    );
   } else if (discovery?.status === 'choosing') {
-    page.append(card('Your jobs are ready to review', {
-      sub: `${discovery.found} results are ready. Review the match reasoning and choose which roles to pursue.`,
-      body: [button('Review discovered jobs', 'btn btn-primary', () => ctx.go('jobs'))],
-    }));
+    page.append(
+      card('Your jobs are ready to review', {
+        sub: `${discovery.found} results are ready. Review the match reasoning and choose which roles to pursue.`,
+        body: [button('Review discovered jobs', 'btn btn-primary', () => ctx.go('jobs'))],
+      }),
+    );
   }
 
   page.append(
@@ -107,8 +112,10 @@ export function overview(ctx: Ctx): HTMLElement {
                 div('row row-compact row-clickable', [
                   div('row-title', [
                     text('div', 'row-company', row.company),
-                    text('div', 'cell-strong', row.title),
-                    text('div', 'cell-muted', `${row.stateLabel}${row.note ? ` · ${row.note}` : ''}`),
+                    Object.assign(text('div', 'cell-strong', row.title), { title: row.title }),
+                    Object.assign(text('div', 'cell-muted', `${row.stateLabel}${row.note ? ` · ${row.note}` : ''}`), {
+                      title: `${row.stateLabel}${row.note ? ` · ${row.note}` : ''}`,
+                    }),
                   ]),
                   progress(
                     row.percent,
@@ -120,7 +127,11 @@ export function overview(ctx: Ctx): HTMLElement {
               ),
             ),
           )
-        : text('p', 'cell-muted', 'No applications are queued yet. Find jobs, review the matches and shortlist the roles you want to pursue.'),
+        : text(
+            'p',
+            'cell-muted',
+            'No applications are queued yet. Find jobs, review the matches and shortlist the roles you want to pursue.',
+          ),
     ],
   });
 
@@ -137,7 +148,7 @@ export function overview(ctx: Ctx): HTMLElement {
                 interactiveRow(
                   div('row row-compact row-clickable', [
                     div('row-title', [
-                      text('div', 'cell-strong clamp', item.prompt),
+                      Object.assign(text('div', 'cell-strong clamp', item.prompt), { title: item.prompt }),
                       text('div', 'cell-muted', `${item.kindLabel} · ${plural(item.affected.length, 'application')}`),
                     ]),
                     pill(item.kindLabel, item.kind === 'submission-uncertain' ? 'red' : item.kind === 'written-review' ? 'blue' : 'amber'),

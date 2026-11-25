@@ -6,7 +6,7 @@
  * the queue actually runs into it. So this screen asks for the goal and the rules, and nothing else.
  */
 
-import { button, card, div, field, input, pill, select, text } from '../dom';
+import { button, card, div, field, input, pill, select, setFieldError, text } from '../dom';
 import { send, sendNetwork, sendWorkspace } from '../api';
 import { defaultSettings } from '../../../shared/network';
 import type { Ctx } from '../shell';
@@ -18,6 +18,8 @@ export function setup(ctx: Ctx): HTMLElement {
   const name = input(c?.name ?? '', { placeholder: 'Product internship search' });
   const roles = input(c?.targetRoles.join(', ') ?? '', { placeholder: 'Product Management Intern, Business Analyst' });
   const location = input(c?.location ?? '', { placeholder: 'India' });
+  roles.addEventListener('input', () => setFieldError(roles));
+  location.addEventListener('input', () => setFieldError(location));
   const employment = select(
     [
       { value: 'internship', label: 'Internship' },
@@ -47,12 +49,22 @@ export function setup(ctx: Ctx): HTMLElement {
     String(c?.application.concurrency ?? 1),
   );
 
-  const save = button(existing ? 'Save campaign' : 'Create campaign', 'btn btn-primary', async () => {
+  const save = button(existing ? 'Save campaign' : 'Create campaign', 'btn btn-primary btn-lg', async () => {
     const targetRoles = roles.value
       .split(/[\n;,]+/)
       .map(r => r.trim())
       .filter(Boolean);
-    if (!targetRoles.length || !location.value.trim()) {
+    setFieldError(roles);
+    setFieldError(location);
+    if (!targetRoles.length) {
+      setFieldError(roles, 'Enter at least one target role.');
+      roles.focus();
+      ctx.fail('Give at least one target role and a location.');
+      return;
+    }
+    if (!location.value.trim()) {
+      setFieldError(location, 'Enter a location or “Remote”.');
+      location.focus();
       ctx.fail('Give at least one target role and a location.');
       return;
     }
@@ -80,12 +92,8 @@ export function setup(ctx: Ctx): HTMLElement {
       } catch {
         warnings.push('The campaign target was saved, but its automation rules were not. Reopen Campaign settings to check them.');
       }
-      const preferredEmployment = employment.value === 'any'
-        ? ['internship', 'full-time', 'part-time', 'contract']
-        : [employment.value];
-      const legacyEmployment = employment.value === 'internship' || employment.value === 'full-time'
-        ? employment.value
-        : 'any';
+      const preferredEmployment = employment.value === 'any' ? ['internship', 'full-time', 'part-time', 'contract'] : [employment.value];
+      const legacyEmployment = employment.value === 'internship' || employment.value === 'full-time' ? employment.value : 'any';
       try {
         await sendWorkspace({
           kind: 'workspace',
@@ -116,7 +124,11 @@ export function setup(ctx: Ctx): HTMLElement {
       }
       await ctx.refresh();
       ctx.go('overview');
-      ctx.inform(warnings.length ? `Campaign saved with follow-up needed: ${warnings.join(' ')}` : 'Campaign settings saved across the job and referral workflows.');
+      ctx.inform(
+        warnings.length
+          ? `Campaign saved with follow-up needed: ${warnings.join(' ')}`
+          : 'Campaign settings saved across the job and referral workflows.',
+      );
     } catch (error) {
       ctx.fail(error instanceof Error ? error.message : 'The campaign could not be saved. Please try again.');
     }

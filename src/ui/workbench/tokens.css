@@ -1,67 +1,123 @@
 /*
- * Referral Scout design tokens (specification 16.1).
+ * Referral Scout Design System Tokens
  *
- * A deep navy rail anchors the page, a pale lavender canvas keeps a dense workflow screen from reading like an
- * admin console, one violet carries actions and one green marks work that is genuinely finished.
- *
- * Green is the rule that matters most. It means confirmed — a submission the site or the person verified — and
- * nothing else. An application that is merely in progress must never wear it, because the entire product rests on
- * the person being able to trust that difference at a glance.
+ * Semantic surface hierarchy, WCAG AA+ contrast in both Light and Dark themes, strict 4px/8px spacing,
+ * uniform control heights (32px / 36px / 40px), and hairline borders with elevation reserved for floating layers.
+ * Green is reserved exclusively for confirmed outcomes.
  */
 
 :root {
-  --navy: #151b35;
-  --navy-soft: #1d2542;
-  --navy-line: #2b3458;
+  /* Semantic surfaces */
+  --bg-canvas: #f6f7fb;
+  --bg-surface: #ffffff;
+  --bg-elevated: #eff1f7;
+  --bg-subtle: #f9fafc;
+  --bg-overlay: rgb(15 23 42 / 48%);
 
-  --violet: #6547f5;
-  --violet-hi: #8066ff;
-  --violet-tint: #f0edff;
+  /* Navigation rail */
+  --rail-bg: #0f1526;
+  --rail-surface: #182038;
+  --rail-border: #273152;
+  --rail-text: #eef1f8;
+  --rail-muted: #9aa5c4;
 
-  --canvas: #f5f4ff;
-  --card: #ffffff;
+  /* Borders */
+  --border-subtle: #e4e7f0;
+  --border-strong: #c8cfdf;
 
-  --green: #159b69;
-  --green-tint: #e4f5ee;
-  --amber: #cb851b;
-  --amber-tint: #fcf3e4;
-  --red: #c94d5a;
-  --red-tint: #fbedef;
-  --blue: #3b6fd4;
-  --blue-tint: #eaf1fe;
+  /* Typography colors */
+  --text-primary: #111827;
+  --text-secondary: #374151;
+  --text-muted: #5b6478;
 
-  --ink: #151b35;
-  --muted: #65718a;
-  --border: #e2e6f0;
+  /* Semantic accents & status */
+  --accent-primary: #5e43f3;
+  --accent-hover: #4e35db;
+  --accent-tint: #eeebff;
 
-  --radius: 14px;
-  --radius-sm: 10px;
-  --radius-pill: 999px;
+  --success: #0f8a5f;
+  --success-tint: #e7f7f0;
+  --warning: #b45309;
+  --warning-tint: #fef5e7;
+  --destructive: #c8323e;
+  --destructive-hover: #b02430;
+  --destructive-tint: #fdf0f1;
+  --info: #2563eb;
+  --info-tint: #eff6ff;
 
-  --shadow: 0 1px 2px rgb(21 27 53 / 4%), 0 4px 12px rgb(21 27 53 / 4%);
-  --shadow-lift: 0 2px 6px rgb(21 27 53 / 6%), 0 12px 28px rgb(21 27 53 / 8%);
+  /* Elevation: crisp hairline surfaces by default, shadows reserved for floating layers */
+  --shadow-xs: 0 1px 2px rgb(15 23 42 / 4%);
+  --shadow-float: 0 12px 32px -8px rgb(15 23 42 / 18%), 0 2px 6px rgb(15 23 42 / 6%);
 
-  /* An 8px rhythm throughout; every margin and pad below is a multiple of it. */
-  --s1: 4px;
-  --s2: 8px;
-  --s3: 12px;
-  --s4: 16px;
-  --s5: 20px;
-  --s6: 24px;
-  --s8: 32px;
-  --rail: 264px;
+  /* Typography */
+  --font-sans: 'Inter', 'Aptos', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+  --text-3xl: 28px;
 
-  --font: 'Inter', 'Aptos', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  /* 4px / 8px spatial rhythm */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --rail-w: 256px;
+
+  /* Radii & standardized control heights */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-pill: 9999px;
+  --ctrl-sm: 32px;
+  --ctrl-md: 36px;
+  --ctrl-lg: 40px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur: 150ms;
+
+  /* Compatibility aliases */
+  --navy: var(--rail-bg);
+  --navy-soft: var(--rail-surface);
+  --navy-line: var(--rail-border);
+  --violet: var(--accent-primary);
+  --violet-hi: var(--accent-hover);
+  --violet-tint: var(--accent-tint);
+  --canvas: var(--bg-canvas);
+  --card: var(--bg-surface);
+  --green: var(--success);
+  --green-tint: var(--success-tint);
+  --amber: var(--warning);
+  --amber-tint: var(--warning-tint);
+  --red: var(--destructive);
+  --red-tint: var(--destructive-tint);
+  --blue: var(--info);
+  --blue-tint: var(--info-tint);
+  --ink: var(--text-primary);
+  --muted: var(--text-muted);
+  --border: var(--border-subtle);
+  --radius: var(--radius-lg);
+  --shadow: var(--shadow-xs);
+  --shadow-lift: var(--shadow-float);
+  --s1: var(--sp-1);
+  --s2: var(--sp-2);
+  --s3: var(--sp-3);
+  --s4: var(--sp-4);
+  --s5: var(--sp-5);
+  --s6: var(--sp-6);
+  --s8: var(--sp-8);
+  --rail: var(--rail-w);
+  --font: var(--font-sans);
 }
 
-/*
- * Dark theme.
- *
- * Not the light palette inverted: a dashboard someone leaves open all evening needs its surfaces dark and its
- * accents pulled back, or the violet and green vibrate against the background. The status colours are lifted in
- * lightness so they still pass contrast on a dark card, and the canvas stays a touch bluer than the cards so the
- * same depth order reads in both themes.
- */
 :root[data-theme='dark'],
 :root[data-theme='system'] {
   color-scheme: dark;
@@ -69,69 +125,86 @@
 
 @media (prefers-color-scheme: dark) {
   :root[data-theme='system'] {
-    --navy: #0e1322;
-    --navy-soft: #161d30;
-    --navy-line: #27304a;
+    --bg-canvas: #090b10;
+    --bg-surface: #111520;
+    --bg-elevated: #181e2e;
+    --bg-subtle: #141926;
+    --bg-overlay: rgb(0 0 0 / 68%);
 
-    --violet: #8b73ff;
-    --violet-hi: #a593ff;
-    --violet-tint: #221f3d;
+    --rail-bg: #07090e;
+    --rail-surface: #111625;
+    --rail-border: #20283e;
+    --rail-text: #eef1f8;
+    --rail-muted: #8b96b5;
 
-    --canvas: #0b0f1a;
-    --card: #141a2a;
+    --border-subtle: #22293d;
+    --border-strong: #343e59;
 
-    --green: #35c48c;
-    --green-tint: #112a22;
-    --amber: #e3a33c;
-    --amber-tint: #2c2113;
-    --red: #e8737f;
-    --red-tint: #2e171b;
-    --blue: #6a9bf0;
-    --blue-tint: #15203a;
+    --text-primary: #eef1f8;
+    --text-secondary: #c5cde0;
+    --text-muted: #8b96b0;
 
-    --ink: #e8ebf4;
-    --muted: #94a0ba;
-    --border: #26304a;
+    --accent-primary: #7c66ff;
+    --accent-hover: #9380ff;
+    --accent-tint: rgb(124 102 255 / 16%);
 
-    --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 4px 12px rgb(0 0 0 / 24%);
-    --shadow-lift: 0 2px 6px rgb(0 0 0 / 36%), 0 12px 28px rgb(0 0 0 / 40%);
+    --success: #34d399;
+    --success-tint: rgb(52 211 153 / 14%);
+    --warning: #fbbf24;
+    --warning-tint: rgb(251 191 36 / 14%);
+    --destructive: #f87171;
+    --destructive-hover: #ef4444;
+    --destructive-tint: rgb(248 113 113 / 16%);
+    --info: #60a5fa;
+    --info-tint: rgb(96 165 250 / 15%);
+
+    --shadow-xs: 0 1px 2px rgb(0 0 0 / 32%);
+    --shadow-float: 0 16px 40px rgb(0 0 0 / 55%), 0 2px 8px rgb(0 0 0 / 35%);
   }
 }
 
 :root[data-theme='dark'] {
-  --navy: #0e1322;
-  --navy-soft: #161d30;
-  --navy-line: #27304a;
+  --bg-canvas: #090b10;
+  --bg-surface: #111520;
+  --bg-elevated: #181e2e;
+  --bg-subtle: #141926;
+  --bg-overlay: rgb(0 0 0 / 68%);
 
-  --violet: #8b73ff;
-  --violet-hi: #a593ff;
-  --violet-tint: #221f3d;
+  --rail-bg: #07090e;
+  --rail-surface: #111625;
+  --rail-border: #20283e;
+  --rail-text: #eef1f8;
+  --rail-muted: #8b96b5;
 
-  --canvas: #0b0f1a;
-  --card: #141a2a;
+  --border-subtle: #22293d;
+  --border-strong: #343e59;
 
-  --green: #35c48c;
-  --green-tint: #112a22;
-  --amber: #e3a33c;
-  --amber-tint: #2c2113;
-  --red: #e8737f;
-  --red-tint: #2e171b;
-  --blue: #6a9bf0;
-  --blue-tint: #15203a;
+  --text-primary: #eef1f8;
+  --text-secondary: #c5cde0;
+  --text-muted: #8b96b0;
 
-  --ink: #e8ebf4;
-  --muted: #94a0ba;
-  --border: #26304a;
+  --accent-primary: #7c66ff;
+  --accent-hover: #9380ff;
+  --accent-tint: rgb(124 102 255 / 16%);
 
-  --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 4px 12px rgb(0 0 0 / 24%);
-  --shadow-lift: 0 2px 6px rgb(0 0 0 / 36%), 0 12px 28px rgb(0 0 0 / 40%);
+  --success: #34d399;
+  --success-tint: rgb(52 211 153 / 14%);
+  --warning: #fbbf24;
+  --warning-tint: rgb(251 191 36 / 14%);
+  --destructive: #f87171;
+  --destructive-hover: #ef4444;
+  --destructive-tint: rgb(248 113 113 / 16%);
+  --info: #60a5fa;
+  --info-tint: rgb(96 165 250 / 15%);
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 32%);
+  --shadow-float: 0 16px 40px rgb(0 0 0 / 55%), 0 2px 8px rgb(0 0 0 / 35%);
 }
 
 :root[data-theme='light'] {
   color-scheme: light;
 }
 
-/* The person asked their system not to animate. Movement here is informative, never decorative, so it stops. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -156,12 +229,13 @@ body {
 }
 
 body {
-  font-family: var(--font);
-  color: var(--ink);
-  background: var(--canvas);
-  font-size: 14px;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  background: var(--bg-canvas);
+  font-size: var(--text-base);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 h1,
@@ -185,11 +259,10 @@ button {
   cursor: pointer;
 }
 
-/* The queue is operable from the keyboard, so focus has to be visible everywhere it can land. */
 :focus-visible {
-  outline: 2px solid var(--violet);
+  outline: 2px solid var(--accent-primary);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .sr-only {

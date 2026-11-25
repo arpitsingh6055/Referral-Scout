@@ -6,7 +6,7 @@
  * uncertain submission is never retried. Those two promises are the ones that earn the right to run unattended.
  */
 
-import { ago, button, card, div, empty, metric, pill, plural, progress, text } from '../dom';
+import { ago, button, card, div, emptyState, metric, pill, plural, progress, searchBar, text } from '../dom';
 import type { Ctx } from '../shell';
 import type { QueueRow } from '../../../background/campaign';
 
@@ -38,6 +38,7 @@ const TONE: Record<string, 'violet' | 'green' | 'amber' | 'red' | 'grey' | 'blue
 };
 
 let filter: Filter = 'all';
+let query = '';
 
 function rowFor(row: QueueRow, ctx: Ctx): HTMLElement {
   const actions = div('inline', []);
@@ -62,8 +63,8 @@ function rowFor(row: QueueRow, ctx: Ctx): HTMLElement {
   return div('row row-queue', [
     div('row-title', [
       text('div', 'row-company', row.company),
-      text('div', 'cell-strong', row.title),
-      text('div', 'cell-muted', row.note || row.stateLabel),
+      Object.assign(text('div', 'cell-strong', row.title), { title: row.title }),
+      Object.assign(text('div', 'cell-muted', row.note || row.stateLabel), { title: row.note || row.stateLabel }),
     ]),
     div('col-hide', [pill(row.ats || row.source || 'direct', 'grey')]),
     div('', [pill(row.stateLabel, TONE[row.state] ?? 'grey')]),
@@ -78,19 +79,21 @@ function rowFor(row: QueueRow, ctx: Ctx): HTMLElement {
 export function applications(ctx: Ctx): HTMLElement {
   const { counts, queue, campaign, workers } = ctx.view;
   if (!campaign)
-    return empty(
-      'No campaign yet',
-      'Create a campaign and shortlist some jobs; they arrive here as application tasks.',
-      button('Create a campaign', 'btn btn-primary', () => ctx.go('setup')),
-    );
+    return emptyState({
+      icon: 'list',
+      title: 'No campaign yet',
+      description: 'Create a campaign and shortlist some jobs; they arrive here as application tasks.',
+      action: button('Create a campaign', 'btn btn-primary', () => ctx.go('setup')),
+    });
   if (!queue.length) {
     const discoveredCount = ctx.workspace?.jobs.length ?? 0;
-    return empty(
-      'The queue is empty',
-      discoveredCount
+    return emptyState({
+      icon: 'list',
+      title: 'The queue is empty',
+      description: discoveredCount
         ? `You have ${plural(discoveredCount, 'discovered job')} ready to review in Jobs. Shortlist the ones you want, then add them to the queue.`
         : 'Shortlist jobs from the Jobs screen, or paste a job link. Each one becomes a durable task that survives a browser restart.',
-      discoveredCount
+      action: discoveredCount
         ? div('inline', [
             button(`Review ${discoveredCount} discovered ${discoveredCount === 1 ? 'job' : 'jobs'}`, 'btn btn-primary', () =>
               ctx.go('jobs'),
@@ -98,7 +101,7 @@ export function applications(ctx: Ctx): HTMLElement {
             button('Find more jobs', 'btn', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' })),
           ])
         : button('Find jobs on LinkedIn', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' })),
-    );
+    });
   }
 
   const page = div('stack');
@@ -140,18 +143,30 @@ export function applications(ctx: Ctx): HTMLElement {
     tabs.append(b);
   }
 
-  const rows = queue.filter(MATCH[filter]);
+  const rowsHost = div('rows');
+  const drawRows = (): void => {
+    const q = query.trim().toLowerCase();
+    const filtered = queue.filter(MATCH[filter]).filter(r => !q || `${r.company} ${r.title} ${r.ats} ${r.note}`.toLowerCase().includes(q));
+    rowsHost.replaceChildren(
+      ...(filtered.length ? filtered.map(r => rowFor(r, ctx)) : [text('p', 'cell-muted', 'No applications match this view.')]),
+    );
+  };
+  drawRows();
+  const filterBar = div('filter-bar', [
+    tabs,
+    searchBar({
+      placeholder: 'Search company, role, ATS…',
+      value: query,
+      ariaLabel: 'Filter application queue',
+      onInput: val => {
+        query = val;
+        drawRows();
+      },
+    }),
+  ]);
   const queueCard = card('Queue', {
     sub: 'Ordered by fit, freshness and how much work the form takes.',
-    body: [
-      tabs,
-      rows.length
-        ? div(
-            'rows',
-            rows.map(r => rowFor(r, ctx)),
-          )
-        : text('p', 'cell-muted', 'Nothing in this view.'),
-    ],
+    body: [filterBar, rowsHost],
   });
 
   const running = campaign.status === 'running' || campaign.status === 'stopping';

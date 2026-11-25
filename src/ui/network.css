@@ -1,60 +1,98 @@
-/* Referral Scout side panel. One design system, light and dark.
+/* Referral Scout side panel. Unified semantic design system, light and dark synced with Workbench.
    Layout: a sticky top bar, one screen at a time, five destinations in a bottom bar. */
 :root {
   color-scheme: light dark;
-  --bg: #f3f6fb;
-  --surface: #fff;
-  --surface-2: #eef2f8;
-  --border: #e2e7ef;
-  --text: #1a1f29;
-  --muted: #586273;
-  --faint: #8892a2;
-  --primary: #6547f5;
-  --primary-hover: #5034d7;
-  --primary-soft: #f0edff;
-  --on-primary: #fff;
-  --ok: #146c2e;
-  --ok-soft: #e2f4e7;
-  --warn: #8a5300;
-  --warn-soft: #fff1d6;
-  --bad: #b3261e;
-  --bad-soft: #fce8e6;
-  --hero-a: #5034d7;
-  --hero-b: #8066ff;
-  --r: 16px;
-  --r-sm: 12px;
-  --shadow: 0 1px 2px rgba(20, 30, 50, 0.05), 0 1px 3px rgba(20, 30, 50, 0.05);
+  --bg: #f6f7fb;
+  --surface: #ffffff;
+  --surface-2: #eff1f7;
+  --border: #e4e7f0;
+  --border-strong: #c8cfdf;
+  --text: #111827;
+  --muted: #5b6478;
+  --faint: #7b8499;
+  --primary: #5e43f3;
+  --primary-hover: #4e35db;
+  --primary-soft: #eeebff;
+  --on-primary: #ffffff;
+  --ok: #0f8a5f;
+  --ok-soft: #e7f7f0;
+  --warn: #b45309;
+  --warn-soft: #fef5e7;
+  --bad: #c8323e;
+  --bad-soft: #fdf0f1;
+  --hero-a: #4e35db;
+  --hero-b: #7c66ff;
+  --r: 12px;
+  --r-sm: 8px;
+  --shadow: 0 1px 2px rgb(15 23 42 / 4%);
+  --shadow-float: 0 12px 32px -8px rgb(15 23 42 / 20%);
+  --bg-overlay: rgb(15 23 42 / 52%);
   --nav-h: 64px;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur: 150ms;
   font:
-    14px/1.5 system-ui,
+    14px/1.5 'Inter',
+    'Aptos',
     -apple-system,
+    BlinkMacSystemFont,
     'Segoe UI',
-    Roboto,
-    Inter,
+    system-ui,
     sans-serif;
 }
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #090b10;
+  --surface: #111520;
+  --surface-2: #181e2e;
+  --border: #22293d;
+  --border-strong: #343e59;
+  --text: #eef1f8;
+  --muted: #98a3bc;
+  --faint: #758099;
+  --primary: #7c66ff;
+  --primary-hover: #9380ff;
+  --primary-soft: rgb(124 102 255 / 16%);
+  --on-primary: #ffffff;
+  --ok: #34d399;
+  --ok-soft: rgb(52 211 153 / 14%);
+  --warn: #fbbf24;
+  --warn-soft: rgb(251 191 36 / 14%);
+  --bad: #f87171;
+  --bad-soft: rgb(248 113 113 / 16%);
+  --hero-a: #432fb8;
+  --hero-b: #6f59f7;
+  --shadow: 0 1px 2px rgb(0 0 0 / 32%);
+  --shadow-float: 0 16px 40px rgb(0 0 0 / 55%);
+  --bg-overlay: rgb(0 0 0 / 68%);
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0e131b;
-    --surface: #171e29;
-    --surface-2: #202937;
-    --border: #2a3546;
-    --text: #e8edf5;
-    --muted: #a3afc0;
-    --faint: #75839a;
-    --primary: #a593ff;
-    --primary-hover: #c0b4ff;
-    --primary-soft: #221f3d;
-    --on-primary: #1a123b;
-    --ok: #6dd58c;
-    --ok-soft: #14301f;
-    --warn: #f4bf5e;
-    --warn-soft: #352a12;
-    --bad: #f28b82;
-    --bad-soft: #3a2120;
-    --hero-a: #4530a8;
-    --hero-b: #6a51d8;
-    --shadow: none;
+  :root:not([data-theme='light']) {
+    --bg: #090b10;
+    --surface: #111520;
+    --surface-2: #181e2e;
+    --border: #22293d;
+    --border-strong: #343e59;
+    --text: #eef1f8;
+    --muted: #98a3bc;
+    --faint: #758099;
+    --primary: #7c66ff;
+    --primary-hover: #9380ff;
+    --primary-soft: rgb(124 102 255 / 16%);
+    --on-primary: #ffffff;
+    --ok: #34d399;
+    --ok-soft: rgb(52 211 153 / 14%);
+    --warn: #fbbf24;
+    --warn-soft: rgb(251 191 36 / 14%);
+    --bad: #f87171;
+    --bad-soft: rgb(248 113 113 / 16%);
+    --hero-a: #432fb8;
+    --hero-b: #6f59f7;
+    --shadow: 0 1px 2px rgb(0 0 0 / 32%);
+    --shadow-float: 0 16px 40px rgb(0 0 0 / 55%);
+    --bg-overlay: rgb(0 0 0 / 68%);
   }
 }
 * {
@@ -612,61 +650,90 @@ p.callout {
 /* buttons */
 .btn {
   appearance: none;
-  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  min-height: 36px;
+  border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--text);
   font: inherit;
-  font-weight: 600;
-  padding: 9px 16px;
-  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 0 14px;
+  border-radius: var(--r-sm);
   cursor: pointer;
+  white-space: nowrap;
   transition:
-    background 0.12s,
-    border-color 0.12s,
-    transform 0.08s;
+    background var(--dur) var(--ease-out),
+    border-color var(--dur) var(--ease-out),
+    color var(--dur) var(--ease-out),
+    transform 100ms var(--ease-out);
 }
-.btn:hover {
+.btn:hover:not(:disabled) {
   background: var(--surface-2);
 }
-.btn:active {
-  transform: scale(0.98);
+.btn:active:not(:disabled) {
+  transform: scale(0.985);
 }
 .btn:disabled {
-  opacity: 0.55;
-  cursor: wait;
+  opacity: 0.5;
+  pointer-events: none;
 }
 .btn.primary {
   background: var(--primary);
   border-color: var(--primary);
   color: var(--on-primary);
+  font-weight: 600;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 16%);
 }
-.btn.primary:hover {
+.btn.primary:hover:not(:disabled) {
   background: var(--primary-hover);
   border-color: var(--primary-hover);
 }
 .btn.block {
-  display: block;
+  display: flex;
   width: 100%;
-  padding: 12px 16px;
-  font-size: 15px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 16px;
+  font-size: 14px;
 }
 .btn.sm {
-  padding: 6px 13px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 11px;
   font-size: 12.5px;
+  border-radius: 6px;
 }
 .btn.ghost {
   border-color: transparent;
   background: transparent;
   color: var(--primary);
 }
-.btn.ghost:hover {
+.btn.ghost:hover:not(:disabled) {
   background: var(--primary-soft);
 }
 .btn.danger {
   color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 36%, transparent);
 }
-.btn.danger.ghost:hover {
+.btn.danger:hover:not(:disabled) {
   background: var(--bad-soft);
+  border-color: var(--bad);
+}
+.btn.danger.solid {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #fff;
+  font-weight: 600;
+}
+.btn.danger.ghost:hover:not(:disabled) {
+  background: var(--bad-soft);
+  border-color: transparent;
 }
 .btn.savebar {
   position: sticky;
@@ -766,24 +833,31 @@ p.callout {
 }
 .input {
   width: 100%;
+  height: 36px;
   font: inherit;
+  font-size: 13.5px;
   color: var(--text);
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-sm);
-  padding: 10px 12px;
+  padding: 0 12px;
+  transition:
+    border-color var(--dur) var(--ease-out),
+    box-shadow var(--dur) var(--ease-out);
 }
 .input:hover {
   border-color: var(--faint);
 }
 .input:focus {
-  outline: 2px solid var(--primary);
-  outline-offset: 0;
+  outline: none;
   border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
 }
 textarea.input {
+  height: auto;
   resize: vertical;
-  min-height: 72px;
+  min-height: 76px;
+  padding: 9px 12px;
   line-height: 1.45;
 }
 select.input {
@@ -2197,4 +2271,72 @@ button.pill:focus-visible {
 .onboard-launch .fine {
   margin-top: 14px;
   line-height: 1.5;
+}
+
+/* ---------- panel skeletons & modal dialogs ---------- */
+.panel-skeleton {
+  display: grid;
+  gap: 12px;
+  padding: 14px 0;
+}
+.panel-skel-block {
+  display: block;
+  border-radius: var(--r-sm);
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 25%,
+    color-mix(in srgb, var(--border-strong) 45%, var(--surface-2)) 50%,
+    var(--surface-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: panel-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes panel-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel-skel-block {
+    animation: none;
+  }
+}
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: var(--bg-overlay);
+  backdrop-filter: blur(4px);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.modal-dialog {
+  width: min(420px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-float);
+  padding: 18px;
+  display: grid;
+  gap: 12px;
+}
+.modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.modal-desc {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
 }

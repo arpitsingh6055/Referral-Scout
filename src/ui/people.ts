@@ -1,7 +1,22 @@
 /** People screen: filters and the card for one person, with its draft, actions and outcome. */
 import { outcomeLabels, outcomeRow } from './pipeline';
 import { type NetworkContact, type NetworkState } from '../shared/network';
-import { ui, node, initials, when, link, request, withProgress, button, act, kit, stateLabels, categoryLabels, flags } from './core';
+import {
+  ui,
+  node,
+  initials,
+  when,
+  link,
+  request,
+  withProgress,
+  button,
+  act,
+  kit,
+  stateLabels,
+  categoryLabels,
+  flags,
+  confirmPanelAction,
+} from './core';
 
 /* ---------- people tab ---------- */
 export function buildPeople(s: NetworkState, list: HTMLElement, redraw: () => void): void {
@@ -232,7 +247,14 @@ export function personCard(s: NetworkState, p: NetworkContact): HTMLElement {
     button(
       'Delete',
       async () => {
-        if (confirm(`Delete the saved record for ${p.name}? This does not undo anything on LinkedIn.`))
+        if (
+          await confirmPanelAction({
+            title: `Delete record for ${p.name}?`,
+            description: 'This removes their record from your browser. It does not undo anything already sent on LinkedIn.',
+            confirmLabel: 'Delete',
+            tone: 'danger',
+          })
+        )
           await act({ kind: 'network', action: 'removeContact', url: p.url }, `Record for ${p.name} deleted.`);
       },
       'btn sm ghost danger',

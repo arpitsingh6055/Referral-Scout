@@ -1,9 +1,6 @@
 /**
- * The workbench shell: the navigation rail, the routing and the one redraw that every screen shares.
- *
- * The page holds no state of its own beyond which screen is open. Every action sends a message and redraws from
- * the view that comes back, so what this page shows is always what the background believes — there is no local
- * copy to drift out of date while a worker is filling a form in another tab.
+ * The workbench shell: responsive sidebar rail, mobile slide-over drawer, breadcrumb header,
+ * skeleton boot loader, unified action runner, and live background synchronization.
  */
 
 import './tokens.css';
@@ -12,7 +9,7 @@ import { createToaster } from '../toast';
 import * as api from './api';
 import { send, sendNetwork, sendWorkspace, view, workspace, type CampaignView, type Request, type WorkspaceView } from './api';
 import type { NetworkRequest } from '../../shared/network';
-import { button, div, el, icon, isEditing, restoreForm, snapshotForm, text } from './dom';
+import { button, div, el, icon, isEditing, pageSkeleton, restoreForm, snapshotForm, text } from './dom';
 import { overview, overviewHeader } from './screens/overview';
 import { applications, applicationsHeader } from './screens/applications';
 import { needsYou, needsYouHeader } from './screens/needs-you';
@@ -29,16 +26,12 @@ import { welcome, welcomeHeader } from './screens/welcome';
 export type Theme = 'system' | 'light' | 'dark';
 const THEME_KEY = 'rs-theme';
 
-/**
- * The theme lives in localStorage rather than the background, because it must be applied before the first paint
- * and a round-trip to the service worker would show a flash of the wrong one.
- */
 export function applyTheme(theme: Theme): void {
   document.documentElement.dataset.theme = theme;
   try {
     localStorage.setItem(THEME_KEY, theme);
   } catch {
-    // Private windows can refuse storage; the theme simply does not persist there.
+    // Private windows can refuse storage.
   }
 }
 
@@ -47,7 +40,7 @@ export function currentTheme(): Theme {
     const saved = localStorage.getItem(THEME_KEY);
     if (saved === 'light' || saved === 'dark' || saved === 'system') return saved;
   } catch {
-    // Fall through to the system default.
+    // Fall through to system default.
   }
   return 'system';
 }
@@ -68,11 +61,9 @@ export type Route =
 
 export interface Ctx {
   view: CampaignView;
-  /** The person's own records. Loaded alongside the campaign so a screen never has to wait for a second round-trip. */
   workspace: WorkspaceView | null;
   theme: Theme;
   setTheme: (theme: Theme) => void;
-  /** One call for both services; the request's `kind` decides which one answers. */
   run: (request: Request) => Promise<void>;
   runNetwork: (request: NetworkRequest) => Promise<void>;
   openExternal: (url: string) => void;
@@ -82,59 +73,79 @@ export interface Ctx {
   redraw: () => void;
   refresh: () => Promise<void>;
   fail: (message: string) => void;
-  /** True while a background action is running; screens use it to label and disable the relevant control. */
   busyAction: string;
 }
 
-/** Routes reachable by link but not shown in the rail. */
 const EXTRA_ROUTES: Route[] = ['welcome'];
 
-const NAV: { route: Route; label: string; icon: string }[] = [
-  { route: 'overview', label: 'Overview', icon: 'home' },
-  { route: 'jobs', label: 'Jobs', icon: 'briefcase' },
-  { route: 'applications', label: 'Applications', icon: 'list' },
-  { route: 'needs-you', label: 'Needs you', icon: 'bell' },
-  { route: 'referrals', label: 'Referrals', icon: 'target' },
-  { route: 'people', label: 'People', icon: 'people' },
-  { route: 'activity', label: 'Activity', icon: 'activity' },
-  { route: 'profile', label: 'Profile', icon: 'person' },
-  { route: 'answers', label: 'Answer Bank', icon: 'check' },
-  { route: 'setup', label: 'Campaign', icon: 'target' },
-  { route: 'settings', label: 'Settings', icon: 'gear' },
+const NAV: { route: Route; label: string; icon: string; section: 'Workspace' | 'Candidate' | 'System' }[] = [
+  { route: 'overview', label: 'Overview', icon: 'home', section: 'Workspace' },
+  { route: 'jobs', label: 'Jobs', icon: 'briefcase', section: 'Workspace' },
+  { route: 'applications', label: 'Applications', icon: 'list', section: 'Workspace' },
+  { route: 'needs-you', label: 'Needs you', icon: 'bell', section: 'Workspace' },
+  { route: 'referrals', label: 'Referrals', icon: 'target', section: 'Workspace' },
+  { route: 'people', label: 'People', icon: 'people', section: 'Workspace' },
+  { route: 'activity', label: 'Outcomes', icon: 'activity', section: 'Workspace' },
+  { route: 'profile', label: 'Profile', icon: 'person', section: 'Candidate' },
+  { route: 'answers', label: 'Answer Bank', icon: 'check', section: 'Candidate' },
+  { route: 'setup', label: 'Campaign', icon: 'target', section: 'System' },
+  { route: 'settings', label: 'Settings', icon: 'gear', section: 'System' },
 ];
 
 let current: Route = 'overview';
 let state: CampaignView | null = null;
 let shop: WorkspaceView | null = null;
 let error = '';
-/** A short confirmation of what just happened, cleared on the next action. */
 let note = '';
-/** Visible, accessible progress state. Never leave a person wondering whether a click registered. */
 let busyAction = '';
 let busyMessage = '';
-/** What the last render drew, so a refresh that changes nothing does not rebuild the page. */
 let drawn = '';
-/** State that arrived while the person was typing, applied once they stop. */
 let deferred: { view: CampaignView; workspace: WorkspaceView | null } | null = null;
+let mobileDrawerOpen = false;
 
 const root = document.getElementById('app')!;
 const floatingToasts = createToaster(document.body);
 
-function rail(ctx: Ctx): HTMLElement {
+const resetToWelcome = (push = false): void => {
+  try {
+    localStorage.removeItem('rs-apply-setup-skipped');
+  } catch {
+    // Ignore storage restrictions.
+  }
+  current = 'welcome';
+  mobileDrawerOpen = false;
+  if (push) history.pushState({ route: 'welcome' }, '', '#welcome');
+  else history.replaceState({ route: 'welcome' }, '', '#welcome');
+  window.scrollTo({ top: 0 });
+};
+
+function rail(ctx: Ctx): { aside: HTMLElement; backdrop: HTMLElement } {
   const nav = el('nav', { class: 'nav', 'aria-label': 'Sections' });
-  // A first-time user should not see ten empty destinations before creating a campaign. Keep the rail focused
-  // on the few places that help them complete setup; the full workbench appears as soon as a campaign exists.
   const items = ctx.view.campaign
     ? NAV
     : [
-        { route: 'welcome' as const, label: 'Get started', icon: 'check' },
-        { route: 'profile' as const, label: 'Candidate profile', icon: 'person' },
-        { route: 'setup' as const, label: 'Campaign', icon: 'target' },
-        { route: 'settings' as const, label: 'Settings', icon: 'gear' },
+        { route: 'welcome' as const, label: 'Get started', icon: 'check', section: 'Workspace' as const },
+        { route: 'profile' as const, label: 'Candidate profile', icon: 'person', section: 'Candidate' as const },
+        { route: 'setup' as const, label: 'Campaign', icon: 'target', section: 'System' as const },
+        { route: 'settings' as const, label: 'Settings', icon: 'gear', section: 'System' as const },
       ];
+
+  let lastSection = '';
   for (const item of items) {
-    const b = button(item.label, 'nav-item', () => ctx.go(item.route), { 'data-allow-during-action': true });
-    b.prepend(icon(item.icon));
+    if (ctx.view.campaign && item.section !== lastSection) {
+      lastSection = item.section;
+      nav.append(text('div', 'nav-section', item.section));
+    }
+    const b = button(
+      item.label,
+      'nav-item',
+      () => {
+        mobileDrawerOpen = false;
+        ctx.go(item.route);
+      },
+      { 'data-allow-during-action': true },
+    );
+    b.prepend(icon(item.icon, 17));
     if (current === item.route) b.setAttribute('aria-current', 'page');
     if (item.route === 'needs-you' && ctx.view.inboxCounts.open)
       b.append(el('span', { class: 'nav-badge' }, [String(ctx.view.inboxCounts.open)]));
@@ -159,10 +170,24 @@ function rail(ctx: Ctx): HTMLElement {
     themeRow.append(b);
   }
 
-  return el('aside', { class: 'rail' }, [
-    div('brand', [
-      div('brand-mark', ['R']),
-      div('', [text('div', 'brand-name', 'Referral Scout'), text('div', 'brand-tag', 'Apply · Connect · Get hired')]),
+  const closeBtn = button(
+    '',
+    'btn btn-ghost btn-sm btn-icon rail-close',
+    () => {
+      mobileDrawerOpen = false;
+      render(true);
+    },
+    { 'aria-label': 'Close navigation menu', 'data-allow-during-action': true },
+  );
+  closeBtn.replaceChildren(icon('close', 17));
+
+  const aside = el('aside', { class: mobileDrawerOpen ? 'rail is-open' : 'rail' }, [
+    div('rail-top', [
+      div('brand', [
+        div('brand-mark', ['R']),
+        div('', [text('div', 'brand-name', 'Referral Scout'), text('div', 'brand-tag', 'Apply · Connect · Refer')]),
+      ]),
+      closeBtn,
     ]),
     nav,
     c
@@ -179,9 +204,24 @@ function rail(ctx: Ctx): HTMLElement {
           ),
           div('rail-bar', [el('span', { style: `width:${done}%` })]),
         ])
-      : div('rail-foot', [text('div', 'rail-foot-label', 'Setup in progress'), text('div', 'rail-foot-meta', 'Your workspace is ready when you are.')]),
+      : div('rail-foot', [
+          text('div', 'rail-foot-label', 'Setup in progress'),
+          text(
+            'div',
+            'rail-foot-meta',
+            ctx.workspace?.connections.linkedin ? `Signed in: ${ctx.workspace.linkedinProfileName || 'LinkedIn'}` : 'Ready when you are.',
+          ),
+        ]),
     themeRow,
   ]);
+
+  const backdrop = div(mobileDrawerOpen ? 'rail-backdrop is-open' : 'rail-backdrop');
+  backdrop.addEventListener('click', () => {
+    mobileDrawerOpen = false;
+    render(true);
+  });
+
+  return { aside, backdrop };
 }
 
 interface Header {
@@ -220,19 +260,7 @@ function screenFor(ctx: Ctx): { header: Header; body: HTMLElement } {
   }
 }
 
-const resetToWelcome = (push = false): void => {
-  try {
-    localStorage.removeItem('rs-apply-setup-skipped');
-  } catch {
-    // Ignore storage restrictions.
-  }
-  current = 'welcome';
-  if (push) history.pushState({ route: 'welcome' }, '', '#welcome');
-  else history.replaceState({ route: 'welcome' }, '', '#welcome');
-  window.scrollTo({ top: 0 });
-};
-
-const signature = (): string => JSON.stringify([current, error, state, shop]);
+const signature = (): string => JSON.stringify([current, error, note, busyAction, busyMessage, mobileDrawerOpen, state, shop]);
 
 function actionProgress(action: string): string {
   const labels: Record<string, string> = {
@@ -277,13 +305,6 @@ function actionProgress(action: string): string {
   return labels[action] ?? 'Working…';
 }
 
-/**
- * Draws the page.
- *
- * `force` is for anything the person just did: their own click must always be reflected, even when the data
- * behind it happens to be identical. A background refresh passes nothing and is skipped unless something
- * actually changed, because rebuilding the DOM under someone's hands is how typing gets eaten.
- */
 function render(force = false): void {
   if (!state) return;
   const next = signature();
@@ -297,7 +318,7 @@ function render(force = false): void {
     theme: currentTheme(),
     setTheme: theme => {
       applyTheme(theme);
-      render();
+      render(true);
     },
     run: async request => {
       if (busyAction) return;
@@ -311,8 +332,6 @@ function render(force = false): void {
           shop = await sendWorkspace(request);
           note = api.lastMessage;
         } else state = await send(request);
-        // An action on one side can change the other — queueing a job, or a profile edit that re-qualifies the
-        // shortlist — so both are re-read rather than guessing which moved.
         const [a, b] = await Promise.all([view(), workspace().catch(() => shop)]);
         state = a;
         shop = b;
@@ -329,9 +348,10 @@ function render(force = false): void {
     runNetwork: async request => {
       if (busyAction) return;
       busyAction = `network:${request.action}`;
-      busyMessage = request.action === 'import'
-        ? 'Reading your LinkedIn profile… Keep this dashboard open. Referral Scout is saving it as source evidence; ChatGPT will reconcile it with your CV before anything enters your candidate profile.'
-        : actionProgress(request.action);
+      busyMessage =
+        request.action === 'import'
+          ? 'Reading your LinkedIn profile… Keep this dashboard open. Referral Scout is saving it as source evidence; ChatGPT will reconcile it with your CV before anything enters your candidate profile.'
+          : actionProgress(request.action);
       note = '';
       error = '';
       render(true);
@@ -339,14 +359,17 @@ function render(force = false): void {
         const result = await sendNetwork(request);
         if (request.action === 'import') {
           if (!result.profile || !result.profileCapturedAt) {
-            throw new Error('LinkedIn did not return a verified profile. Check that you are signed in to the correct account, then try again.');
+            throw new Error(
+              'LinkedIn did not return a verified profile. Check that you are signed in to the correct account, then try again.',
+            );
           }
         } else {
-          note = request.action === 'consent'
-            ? 'Optional usage counting is enabled.'
-            : request.action === 'revokeConsent'
-              ? 'Optional usage counting is disabled.'
-              : result.status || 'Connection preference saved.';
+          note =
+            request.action === 'consent'
+              ? 'Optional usage counting is enabled.'
+              : request.action === 'revokeConsent'
+                ? 'Optional usage counting is disabled.'
+                : result.status || 'Connection preference saved.';
         }
         const [a, b] = await Promise.all([
           view().catch(() => state!),
@@ -386,25 +409,27 @@ function render(force = false): void {
     inform: message => {
       note = message;
       error = '';
+      floatingToasts.show('success', message);
       render(true);
     },
     openPanel: () => void chrome.runtime.sendMessage({ kind: 'surface', action: 'open-panel' }).catch(() => undefined),
     go: route => {
-      if (route === current) return;
+      mobileDrawerOpen = false;
+      if (route === current) {
+        render(true);
+        return;
+      }
       current = route;
       error = '';
       note = '';
-      // pushState, not replaceState: moving between screens should be undoable with the browser's Back button.
       history.pushState({ route }, '', `#${route}`);
       render(true);
-      // Moving between screens should land the person at the top of the new one, not halfway down the last.
       window.scrollTo({ top: 0 });
     },
     redraw: () => render(true),
     refresh: async () => {
       try {
         const [a, b] = await Promise.all([view(), workspace().catch(() => shop)]);
-        if (state?.campaign && !a.campaign && !['welcome', 'profile', 'setup', 'settings'].includes(current)) resetToWelcome();
         state = a;
         shop = b;
         error = '';
@@ -415,6 +440,7 @@ function render(force = false): void {
     },
     fail: message => {
       error = message;
+      floatingToasts.show('error', message);
       render(true);
     },
     busyAction,
@@ -428,25 +454,61 @@ function render(force = false): void {
     div('page-actions', [header.status, ...(header.actions ?? [])].filter(Boolean) as HTMLElement[]),
   ]);
 
-  const dismissBanner = (kind: 'error' | 'note'): HTMLButtonElement => {
-    const close = button('×', 'banner-dismiss', () => {
-      if (kind === 'error') error = '';
-      else note = '';
-      render(true);
-    }, { 'aria-label': kind === 'error' ? 'Dismiss error' : 'Dismiss notice', 'data-allow-during-action': true });
-    return close;
-  };
+  const dismissBanner = (kind: 'error' | 'note'): HTMLButtonElement =>
+    button(
+      '×',
+      'banner-dismiss',
+      () => {
+        if (kind === 'error') error = '';
+        else note = '';
+        render(true);
+      },
+      { 'aria-label': kind === 'error' ? 'Dismiss error' : 'Dismiss notice', 'data-allow-during-action': true },
+    );
+
+  const crumbItems: (Node | string)[] = [];
+  if (state.campaign) {
+    const campBtn = el('button', { class: 'crumb-link', type: 'button' }, [state.campaign.name]);
+    campBtn.addEventListener('click', () => ctx.go('overview'));
+    crumbItems.push(campBtn, icon('chevronRight', 13), text('span', 'crumb-current', header.title));
+  } else {
+    crumbItems.push(text('span', 'crumb-current', header.title));
+  }
 
   const page = el('main', { class: 'page' }, [
-    text('div', 'crumb', state.campaign ? `Campaigns / ${state.campaign.name}` : 'Campaigns'),
+    div('crumb', crumbItems),
     head,
-    busyMessage ? el('div', { class: 'banner banner-progress', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' }, [icon('clock', 18), text('span', 'progress-copy', busyMessage)]) : null,
+    busyMessage
+      ? el('div', { class: 'banner banner-progress', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' }, [
+          icon('clock', 18),
+          text('span', 'progress-copy', busyMessage),
+        ])
+      : null,
     error ? div('banner banner-error', [icon('alert', 18), el('span', { class: 'banner-copy' }, [error]), dismissBanner('error')]) : null,
     note ? div('banner banner-note', [icon('check', 18), el('span', { class: 'banner-copy' }, [note]), dismissBanner('note')]) : null,
     body,
   ]);
 
-  root.replaceChildren(div('app', [rail(ctx), page]));
+  const menuBtn = button(
+    '',
+    'btn btn-ghost btn-sm btn-icon',
+    () => {
+      mobileDrawerOpen = true;
+      render(true);
+    },
+    { 'aria-label': 'Open navigation menu', 'aria-expanded': String(mobileDrawerOpen), 'data-allow-during-action': true },
+  );
+  menuBtn.replaceChildren(icon('menu', 18));
+
+  const mobileBar = el('header', { class: 'mobile-bar' }, [
+    menuBtn,
+    div('brand-mark', ['R']),
+    text('span', 'mobile-bar-title', header.title),
+    header.status ? header.status.cloneNode(true) : null,
+  ]);
+
+  const { aside, backdrop } = rail(ctx);
+  root.replaceChildren(div('app', [aside, backdrop, div('page-wrap', [mobileBar, page])]));
   restoreForm(root, snap);
 }
 
@@ -464,7 +526,6 @@ function routeFromHash(): void {
   window.scrollTo({ top: 0 });
 }
 
-/** Applies state that arrived mid-edit, once the person has moved on. */
 function flushDeferred(): void {
   if (!deferred || isEditing(root)) return;
   state = deferred.view;
@@ -473,12 +534,11 @@ function flushDeferred(): void {
   render();
 }
 
-/** Entry point. Exported rather than run on import so the design preview can install its stub first. */
 export async function mount(): Promise<void> {
   applyTheme(currentTheme());
   const hash = routeFor(location.hash);
   if (hash) current = hash;
-  root.replaceChildren(div('empty', [text('div', 'empty-title', 'Loading your campaign…')]));
+  root.replaceChildren(div('page', [pageSkeleton()]));
   try {
     const [a, b] = await Promise.all([
       view(),
@@ -491,15 +551,21 @@ export async function mount(): Promise<void> {
     shop = b;
   } catch (e) {
     root.replaceChildren(
-      div('page', [div('banner banner-error', [icon('alert', 18), e instanceof Error ? e.message : 'Referral Scout is not running.'])]),
+      div('page', [
+        div('banner banner-error', [
+          icon('alert', 18),
+          el('span', { class: 'banner-copy' }, [
+            e instanceof Error ? e.message : 'Referral Scout could not connect to its background service.',
+          ]),
+          button('Retry', 'btn btn-sm', () => void mount(), { 'data-allow-during-action': true }),
+        ]),
+      ]),
     );
     return;
   }
   if (!state.campaign && !location.hash) current = 'welcome';
   render(true);
-  // A worker filling a form in another tab changes the queue without this page doing anything, so the view is
-  // re-read on a slow tick. It never interrupts: while the person is in a field the new state is held back, and
-  // a tick that changes nothing does not touch the DOM at all.
+
   setInterval(() => {
     if (document.visibilityState !== 'visible') return;
     void Promise.all([view(), workspace().catch(() => shop)])
@@ -517,25 +583,41 @@ export async function mount(): Promise<void> {
       .catch(() => undefined);
   }, 5000);
 
-  // Held-back state lands as soon as the person leaves the field they were in.
   root.addEventListener('focusout', () => setTimeout(flushDeferred, 150));
 
-  // Async button handlers that perform a multi-step workflow outside ctx.run also receive visible feedback.
+  addEventListener('keydown', e => {
+    if (e.key === 'Escape' && mobileDrawerOpen) {
+      mobileDrawerOpen = false;
+      render(true);
+    }
+  });
+
+  addEventListener('storage', e => {
+    if (e.key === THEME_KEY) {
+      applyTheme(currentTheme());
+      render(true);
+    }
+  });
+
   const replaceTransientBanner = (kind: 'progress' | 'error', message: string): void => {
     const page = root.querySelector<HTMLElement>('.page');
     const head = page?.querySelector('.page-head');
     if (!page || !head) return;
     page.querySelectorAll('.banner-progress, .banner-error, .banner-note').forEach(node => node.remove());
-    const banner = kind === 'progress'
-      ? el('div', { class: 'banner banner-progress', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' }, [icon('clock', 18), text('span', 'progress-copy', message)])
-      : div('banner banner-error', [icon('alert', 18), message]);
+    const banner =
+      kind === 'progress'
+        ? el('div', { class: 'banner banner-progress', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' }, [
+            icon('clock', 18),
+            text('span', 'progress-copy', message),
+          ])
+        : div('banner banner-error', [icon('alert', 18), el('span', { class: 'banner-copy' }, [message])]);
     head.after(banner);
   };
 
   addEventListener('referral-scout-action-start', event => {
-    if (busyAction) return; // ctx.run already owns a more specific progress message
+    if (busyAction) return;
     busyAction = 'generic';
-    busyMessage = (event as CustomEvent<string>).detail || 'Working… Your changes are being saved.';
+    busyMessage = (event as CustomEvent<string>).detail || 'Working…';
     note = '';
     error = '';
     replaceTransientBanner('progress', busyMessage);
@@ -545,12 +627,9 @@ export async function mount(): Promise<void> {
       busyAction = '';
       busyMessage = '';
     }
-    // The DOM may have been rebuilt while the action ran. Recreate controls now that the shared action lock is clear.
     render(true);
   });
 
-  // Async click handlers outside ctx.run (exports, connection checks, file operations) still report failures
-  // in the same visible banner rather than leaving a rejected promise in the console.
   addEventListener('referral-scout-action-error', event => {
     if (busyAction && busyAction !== 'generic') return;
     const message = (event as CustomEvent<string>).detail;
@@ -560,8 +639,6 @@ export async function mount(): Promise<void> {
     replaceTransientBanner('error', error);
   });
 
-  // The service worker reports real milestones during longer LinkedIn imports. Keep the update in the existing
-  // banner instead of re-rendering the page while the person may be reading or scrolling.
   chrome.runtime?.onMessage?.addListener((message: unknown, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id || !message || typeof message !== 'object') return false;
     const payload = message as { kind?: unknown; scope?: unknown; message?: unknown; tone?: unknown; title?: unknown };
@@ -583,11 +660,19 @@ export async function mount(): Promise<void> {
       return false;
     }
     if (payload.kind === 'ui.toast' && typeof payload.message === 'string') {
-      floatingToasts.show(payload.tone === 'error' ? 'error' : payload.tone === 'info' ? 'info' : 'success', `${typeof payload.title === 'string' ? `${payload.title}: ` : ''}${payload.message}`);
+      floatingToasts.show(
+        payload.tone === 'error' ? 'error' : payload.tone === 'info' ? 'info' : 'success',
+        `${typeof payload.title === 'string' ? `${payload.title}: ` : ''}${payload.message}`,
+      );
       sendResponse({ shown: document.visibilityState === 'visible' });
       return false;
     }
-    if (payload.kind !== 'ui.progress' || !['network-import', 'profile-ai'].includes(String(payload.scope)) || typeof payload.message !== 'string') return false;
+    if (
+      payload.kind !== 'ui.progress' ||
+      !['network-import', 'profile-ai'].includes(String(payload.scope)) ||
+      typeof payload.message !== 'string'
+    )
+      return false;
     if (payload.scope === 'network-import' && busyAction !== 'network:import') return false;
     if (payload.scope === 'profile-ai' && busyAction !== 'workspace:processProfileWithChatGPT') return false;
     busyMessage = payload.message;
@@ -597,8 +682,6 @@ export async function mount(): Promise<void> {
     return false;
   });
 
-  // Back, Forward and a hand-edited address all change the hash; without this the page would keep showing the
-  // screen it started on while the address bar said otherwise.
   addEventListener('popstate', routeFromHash);
   addEventListener('hashchange', routeFromHash);
 }

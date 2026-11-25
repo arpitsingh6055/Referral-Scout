@@ -6,7 +6,7 @@
  * check that judgement is if the screen shows it.
  */
 
-import { button, card, div, empty, field, input, metric, pill, text } from '../dom';
+import { button, card, div, emptyState, field, input, metric, pill, searchBar, setFieldError, text } from '../dom';
 import type { Ctx } from '../shell';
 import type { FactRow } from '../../../background/workspace';
 
@@ -26,16 +26,21 @@ const SCOPE_NOTE: Record<string, string> = {
 };
 
 let section: string = 'identity';
+let query = '';
 
 function row(fact: FactRow, ctx: Ctx): HTMLElement {
   const box = input(fact.value, { placeholder: fact.selfDeclared ? 'Yours to declare' : 'Not saved yet', 'aria-label': fact.label });
+  box.addEventListener('input', () => setFieldError(box));
   const status = STATUS[fact.status] ?? STATUS.empty!;
   const saveValue = (): Promise<void> | void => {
     const value = box.value.trim();
     if (!value) {
+      setFieldError(box, 'Enter a value before saving.');
+      box.focus();
       ctx.fail('Enter a value before saving, or choose Clear to remove it.');
       return;
     }
+    setFieldError(box);
     return ctx.run({ kind: 'workspace', action: 'saveFact', key: fact.key, value });
   };
   box.addEventListener('keydown', e => {
@@ -54,14 +59,19 @@ function row(fact: FactRow, ctx: Ctx): HTMLElement {
     div(''),
     div('inline', [
       button('Save', 'btn btn-sm', saveValue),
-      fact.value ? button('Clear', 'btn btn-sm', () => ctx.run({ kind: 'workspace', action: 'clearFact', key: fact.key })) : null,
+      fact.value ? button('Clear', 'btn btn-sm btn-ghost', () => ctx.run({ kind: 'workspace', action: 'clearFact', key: fact.key })) : null,
     ]),
   ]);
 }
 
 export function answers(ctx: Ctx): HTMLElement {
   const w = ctx.workspace;
-  if (!w) return empty('Your answers could not be loaded', 'The message above says why. Reload the extension, then reopen this page.');
+  if (!w)
+    return emptyState({
+      icon: 'alert',
+      title: 'Your answers could not be loaded',
+      description: 'The message above says why. Reload the extension, then reopen this page.',
+    });
 
   const page = div('stack');
   const verified = w.facts.filter(f => f.status === 'verified').length;
@@ -100,18 +110,34 @@ export function answers(ctx: Ctx): HTMLElement {
     tabs.append(b);
   }
 
-  const shown = w.facts.filter(f => f.section === section);
   const current = w.factSections.find(s => s.section === section);
+  const rowsHost = div('rows');
+  const drawRows = (): void => {
+    const q = query.trim().toLowerCase();
+    const list = q
+      ? w.facts.filter(f => `${f.label} ${f.value} ${SCOPE_NOTE[f.scope] ?? f.scope}`.toLowerCase().includes(q))
+      : w.facts.filter(f => f.section === section);
+    rowsHost.replaceChildren(...(list.length ? list.map(f => row(f, ctx)) : [text('p', 'cell-muted', 'No answers match that search.')]));
+  };
+  drawRows();
 
   page.append(
     card(current?.label ?? 'Answers', {
       sub: 'Saved once, reused only where it is safe to.',
       body: [
-        tabs,
-        div(
-          'rows',
-          shown.map(f => row(f, ctx)),
-        ),
+        div('filter-bar', [
+          tabs,
+          searchBar({
+            placeholder: 'Search all answers…',
+            value: query,
+            ariaLabel: 'Search Answer Bank',
+            onInput: val => {
+              query = val;
+              drawRows();
+            },
+          }),
+        ]),
+        rowsHost,
       ],
     }),
   );

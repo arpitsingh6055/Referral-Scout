@@ -1,5 +1,5 @@
 /** First-run workspace: a guided setup, not a wall of settings. */
-import { ago, button, card, div, el, field, icon, input, pill, text, withActionFeedback } from '../dom';
+import { ago, button, card, div, el, field, icon, input, pill, setFieldError, text, withActionFeedback } from '../dom';
 import { send, sendGmail, sendNetwork, sendWorkspace } from '../api';
 import { defaultSettings } from '../../../shared/network';
 import { uploadCvForWorkbench } from '../cv-upload';
@@ -17,14 +17,24 @@ function step(number: string, title: string, detail: string, complete: boolean):
 
 export function welcome(ctx: Ctx): HTMLElement {
   const w = ctx.workspace;
-  if (!w) return div('stack', [card('Your workspace is not ready', { body: [text('p', 'cell-muted', 'Reload the extension and open the dashboard again.')] })]);
+  if (!w)
+    return div('stack', [
+      card('Your workspace is not ready', { body: [text('p', 'cell-muted', 'Reload the extension and open the dashboard again.')] }),
+    ]);
 
   const linkedInReady = w.connections.linkedin;
   const cvReady = w.cv.hasText;
-  const target = input(ctx.view.campaign?.targetRoles.join(', ') ?? w.profile.preferences.targetRoleFamilies.join(', '), { placeholder: 'Product Management Intern' });
-  const locations = input(ctx.view.campaign?.location ?? w.profile.preferences.locations[0] ?? '', { placeholder: 'India, Bengaluru, or Remote' });
-  const savedEmployment = ctx.view.campaign?.employmentType
-    ?? (w.profile.preferences.employmentTypes.length === 1 ? w.profile.preferences.employmentTypes[0] : 'any');
+  const target = input(ctx.view.campaign?.targetRoles.join(', ') ?? w.profile.preferences.targetRoleFamilies.join(', '), {
+    placeholder: 'Product Management Intern',
+  });
+  const locations = input(ctx.view.campaign?.location ?? w.profile.preferences.locations[0] ?? '', {
+    placeholder: 'India, Bengaluru, or Remote',
+  });
+  target.addEventListener('input', () => setFieldError(target));
+  locations.addEventListener('input', () => setFieldError(locations));
+  const savedEmployment =
+    ctx.view.campaign?.employmentType ??
+    (w.profile.preferences.employmentTypes.length === 1 ? w.profile.preferences.employmentTypes[0] : 'any');
   const employment = el('select', { class: 'input', 'aria-label': 'Employment type' });
   for (const [value, label] of [
     ['internship', 'Internship'],
@@ -32,7 +42,8 @@ export function welcome(ctx: Ctx): HTMLElement {
     ['part-time', 'Part-time'],
     ['contract', 'Contract'],
     ['any', 'Any type'],
-  ]) employment.append(el('option', { value, selected: value === savedEmployment }, [label]));
+  ])
+    employment.append(el('option', { value, selected: value === savedEmployment }, [label]));
 
   const steps = div('setup-steps', [
     step('1', 'Connect LinkedIn and read your profile', 'Use your existing LinkedIn session. You can do this now or later.', linkedInReady),
@@ -49,20 +60,51 @@ export function welcome(ctx: Ctx): HTMLElement {
         pill(linkedInReady ? 'Profile read' : 'Not connected yet', linkedInReady ? 'green' : 'amber'),
         linkedInReady ? text('span', 'cell-muted', 'Read from your signed-in LinkedIn session') : null,
       ]),
-      div('inline', linkedInReady
-        ? [
-            button(ctx.busyAction === 'network:import' ? 'Reading profile…' : 'Refresh LinkedIn profile', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'import' }), { disabled: ctx.busyAction === 'network:import', 'aria-busy': ctx.busyAction === 'network:import', 'data-busy-label': 'Reading profile…', 'data-progress': 'Reading your LinkedIn profile…' }),
-            button('Open LinkedIn', 'btn', () => ctx.openExternal('https://www.linkedin.com/')),
-          ]
-        : [
-            button('Open LinkedIn to sign in', 'btn btn-primary', () => ctx.openExternal('https://www.linkedin.com/login')),
-            button(ctx.busyAction === 'network:import' ? 'Reading profile…' : "I've signed in — read profile", 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'import' }), { disabled: ctx.busyAction === 'network:import', 'aria-busy': ctx.busyAction === 'network:import', 'data-busy-label': 'Reading profile…', 'data-progress': 'Reading your LinkedIn profile…' }),
-          ]),
-      text('p', 'field-help', linkedInReady
-        ? 'Your profile is read from the LinkedIn session in this browser. Refresh it after you update LinkedIn.'
-        : "First sign in on LinkedIn, then return here and choose “I've signed in — read profile”. Referral Scout never asks for or stores your password."),
+      div(
+        'inline',
+        linkedInReady
+          ? [
+              button(
+                ctx.busyAction === 'network:import' ? 'Reading profile…' : 'Refresh LinkedIn profile',
+                'btn btn-primary',
+                () => ctx.runNetwork({ kind: 'network', action: 'import' }),
+                {
+                  disabled: ctx.busyAction === 'network:import',
+                  'aria-busy': ctx.busyAction === 'network:import',
+                  'data-busy-label': 'Reading profile…',
+                  'data-progress': 'Reading your LinkedIn profile…',
+                },
+              ),
+              button('Open LinkedIn', 'btn', () => ctx.openExternal('https://www.linkedin.com/')),
+            ]
+          : [
+              button('Open LinkedIn to sign in', 'btn btn-primary', () => ctx.openExternal('https://www.linkedin.com/login')),
+              button(
+                ctx.busyAction === 'network:import' ? 'Reading profile…' : "I've signed in — read profile",
+                'btn btn-primary',
+                () => ctx.runNetwork({ kind: 'network', action: 'import' }),
+                {
+                  disabled: ctx.busyAction === 'network:import',
+                  'aria-busy': ctx.busyAction === 'network:import',
+                  'data-busy-label': 'Reading profile…',
+                  'data-progress': 'Reading your LinkedIn profile…',
+                },
+              ),
+            ],
+      ),
+      text(
+        'p',
+        'field-help',
+        linkedInReady
+          ? 'Your profile is read from the LinkedIn session in this browser. Refresh it after you update LinkedIn.'
+          : "First sign in on LinkedIn, then return here and choose “I've signed in — read profile”. Referral Scout never asks for or stores your password.",
+      ),
       ctx.busyAction === 'network:import'
-        ? text('p', 'field-help', 'This can take a little while. Referral Scout is reading your own profile in a separate work tab; you can keep this dashboard open.')
+        ? text(
+            'p',
+            'field-help',
+            'This can take a little while. Referral Scout is reading your own profile in a separate work tab; you can keep this dashboard open.',
+          )
         : null,
     ],
   });
@@ -86,7 +128,10 @@ export function welcome(ctx: Ctx): HTMLElement {
   const cvCard = card('2. Your CV', {
     sub: 'The file is stored in this browser and attached only to applications you choose to fill.',
     body: [
-      div('inline', [pill(cvReady ? 'CV saved' : 'Optional for now', cvReady ? 'green' : 'grey'), w.cvName ? text('span', 'cell-muted', w.cvName) : null]),
+      div('inline', [
+        pill(cvReady ? 'CV saved' : 'Optional for now', cvReady ? 'green' : 'grey'),
+        w.cvName ? text('span', 'cell-muted', w.cvName) : null,
+      ]),
       linkedInReady
         ? div('inline', [
             el('label', { class: 'btn', for: 'welcome-cv-file' }, [cvReady ? 'Replace CV' : 'Upload CV']),
@@ -94,12 +139,36 @@ export function welcome(ctx: Ctx): HTMLElement {
             cvReady
               ? w.aiProfileDraft
                 ? button('Review ChatGPT profile draft', 'btn btn-primary', () => ctx.go('profile'))
-                : button(ctx.busyAction === 'workspace:processProfileWithChatGPT' ? 'ChatGPT is reconciling…' : w.cv.imported ? 'Reprocess updated CV + LinkedIn' : 'Ask ChatGPT to reconcile sources', 'btn btn-primary', () => ctx.run({ kind: 'workspace', action: 'processProfileWithChatGPT' }), { disabled: ctx.busyAction === 'workspace:processProfileWithChatGPT', 'aria-busy': ctx.busyAction === 'workspace:processProfileWithChatGPT' })
+                : button(
+                    ctx.busyAction === 'workspace:processProfileWithChatGPT'
+                      ? 'ChatGPT is reconciling…'
+                      : w.cv.imported
+                        ? 'Reprocess updated CV + LinkedIn'
+                        : 'Ask ChatGPT to reconcile sources',
+                    'btn btn-primary',
+                    () => ctx.run({ kind: 'workspace', action: 'processProfileWithChatGPT' }),
+                    {
+                      disabled: ctx.busyAction === 'workspace:processProfileWithChatGPT',
+                      'aria-busy': ctx.busyAction === 'workspace:processProfileWithChatGPT',
+                    },
+                  )
               : null,
-            w.aiProfileDraft ? pill('ChatGPT draft ready for review', 'amber') : w.cv.imported ? pill('Profile created · review suggestions', 'green') : null,
+            w.aiProfileDraft
+              ? pill('ChatGPT draft ready for review', 'amber')
+              : w.cv.imported
+                ? pill('Profile created · review suggestions', 'green')
+                : null,
           ])
-        : text('p', 'field-help', 'Read your LinkedIn profile first to associate the CV with the right candidate. You can skip the CV and add it later.'),
-      text('p', 'field-help', 'Your CV is the priority source when details disagree with LinkedIn. ChatGPT prepares a draft; nothing enters your profile until you approve it.'),
+        : text(
+            'p',
+            'field-help',
+            'Read your LinkedIn profile first to associate the CV with the right candidate. You can skip the CV and add it later.',
+          ),
+      text(
+        'p',
+        'field-help',
+        'Your CV is the priority source when details disagree with LinkedIn. ChatGPT prepares a draft; nothing enters your profile until you approve it.',
+      ),
     ],
   });
   cvFile.id = 'welcome-cv-file';
@@ -109,16 +178,26 @@ export function welcome(ctx: Ctx): HTMLElement {
     body: [
       div('form-grid', [field('Target role', target), field('Location', locations), field('Employment type', employment)]),
       div('inline', [
-        button(ctx.view.campaign ? 'Update campaign' : 'Create my campaign', 'btn btn-primary', async () => {
-          const roles = target.value.split(/[\n;,]+/).map(value => value.trim()).filter(Boolean);
-          if (!roles.length) return ctx.fail('Enter at least one role, such as “Product Management Intern”.');
-          if (!locations.value.trim()) return ctx.fail('Add a location, or enter “Remote” when that is what you want.');
-          const preferredEmployment = employment.value === 'any'
-            ? ['internship', 'full-time', 'part-time', 'contract']
-            : [employment.value];
-          const legacyEmployment = employment.value === 'internship' || employment.value === 'full-time'
-            ? employment.value
-            : 'any';
+        button(ctx.view.campaign ? 'Update campaign' : 'Create my campaign', 'btn btn-primary btn-lg', async () => {
+          const roles = target.value
+            .split(/[\n;,]+/)
+            .map(value => value.trim())
+            .filter(Boolean);
+          setFieldError(target);
+          setFieldError(locations);
+          if (!roles.length) {
+            setFieldError(target, 'Enter at least one role, such as “Product Management Intern”.');
+            target.focus();
+            return ctx.fail('Enter at least one role, such as “Product Management Intern”.');
+          }
+          if (!locations.value.trim()) {
+            setFieldError(locations, 'Add a location, or enter “Remote”.');
+            locations.focus();
+            return ctx.fail('Add a location, or enter “Remote” when that is what you want.');
+          }
+          const preferredEmployment =
+            employment.value === 'any' ? ['internship', 'full-time', 'part-time', 'contract'] : [employment.value];
+          const legacyEmployment = employment.value === 'internship' || employment.value === 'full-time' ? employment.value : 'any';
           try {
             await send({
               kind: 'campaign',
@@ -138,7 +217,9 @@ export function welcome(ctx: Ctx): HTMLElement {
                 employmentTypes: preferredEmployment,
               });
             } catch {
-              warnings.push('Candidate profile search preferences could not be synchronised. Review Candidate profile before using matching.');
+              warnings.push(
+                'Candidate profile search preferences could not be synchronised. Review Candidate profile before using matching.',
+              );
             }
             // Keep the established side-panel referral workflow aligned with the campaign created in the dashboard.
             // Preserve the user's existing outreach template and limits; only the role/location preferences are changed.
@@ -157,7 +238,11 @@ export function welcome(ctx: Ctx): HTMLElement {
             }
             await ctx.refresh();
             ctx.go('overview');
-            ctx.inform(warnings.length ? `Your campaign was created, with follow-up needed: ${warnings.join(' ')}` : 'Your campaign and profile preferences are saved.');
+            ctx.inform(
+              warnings.length
+                ? `Your campaign was created, with follow-up needed: ${warnings.join(' ')}`
+                : 'Your campaign and profile preferences are saved.',
+            );
           } catch (error) {
             ctx.fail(error instanceof Error ? error.message : 'Your campaign could not be saved. Please try again.');
           }
@@ -171,24 +256,41 @@ export function welcome(ctx: Ctx): HTMLElement {
     sub: 'Only connect the services you plan to use. You can skip both and come back later.',
     body: [
       div('rule-row', [
-        div('', [text('div', 'rule-name', 'ChatGPT'), text('div', 'rule-note', 'Used for AI-assisted writing and application answers. Sign in with your own account in this browser.')]),
+        div('', [
+          text('div', 'rule-name', 'ChatGPT'),
+          text('div', 'rule-note', 'Used for AI-assisted writing and application answers. Sign in with your own account in this browser.'),
+        ]),
         div('inline', [button('Open ChatGPT', 'btn btn-sm', () => ctx.openExternal('https://chatgpt.com/'))]),
       ]),
       div('rule-row', [
-        div('', [text('div', 'rule-name', 'Gmail'), text('div', 'rule-note', 'Optional. Connect to create drafts and track relevant replies.')]),
-        div('inline', [
-          pill(w.connections.gmail ? 'Connected' : 'Optional', w.connections.gmail ? 'green' : 'grey'),
-          w.connections.gmail ? null : button('Connect Gmail', 'btn btn-sm', async () => {
-            try {
-              await sendGmail({ kind: 'gmail', action: 'connect' });
-              await ctx.refresh();
-            } catch (error) {
-              ctx.fail(error instanceof Error ? error.message : 'Gmail could not be connected.');
-            }
-          }),
-        ].filter(Boolean) as HTMLElement[]),
+        div('', [
+          text('div', 'rule-name', 'Gmail'),
+          text('div', 'rule-note', 'Optional. Connect to create drafts and track relevant replies.'),
+        ]),
+        div(
+          'inline',
+          [
+            pill(w.connections.gmail ? 'Connected' : 'Optional', w.connections.gmail ? 'green' : 'grey'),
+            w.connections.gmail
+              ? null
+              : button('Connect Gmail', 'btn btn-sm', async () => {
+                  try {
+                    await sendGmail({ kind: 'gmail', action: 'connect' });
+                    await ctx.refresh();
+                  } catch (error) {
+                    ctx.fail(error instanceof Error ? error.message : 'Gmail could not be connected.');
+                  }
+                }),
+          ].filter(Boolean) as HTMLElement[],
+        ),
       ]),
-      div('note note-violet', [text('p', '', 'If ChatGPT is not connected, Referral Scout can still use your saved templates and fill standard fields from your verified profile. Gmail is never required to search jobs.')]),
+      div('note note-violet', [
+        text(
+          'p',
+          '',
+          'If ChatGPT is not connected, Referral Scout can still use your saved templates and fill standard fields from your verified profile. Gmail is never required to search jobs.',
+        ),
+      ]),
     ],
   });
 
@@ -196,10 +298,20 @@ export function welcome(ctx: Ctx): HTMLElement {
   const privacyCard = card('Your data, your choice', {
     sub: 'Profile, CV, jobs, contacts, messages and application records are stored locally in this browser.',
     body: [
-      div('note', [text('p', '', 'When you use AI features, the relevant profile/CV context is sent to your own signed-in ChatGPT account, or to OpenAI if you configure an API key. Usage counting is a separate, optional setting below.')]),
+      div('note', [
+        text(
+          'p',
+          '',
+          'When you use AI features, the relevant profile/CV context is sent to your own signed-in ChatGPT account, or to OpenAI if you configure an API key. Usage counting is a separate, optional setting below.',
+        ),
+      ]),
       div('setup-privacy-choice', [
         usageChoice,
-        text('span', '', 'Allow one-time usage counting: sends a random install ID, your display name and LinkedIn profile handle to the developer. No CV, jobs, contacts or messages are included.'),
+        text(
+          'span',
+          '',
+          'Allow one-time usage counting: sends a random install ID, your display name and LinkedIn profile handle to the developer. No CV, jobs, contacts or messages are included.',
+        ),
       ]),
       button('Save privacy choice', 'btn', async () => {
         await ctx.runNetwork({ kind: 'network', action: usageChoice.checked ? 'consent' : 'revokeConsent' });
@@ -211,9 +323,21 @@ export function welcome(ctx: Ctx): HTMLElement {
     sub: 'You stay in control of the decisions that matter.',
     body: [
       div('next-flow', [
-        div('', [icon('search', 18), text('div', 'rule-name', 'Find relevant jobs'), text('p', 'rule-note', 'Search and rank roles against your profile.')]),
-        div('', [icon('check', 18), text('div', 'rule-name', 'Choose opportunities'), text('p', 'rule-note', 'Shortlist the companies and applications worth pursuing.')]),
-        div('', [icon('users', 18), text('div', 'rule-name', 'Prepare referrals'), text('p', 'rule-note', 'Review messages before any outreach is sent.')]),
+        div('', [
+          icon('search', 18),
+          text('div', 'rule-name', 'Find relevant jobs'),
+          text('p', 'rule-note', 'Search and rank roles against your profile.'),
+        ]),
+        div('', [
+          icon('check', 18),
+          text('div', 'rule-name', 'Choose opportunities'),
+          text('p', 'rule-note', 'Shortlist the companies and applications worth pursuing.'),
+        ]),
+        div('', [
+          icon('users', 18),
+          text('div', 'rule-name', 'Prepare referrals'),
+          text('p', 'rule-note', 'Review messages before any outreach is sent.'),
+        ]),
       ]),
       text('p', 'field-help', 'No application is submitted and no message is sent without the approval required by your settings.'),
     ],
@@ -223,10 +347,17 @@ export function welcome(ctx: Ctx): HTMLElement {
     div('onboarding-hero', [
       div('onboarding-kicker', ['YOUR JOB SEARCH WORKSPACE']),
       text('h2', 'onboarding-title', 'A more organised way to find your next role.'),
-      text('p', 'onboarding-intro', 'Set up the essentials once. Referral Scout helps find relevant jobs, prepare applications and identify people who may be able to refer you.'),
+      text(
+        'p',
+        'onboarding-intro',
+        'Set up the essentials once. Referral Scout helps find relevant jobs, prepare applications and identify people who may be able to refer you.',
+      ),
       steps,
     ]),
-    div('grid split-wide onboarding-columns', [div('stack', [profileCard, cvCard, campaignCard]), div('stack', [chatCard, privacyCard, next])]),
+    div('grid split-wide onboarding-columns', [
+      div('stack', [profileCard, cvCard, campaignCard]),
+      div('stack', [chatCard, privacyCard, next]),
+    ]),
   ]);
 }
 

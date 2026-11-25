@@ -12,7 +12,7 @@ import {
 } from '../shared/network';
 import { referralAsk, referralNote, referralPlan } from '../shared/referral';
 import { fill, type JobSearch } from '../shared/jobsearch';
-import { node, link, button, act, kit, accordion, flags, ui, stateLabels } from './core';
+import { node, link, button, act, kit, accordion, flags, ui, stateLabels, confirmPanelAction } from './core';
 import { personCard } from './people';
 
 /* People and jobs remembered with the button on LinkedIn pages: reminders, job progress and old requests. */
@@ -109,7 +109,14 @@ export function savedCard(item: SavedItem, due: boolean): HTMLElement {
     button(
       'Forget',
       async () => {
-        if (confirm(`Remove ${item.title} from Saved?`))
+        if (
+          await confirmPanelAction({
+            title: `Remove ${item.title} from Saved?`,
+            description: 'Any saved reminder and personal notes for this item will be cleared.',
+            confirmLabel: 'Forget',
+            tone: 'danger',
+          })
+        )
           await act({ kind: 'network', action: 'forget', url: item.url }, `${item.title} removed from Saved.`);
       },
       'btn sm ghost danger',
@@ -538,7 +545,14 @@ export function buildReferrals(s: NetworkState): HTMLElement {
       button(
         'Remove this job',
         async () => {
-          if (confirm(`Remove ${job.title} at ${job.company} from Referrals? People already contacted stay on the People list.`))
+          if (
+            await confirmPanelAction({
+              title: `Remove ${job.title} at ${job.company}?`,
+              description: 'Removes this job from Referrals. People already contacted remain on your People list.',
+              confirmLabel: 'Remove job',
+              tone: 'danger',
+            })
+          )
             await act({ kind: 'network', action: 'removeReferralJob', url: job.url }, 'Job removed from Referrals.');
         },
         'btn sm ghost danger',
