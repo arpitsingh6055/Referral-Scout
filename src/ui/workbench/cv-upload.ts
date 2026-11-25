@@ -4,12 +4,27 @@
  * Referral Scout server.
  */
 import { completeCvText } from '../cv-text';
+import { clearProgressTask, publishProgressTask } from '../../shared/progress-store';
 import { sendNetwork } from './api';
 
 const MAX_FILE = 8 * 1024 * 1024;
 
 function emitCvProgress(active: boolean, percent = 0, label = ''): void {
   window.dispatchEvent(new CustomEvent('referral-scout-cv-progress', { detail: { active, percent, label } }));
+  if (active) {
+    void publishProgressTask({
+      id: 'cv_parse',
+      status: 'running',
+      percent,
+      label,
+      detail: 'Reading document structure locally on this device',
+      targetRoute: 'profile',
+      targetSelector: '[data-hud-target="cv-review"]',
+      etaSeconds: percent >= 80 ? 1 : 4,
+    });
+  } else {
+    void clearProgressTask('cv_parse');
+  }
 }
 
 function toBase64(bytes: Uint8Array): string {

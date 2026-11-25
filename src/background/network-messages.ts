@@ -47,25 +47,35 @@ import { validatedDossier } from '../shared/dossier';
 import { saveCvFile, CV_FILE_KEY } from './apply';
 import { clearAllLocalData } from './reset';
 import { activeCampaign, changeCampaign } from '../shared/persistence/campaign-store';
+import { clearProgressTask, publishProgressTask } from '../shared/progress-store';
 
 const authorization = z.object({ kind: z.literal('network.authorize'), id: z.uuid(), claim: z.boolean() });
 
 /** Progress is sent to open extension pages; the background operation remains authoritative. */
-function reportImportProgress(message: string): void {
+function reportImportProgress(message: string, percent = 30, etaSeconds = 12): void {
   try {
-    void chrome.runtime
-      .sendMessage({ kind: 'ui.progress', scope: 'network-import', message })
-      .catch(() => undefined);
+    void chrome.runtime.sendMessage({ kind: 'ui.progress', scope: 'network-import', message }).catch(() => undefined);
   } catch {
     // No dashboard is open. The import still runs and its final result is returned to the caller.
   }
+  void publishProgressTask({
+    id: 'linkedin_import',
+    status: 'running',
+    percent,
+    label: message,
+    detail: 'Reading LinkedIn profile in background tab',
+    ctaLabel: 'Open Profile',
+    targetRoute: 'profile',
+    targetSelector: '[data-hud-target="linkedin"]',
+    etaSeconds,
+  });
 }
 async function importProfile(): Promise<void> {
   const signal = new AbortController().signal;
-  reportImportProgress('Opening your own LinkedIn profile in Referral Scout’s work tab…');
+  reportImportProgress('Opening your own LinkedIn profile in Referral Scout’s work tab…', 25, 16);
   // linkedin.com/in/me/ always redirects to the signed-in person's own profile, so no menu has to be opened or guessed.
   const tab = await networkTab('https://www.linkedin.com/in/me/', signal);
-  reportImportProgress('Checking which LinkedIn account is signed in…');
+  reportImportProgress('Checking which LinkedIn account is signed in…', 45, 12);
   const { url: identity } = z
     .object({ url: z.string().refine(v => profileUrl(v) === v) })
     .parse(await networkCommand(tab, { action: 'identity' }, signal));
@@ -74,9 +84,9 @@ async function importProfile(): Promise<void> {
     throw new Error(
       'Different LinkedIn account detected. Export or clear this account’s saved outreach before switching; CVs are owner-scoped.',
     );
-  reportImportProgress('Reading your LinkedIn profile details…');
+  reportImportProgress('Reading your LinkedIn profile details…', 72, 6);
   const profile = networkProfileSchema.parse(await networkCommand(tab, { action: 'profile', url: identity }, signal));
-  reportImportProgress('Saving the verified profile on this device…');
+  reportImportProgress('Saving the verified profile on this device…', 92, 2);
   await updateNetwork(s => ({
     ...s,
     profile,
@@ -365,7 +375,7 @@ export function registerNetworkMessages(): void {
       let accepted = false;
       const exclusive = req.action === 'import';
       const owner = crypto.randomUUID();
-      if (exclusive) reportImportProgress('Checking that LinkedIn is available for a profile refresh…');
+      if (exclusive) reportImportProgress('Checking that LinkedIn is available for a profile refresh…', 12, 18);
       if (exclusive && !(await acquire(owner)))
         throw new Error('Outreach is in the middle of a LinkedIn step. Your profile will be readable in a few seconds; try again.');
       const timer = setInterval(() => {
@@ -382,12 +392,29 @@ export function registerNetworkMessages(): void {
           });
         if (req.action === 'import') {
           if (current.active) throw new Error('Pause outreach before refreshing your profile.');
-          reportImportProgress('Preparing a safe profile refresh…');
+          reportImportProgress('Preparing a safe profile refresh…', 18, 16);
           // Profile reading is core functionality. Usage reporting is optional and must never gate access.
-          await importProfile();
-          await clearAiJobs();
-          const me = (await getNetwork()).profile;
-          if (me && (await getNetwork()).usageConsent) await pingUsage(me.url, me.name);
+          try {
+            await importProfile();
+            await clearAiJobs();
+            const me = (await getNetwork()).profile;
+            if (me && (await getNetwork()).usageConsent) await pingUsage(me.url, me.name);
+            await clearProgressTask('linkedin_import');
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'LinkedIn import could not complete.';
+            await publishProgressTask({
+              id: 'linkedin_import',
+              status: 'error',
+              percent: 100,
+              label: 'LinkedIn profile import paused',
+              detail: msg,
+              error: msg,
+              ctaLabel: 'Retry LinkedIn',
+              targetRoute: 'profile',
+              targetSelector: '[data-hud-target="linkedin"]',
+            });
+            throw err;
+          }
         }
         if (req.action === 'save') {
           if (/\{(?!firstName\}|target\})[^}]*\}/.test(req.template))
@@ -414,7 +441,9 @@ export function registerNetworkMessages(): void {
           if (campaign) {
             const nextRoles = settings.roles.length ? settings.roles : campaign.targetRoles;
             const nextBudget =
-              typeof settings.weeklyInvites === 'number' ? Math.min(500, Math.max(0, settings.weeklyInvites)) : campaign.referral.weeklyBudget;
+              typeof settings.weeklyInvites === 'number'
+                ? Math.min(500, Math.max(0, settings.weeklyInvites))
+                : campaign.referral.weeklyBudget;
             const changed =
               campaign.location !== req.location ||
               campaign.referral.weeklyBudget !== nextBudget ||
@@ -464,6 +493,7 @@ export function registerNetworkMessages(): void {
         if (req.action === 'deleteCv') {
           if (current.active) throw new Error('Pause outreach before deleting your CV.');
           await clearAiJobs();
+          await clearProgressTask('cv_ai_review');
           await remove('meta', CV_FILE_KEY);
           await updateNetwork(s => ({ ...s, cv: null, dossier: '', dossierSavedAt: 0, status: 'CV deleted from this device.' }));
         }
@@ -642,8 +672,10 @@ export function registerNetworkMessages(): void {
           }
         };
         if (req.action === 'findJobs') {
-          if (!current.profile) throw new Error('Read your LinkedIn profile first. Open Candidate profile, sign in to LinkedIn, then choose “Read profile”.');
-          if (current.jobSearch?.status === 'finding') throw new Error('Your LinkedIn job search is already running. Check Activity or Jobs for progress.');
+          if (!current.profile)
+            throw new Error('Read your LinkedIn profile first. Open Candidate profile, sign in to LinkedIn, then choose “Read profile”.');
+          if (current.jobSearch?.status === 'finding')
+            throw new Error('Your LinkedIn job search is already running. Check Activity or Jobs for progress.');
           await updateNetwork(s => ({
             ...s,
             jobSearch: { status: 'finding', cursor: 0, found: [], startedAt: Date.now() },

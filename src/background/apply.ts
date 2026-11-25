@@ -47,6 +47,7 @@ import { trustedExtension } from '../validators/security';
 import { AI_HEALTH_KEY, askChatGpt, type AiHealth } from './network-ai';
 import { getNetwork, queueReferral } from './network';
 import { referralJobInput } from '../shared/referral';
+import { clearProgressTask, publishProgressTask } from '../shared/progress-store';
 import type { ApplyApi, FillResult } from '../content/apply';
 
 export const SESSION_KEY = 'apply-session';
@@ -288,6 +289,71 @@ function serial<T>(tabId: number, task: () => Promise<T>): Promise<T> {
   });
   return next;
 }
+async function syncApplyProgress(tabId: number, s: ApplySession): Promise<void> {
+  const stagePct: Record<ApplyStage, number> = {
+    reading: 18,
+    opening: 28,
+    thinking: 56,
+    filling: 78,
+    moving: 88,
+    permission: 40,
+    review: 100,
+    done: 100,
+    submitted: 100,
+    error: 100,
+  };
+  const status =
+    s.stage === 'error'
+      ? ('error' as const)
+      : s.stage === 'review' && (s.ask.length > 0 || s.leftForYou.length > 0 || s.captcha)
+        ? ('waiting' as const)
+        : s.stage === 'submitted' || s.stage === 'done' || s.stage === 'review'
+          ? ('done' as const)
+          : s.stage === 'permission'
+            ? ('waiting' as const)
+            : ('running' as const);
+  const label =
+    s.stage === 'error'
+      ? s.message || 'Autofill paused'
+      : status === 'waiting'
+        ? s.ask.length
+          ? `${s.ask.length} form answer${s.ask.length === 1 ? '' : 's'} needed`
+          : s.captcha
+            ? 'Complete verification check on page'
+            : 'Site access permission needed'
+        : status === 'done'
+          ? s.stage === 'submitted'
+            ? 'Application submitted'
+            : 'Form filled — review & submit'
+          : s.message || 'Filling application form…';
+
+  const payload = {
+    kind: 'rs.applyHud' as const,
+    status,
+    percent: stagePct[s.stage] ?? 50,
+    label,
+    detail: s.job ? `${s.job.company} · ${s.job.title}` : s.step || undefined,
+    askCount: s.ask.length + s.leftForYou.length,
+  };
+  void publishProgressTask({
+    id: 'apply_autofill',
+    status,
+    percent: payload.percent,
+    label,
+    ...(payload.detail ? { detail: payload.detail } : {}),
+    ctaLabel: status === 'waiting' ? 'Answer next →' : status === 'error' ? 'Retry fill' : 'View form',
+    targetRoute: 'overview',
+    tabId,
+    startedAt: s.startedAt,
+    ...(s.stage === 'error' ? { error: s.message } : {}),
+  });
+  try {
+    void chrome.tabs?.sendMessage?.(tabId, payload)?.catch?.(() => undefined);
+  } catch {
+    // No receiver or non-tab test environment.
+  }
+}
+
 async function update(tabId: number, fn: (s: ApplySession) => ApplySession | void): Promise<ApplySession | undefined> {
   return serial(tabId, async () => {
     const s = await loadSession(tabId);
@@ -297,12 +363,21 @@ async function update(tabId: number, fn: (s: ApplySession) => ApplySession | voi
     next.updatedAt = Date.now();
     if (next.stage !== before || !next.stageSince) next.stageSince = next.updatedAt; // for the panel's elapsed time
     await write(sessionKey(tabId), next);
+    void syncApplyProgress(tabId, next);
     return next;
   });
 }
 /** Replaces a tab's record, in the same queue as every change to it. */
-const saveSession = (tabId: number, s: ApplySession): Promise<void> => serial(tabId, () => write(sessionKey(tabId), s));
-const dropSession = (tabId: number): Promise<void> => serial(tabId, () => remove('meta', sessionKey(tabId)));
+const saveSession = (tabId: number, s: ApplySession): Promise<void> =>
+  serial(tabId, async () => {
+    await write(sessionKey(tabId), s);
+    await syncApplyProgress(tabId, s);
+  });
+const dropSession = (tabId: number): Promise<void> =>
+  serial(tabId, async () => {
+    await remove('meta', sessionKey(tabId));
+    await clearProgressTask('apply_autofill');
+  });
 export type SessionView = Omit<ApplySession, 'form' | 'jobText'> & {
   /** Fields of the step on screen that can still be changed from the panel, and which of them are written answers. */
   editable: string[];
@@ -1959,7 +2034,8 @@ export function registerApplyMessages(): void {
       if (req.action === 'start') {
         const s = await getNetwork();
         if (!s.profile) throw new Error('Set up Referral Scout with your LinkedIn profile first.');
-        if (!(await cvFile())) throw new Error('Upload your CV in Candidate profile in the dashboard first; applications need the file itself.');
+        if (!(await cvFile()))
+          throw new Error('Upload your CV in Candidate profile in the dashboard first; applications need the file itself.');
         const old = await loadSession(tabId);
         await start(req.tabId, req.again && old?.tabId === req.tabId ? 2 + Math.floor(Math.random() * 1000) : 1);
       }

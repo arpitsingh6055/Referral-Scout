@@ -112,6 +112,7 @@ export function answers(ctx: Ctx): HTMLElement {
 
   const current = w.factSections.find(s => s.section === section);
   const rowsHost = div('rows');
+  rowsHost.dataset.hudTarget = 'answers';
   const drawRows = (): void => {
     const q = query.trim().toLowerCase();
     const list = q

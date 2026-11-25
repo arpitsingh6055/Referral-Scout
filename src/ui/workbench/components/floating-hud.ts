@@ -13,6 +13,7 @@
 import { button, div, el, icon, text } from '../dom';
 import type { CampaignView, WorkspaceView } from '../api';
 import type { Route } from '../shell';
+import { selectPrimaryProgressTask, type ProcessId, type ProgressTask } from '../../../shared/progress-store';
 
 export interface ReviewProgressSnapshot {
   /** Current 1-based step inside GuidedReviewWorkspace (1..3). */
@@ -32,12 +33,13 @@ export interface HudInput {
   busyMessage: string;
   cvProgress?: { active: boolean; percent: number; label: string; startedAt: number };
   reviewProgress?: ReviewProgressSnapshot | null;
+  persistedTasks?: Partial<Record<ProcessId, ProgressTask>>;
   busyStartedAt?: number;
   now?: number;
 }
 
 export interface HudState {
-  mode: 'processing' | 'completion' | 'ready';
+  mode: 'processing' | 'completion' | 'ready' | 'error';
   percent: number;
   title: string;
   detail: string;
@@ -45,6 +47,7 @@ export interface HudState {
   ctaLabel: string;
   targetRoute: Route;
   targetSelector?: string;
+  retryTaskId?: ProcessId;
 }
 
 const AI_STAGE_PERCENT: [RegExp, number, number][] = [
@@ -86,8 +89,35 @@ function estimateProcessProgress(busyAction: string, busyMessage: string, elapse
 
 /** Pure, deterministic HUD state calculator suitable for unit tests and live UI rendering. */
 export function computeHudState(input: HudInput): HudState | null {
-  const { route, view, workspace: w, busyAction, busyMessage, cvProgress, reviewProgress } = input;
+  const { route, view, workspace: w, busyAction, busyMessage, cvProgress, reviewProgress, persistedTasks } = input;
   const now = input.now ?? Date.now();
+
+  /* 0. Rehydrated Cross-Context Background Task from chrome.storage.session */
+  const persisted = persistedTasks ? selectPrimaryProgressTask(persistedTasks, now) : null;
+  if (persisted && persisted.status === 'running' && !busyAction && !cvProgress?.active) {
+    return {
+      mode: 'processing',
+      percent: persisted.percent,
+      title: persisted.label,
+      detail: persisted.detail ?? 'Running in background · stays synced across tabs',
+      ...(persisted.etaSeconds ? { etaText: `~${persisted.etaSeconds}s left` } : {}),
+      ctaLabel: persisted.ctaLabel ?? 'View step →',
+      targetRoute: (persisted.targetRoute as Route) || route,
+      ...(persisted.targetSelector ? { targetSelector: persisted.targetSelector } : {}),
+    };
+  }
+  if (persisted && persisted.status === 'error' && !busyAction) {
+    return {
+      mode: 'error',
+      percent: persisted.percent,
+      title: persisted.label,
+      detail: persisted.detail ?? 'Paused before finishing. Retry with 1 click.',
+      ctaLabel: persisted.ctaLabel ?? 'Retry →',
+      targetRoute: (persisted.targetRoute as Route) || 'profile',
+      ...(persisted.targetSelector ? { targetSelector: persisted.targetSelector } : {}),
+      retryTaskId: persisted.id,
+    };
+  }
 
   /* 1. Active Processing Mode */
   if (cvProgress?.active) {
@@ -332,9 +362,12 @@ export function createFloatingHud(host: HTMLElement): FloatingHudController {
     );
     collapseBtn.replaceChildren(icon('chevronDown', 14));
 
-    const ctaBtn = button(state.ctaLabel, `btn btn-sm ${state.mode === 'ready' ? 'btn-primary' : 'hud-cta'}`, () => onNavigate(state), {
-      'data-allow-during-action': true,
-    });
+    const ctaBtn = button(
+      state.ctaLabel,
+      `btn btn-sm ${state.mode === 'ready' || state.mode === 'error' ? 'btn-primary' : 'hud-cta'}`,
+      () => onNavigate(state),
+      { 'data-allow-during-action': true },
+    );
     if (state.mode === 'processing') {
       ctaBtn.disabled = !state.targetSelector;
     }

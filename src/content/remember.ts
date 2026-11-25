@@ -98,7 +98,7 @@ const referralButton = (mode: 'referral' | 'connections', label: string): HTMLBu
       },
     })
       .then((reply: { message?: string } | undefined) => {
-        b.textContent = reply?.message ?? 'Open Referral Scout to see progress.';
+        b.textContent = `${reply?.message ?? 'Started'} — Open side panel`;
       })
       .catch(() => {
         b.textContent = 'Refresh this LinkedIn tab and try again.';
