@@ -38,6 +38,85 @@ export const page = element('div');
 root.append(alertBox, page);
 export const toaster = createToaster(document.body);
 
+const THEME_KEY = 'rs-theme';
+export function applyPanelTheme(): void {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    document.documentElement.dataset.theme = saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'system';
+  } catch {
+    document.documentElement.dataset.theme = 'system';
+  }
+}
+applyPanelTheme();
+if (typeof addEventListener === 'function') {
+  addEventListener('storage', e => {
+    if (e.key === THEME_KEY) applyPanelTheme();
+  });
+}
+
+/** Accessible in-panel confirmation modal replacing blocking native confirm() alerts. */
+export function confirmPanelAction(options: {
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  tone?: 'danger' | 'primary';
+}): Promise<boolean> {
+  return new Promise(resolve => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const titleId = `rs-panel-modal-${Math.random().toString(36).slice(2, 8)}`;
+    const descId = `${titleId}-desc`;
+    const backdrop = element('div');
+    backdrop.className = 'modal-backdrop';
+    const dialog = element('div');
+    dialog.className = 'modal-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-labelledby', titleId);
+    dialog.setAttribute('aria-describedby', descId);
+
+    const h = element('h2', options.title);
+    h.id = titleId;
+    h.className = 'modal-title';
+    const p = element('p', options.description);
+    p.id = descId;
+    p.className = 'modal-desc';
+    const foot = element('div');
+    foot.className = 'modal-foot';
+
+    const close = (confirmed: boolean): void => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      backdrop.remove();
+      previousFocus?.focus();
+      resolve(confirmed);
+    };
+    const cancel = element('button', 'Cancel');
+    cancel.type = 'button';
+    cancel.className = 'btn sm';
+    cancel.addEventListener('click', () => close(false));
+
+    const confirmBtn = element('button', options.confirmLabel ?? 'Confirm');
+    confirmBtn.type = 'button';
+    confirmBtn.className = options.tone === 'danger' ? 'btn sm danger solid' : 'btn sm primary';
+    confirmBtn.addEventListener('click', () => close(true));
+
+    foot.append(cancel, confirmBtn);
+    dialog.append(h, p, foot);
+    backdrop.append(dialog);
+    backdrop.addEventListener('click', e => {
+      if (e.target === backdrop) close(false);
+    });
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close(false);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    document.body.append(backdrop);
+    (options.tone === 'danger' ? cancel : confirmBtn).focus();
+  });
+}
+
 /* ---------- small helpers ---------- */
 export function node<K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = ''): HTMLElementTagNameMap[K] {
   const result = element(tag, text);

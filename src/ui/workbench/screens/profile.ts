@@ -8,7 +8,24 @@
  * the person needs to be able to tell the two apart before it is typed into a real application.
  */
 
-import { ago, button, card, div, el, empty, field, icon, input, metric, pill, plural, text, withActionFeedback } from '../dom';
+import {
+  ago,
+  button,
+  card,
+  confirmModal,
+  div,
+  el,
+  emptyState,
+  field,
+  icon,
+  input,
+  metric,
+  pill,
+  plural,
+  setFieldError,
+  text,
+  withActionFeedback,
+} from '../dom';
 import { uploadCvForWorkbench } from '../cv-upload';
 import type { Ctx } from '../shell';
 import type { EducationRecord, EmploymentRecord, ProjectRecord } from '../../../shared/domain/profile';
@@ -36,6 +53,9 @@ function educationForm(record: Partial<EducationRecord>, ctx: Ctx): HTMLElement 
   const grade = input(record.grade ?? '', { placeholder: '8.4' });
   const scale = input(record.gradeScale ?? '', { placeholder: 'out of 10' });
 
+  level.addEventListener('input', () => setFieldError(level));
+  institution.addEventListener('input', () => setFieldError(institution));
+
   return div('card', [
     text('div', 'card-title', record.id ? 'Edit qualification' : 'Add a qualification'),
     div('form-grid', [
@@ -51,7 +71,18 @@ function educationForm(record: Partial<EducationRecord>, ctx: Ctx): HTMLElement 
     ]),
     div('inline', [
       button('Save', 'btn btn-primary', async () => {
-        if (!level.value.trim() || !institution.value.trim()) return ctx.fail('A qualification needs at least a level and an institution.');
+        setFieldError(level);
+        setFieldError(institution);
+        if (!level.value.trim()) {
+          setFieldError(level, 'Enter a level such as Bachelors or Masters.');
+          level.focus();
+          return ctx.fail('A qualification needs at least a level and an institution.');
+        }
+        if (!institution.value.trim()) {
+          setFieldError(institution, 'Enter an institution name.');
+          institution.focus();
+          return ctx.fail('A qualification needs at least a level and an institution.');
+        }
         await ctx.run({
           kind: 'workspace',
           action: 'education',
@@ -88,6 +119,9 @@ function employmentForm(record: Partial<EmploymentRecord>, ctx: Ctx): HTMLElemen
   const achievements = input((record.achievements ?? []).join(' · '), { placeholder: 'Grew activation 12% · Shipped onboarding revamp' });
   const technologies = input((record.technologies ?? []).join(', '), { placeholder: 'SQL, Mixpanel, Figma' });
 
+  employer.addEventListener('input', () => setFieldError(employer));
+  title.addEventListener('input', () => setFieldError(title));
+
   return div('card', [
     text('div', 'card-title', record.id ? 'Edit role' : 'Add a role'),
     div('form-grid', [
@@ -109,7 +143,18 @@ function employmentForm(record: Partial<EmploymentRecord>, ctx: Ctx): HTMLElemen
     ]),
     div('inline', [
       button('Save', 'btn btn-primary', async () => {
-        if (!employer.value.trim() || !title.value.trim()) return ctx.fail('A role needs an employer and a title.');
+        setFieldError(employer);
+        setFieldError(title);
+        if (!employer.value.trim()) {
+          setFieldError(employer, 'Enter the employer name.');
+          employer.focus();
+          return ctx.fail('A role needs an employer and a title.');
+        }
+        if (!title.value.trim()) {
+          setFieldError(title, 'Enter your role title.');
+          title.focus();
+          return ctx.fail('A role needs an employer and a title.');
+        }
         await ctx.run({
           kind: 'workspace',
           action: 'employment',
@@ -149,6 +194,8 @@ function projectForm(record: Partial<ProjectRecord>, ctx: Ctx): HTMLElement {
   const role = input(record.role ?? '', { placeholder: 'Product lead' });
   const skills = input((record.skills ?? []).join(', '), { placeholder: 'Research, SQL, Figma' });
 
+  name.addEventListener('input', () => setFieldError(name));
+
   return div('card', [
     text('div', 'card-title', record.id ? 'Edit project' : 'Add a project'),
     div('form-grid', [field('Name', name), field('Your role', role)]),
@@ -156,7 +203,12 @@ function projectForm(record: Partial<ProjectRecord>, ctx: Ctx): HTMLElement {
     field('Skills used (comma separated)', skills),
     div('inline', [
       button('Save', 'btn btn-primary', async () => {
-        if (!name.value.trim()) return ctx.fail('A project needs a name.');
+        setFieldError(name);
+        if (!name.value.trim()) {
+          setFieldError(name, 'Enter a project name.');
+          name.focus();
+          return ctx.fail('A project needs a name.');
+        }
         await ctx.run({
           kind: 'workspace',
           action: 'project',
@@ -186,7 +238,12 @@ function projectForm(record: Partial<ProjectRecord>, ctx: Ctx): HTMLElement {
 /* ---------- the screen ---------- */
 export function profile(ctx: Ctx): HTMLElement {
   const w = ctx.workspace;
-  if (!w) return empty('Your profile could not be loaded', 'The message above says why. Reload the extension, then reopen this page.');
+  if (!w)
+    return emptyState({
+      icon: 'person',
+      title: 'Your profile could not be loaded',
+      description: 'The message above says why. Reload the extension, then reopen this page.',
+    });
   const p = w.profile;
 
   const page = div('stack');
@@ -228,19 +285,38 @@ export function profile(ctx: Ctx): HTMLElement {
       body: [
         div('inline', [
           pill(w.connections.linkedin ? 'Profile read' : 'Not read yet', w.connections.linkedin ? 'green' : 'amber'),
-          w.connections.linkedin ? text('span', 'cell-muted', `Last available profile: ${w.linkedinProfileName || p.identity.fullName || 'LinkedIn member'}`) : null,
+          w.connections.linkedin
+            ? text('span', 'cell-muted', `Last available profile: ${w.linkedinProfileName || p.identity.fullName || 'LinkedIn member'}`)
+            : null,
         ]),
-        div('inline', w.connections.linkedin
-          ? [
-              button(ctx.busyAction === 'network:import' ? 'Reading profile…' : 'Refresh LinkedIn profile', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'import' }), { disabled: ctx.busyAction === 'network:import', 'aria-busy': ctx.busyAction === 'network:import' }),
-              button('Open LinkedIn', 'btn', () => ctx.openExternal('https://www.linkedin.com/')),
-            ]
-          : [
-              button('Open LinkedIn to sign in', 'btn btn-primary', () => ctx.openExternal('https://www.linkedin.com/login')),
-              button(ctx.busyAction === 'network:import' ? 'Reading profile…' : "I've signed in — read profile", 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'import' }), { disabled: ctx.busyAction === 'network:import', 'aria-busy': ctx.busyAction === 'network:import' }),
-            ]),
+        div(
+          'inline',
+          w.connections.linkedin
+            ? [
+                button(
+                  ctx.busyAction === 'network:import' ? 'Reading profile…' : 'Refresh LinkedIn profile',
+                  'btn btn-primary',
+                  () => ctx.runNetwork({ kind: 'network', action: 'import' }),
+                  { disabled: ctx.busyAction === 'network:import', 'aria-busy': ctx.busyAction === 'network:import' },
+                ),
+                button('Open LinkedIn', 'btn', () => ctx.openExternal('https://www.linkedin.com/')),
+              ]
+            : [
+                button('Open LinkedIn to sign in', 'btn btn-primary', () => ctx.openExternal('https://www.linkedin.com/login')),
+                button(
+                  ctx.busyAction === 'network:import' ? 'Reading profile…' : "I've signed in — read profile",
+                  'btn btn-primary',
+                  () => ctx.runNetwork({ kind: 'network', action: 'import' }),
+                  { disabled: ctx.busyAction === 'network:import', 'aria-busy': ctx.busyAction === 'network:import' },
+                ),
+              ],
+        ),
         ctx.busyAction === 'network:import'
-          ? text('p', 'field-help', 'This can take a little while. Referral Scout is reading your own profile in a separate work tab; you can keep this dashboard open.')
+          ? text(
+              'p',
+              'field-help',
+              'This can take a little while. Referral Scout is reading your own profile in a separate work tab; you can keep this dashboard open.',
+            )
           : null,
       ],
     }),
@@ -249,30 +325,100 @@ export function profile(ctx: Ctx): HTMLElement {
   /* ChatGPT is the reconciliation layer: source captures never become candidate records until the user approves. */
   if (w.connections.linkedin && w.cv.hasText) {
     const draft = w.aiProfileDraft;
-    page.append(card('ChatGPT profile review', {
-      sub: 'Your CV takes priority when it disagrees with LinkedIn. Nothing is added to your candidate profile until you approve this draft.',
-      body: [
-        draft
-          ? div('stack', [
-              pill('Draft ready · not saved to profile', 'amber'),
-              text('p', 'field-help', `${draft.identity.fullName || 'Candidate'} · ${draft.education.length} education records · ${draft.employment.length} roles · ${draft.projects.length} projects · ${draft.skills.length} skills`),
-              draft.conflicts.length ? div('note note-amber', [text('strong', '', `${draft.conflicts.length} source discrepancies found`), ...draft.conflicts.slice(0, 5).map(c => text('p', 'field-help', `${c.field}: CV — ${c.cvValue || 'not stated'} · LinkedIn — ${c.linkedinValue || 'not stated'}. ${c.resolution}`))]) : text('p', 'field-help', 'No explicit CV/LinkedIn conflicts were detected.'),
-              draft.missingInformation.length ? text('p', 'field-help', `Needs your input: ${draft.missingInformation.slice(0, 5).join('; ')}`) : null,
-              ...draft.education.slice(0, 3).map(e => text('p', 'field-help', `Education: ${e.qualification || e.level} · ${e.institution} · ${e.startDate || 'date not stated'}–${e.endDate || 'date not stated'}`)),
-              ...draft.employment.slice(0, 3).map(e => text('p', 'field-help', `Experience: ${e.title} · ${e.employer} · ${e.startDate || 'date not stated'}–${e.current ? 'Present' : e.endDate || 'date not stated'}`)),
-              ...draft.skills.slice(0, 12).map(skill => pill(skill, 'grey')),
-              div('inline', [
-                button(ctx.busyAction === 'workspace:approveAiProfileDraft' ? 'Creating profile suggestions…' : 'Approve and create profile suggestions', 'btn btn-primary', () => ctx.run({ kind: 'workspace', action: 'approveAiProfileDraft' }), { disabled: ctx.busyAction === 'workspace:approveAiProfileDraft', 'aria-busy': ctx.busyAction === 'workspace:approveAiProfileDraft' }),
-                button('Reprocess sources', 'btn', () => ctx.run({ kind: 'workspace', action: 'processProfileWithChatGPT' }), { disabled: !!ctx.busyAction, 'aria-busy': ctx.busyAction === 'workspace:processProfileWithChatGPT' }),
+    page.append(
+      card('ChatGPT profile review', {
+        sub: 'Your CV takes priority when it disagrees with LinkedIn. Nothing is added to your candidate profile until you approve this draft.',
+        body: [
+          draft
+            ? div('stack', [
+                pill('Draft ready · not saved to profile', 'amber'),
+                text(
+                  'p',
+                  'field-help',
+                  `${draft.identity.fullName || 'Candidate'} · ${draft.education.length} education records · ${draft.employment.length} roles · ${draft.projects.length} projects · ${draft.skills.length} skills`,
+                ),
+                draft.conflicts.length
+                  ? div('note note-amber', [
+                      text('strong', '', `${draft.conflicts.length} source discrepancies found`),
+                      ...draft.conflicts
+                        .slice(0, 5)
+                        .map(c =>
+                          text(
+                            'p',
+                            'field-help',
+                            `${c.field}: CV — ${c.cvValue || 'not stated'} · LinkedIn — ${c.linkedinValue || 'not stated'}. ${c.resolution}`,
+                          ),
+                        ),
+                    ])
+                  : text('p', 'field-help', 'No explicit CV/LinkedIn conflicts were detected.'),
+                draft.missingInformation.length
+                  ? text('p', 'field-help', `Needs your input: ${draft.missingInformation.slice(0, 5).join('; ')}`)
+                  : null,
+                ...draft.education
+                  .slice(0, 3)
+                  .map(e =>
+                    text(
+                      'p',
+                      'field-help',
+                      `Education: ${e.qualification || e.level} · ${e.institution} · ${e.startDate || 'date not stated'}–${e.endDate || 'date not stated'}`,
+                    ),
+                  ),
+                ...draft.employment
+                  .slice(0, 3)
+                  .map(e =>
+                    text(
+                      'p',
+                      'field-help',
+                      `Experience: ${e.title} · ${e.employer} · ${e.startDate || 'date not stated'}–${e.current ? 'Present' : e.endDate || 'date not stated'}`,
+                    ),
+                  ),
+                ...draft.skills.slice(0, 12).map(skill => pill(skill, 'grey')),
+                div('inline', [
+                  button(
+                    ctx.busyAction === 'workspace:approveAiProfileDraft'
+                      ? 'Creating profile suggestions…'
+                      : 'Approve and create profile suggestions',
+                    'btn btn-primary',
+                    () => ctx.run({ kind: 'workspace', action: 'approveAiProfileDraft' }),
+                    {
+                      disabled: ctx.busyAction === 'workspace:approveAiProfileDraft',
+                      'aria-busy': ctx.busyAction === 'workspace:approveAiProfileDraft',
+                    },
+                  ),
+                  button('Reprocess sources', 'btn', () => ctx.run({ kind: 'workspace', action: 'processProfileWithChatGPT' }), {
+                    disabled: !!ctx.busyAction,
+                    'aria-busy': ctx.busyAction === 'workspace:processProfileWithChatGPT',
+                  }),
+                ]),
+                text(
+                  'p',
+                  'field-help',
+                  'Approved records remain marked as AI suggestions. Verify dates, grades, titles and achievements before using them in applications.',
+                ),
+              ])
+            : div('stack', [
+                text(
+                  'p',
+                  'field-help',
+                  'LinkedIn and CV are saved as separate source evidence. Ask ChatGPT to reconcile them into a structured draft before anything enters your candidate profile.',
+                ),
+                button(
+                  ctx.busyAction === 'workspace:processProfileWithChatGPT'
+                    ? 'ChatGPT is reconciling…'
+                    : w.cv.imported
+                      ? 'Reconcile updated CV + LinkedIn'
+                      : 'Ask ChatGPT to reconcile CV + LinkedIn',
+                  'btn btn-primary',
+                  () => ctx.run({ kind: 'workspace', action: 'processProfileWithChatGPT' }),
+                  {
+                    disabled: ctx.busyAction === 'workspace:processProfileWithChatGPT',
+                    'aria-busy': ctx.busyAction === 'workspace:processProfileWithChatGPT',
+                  },
+                ),
               ]),
-              text('p', 'field-help', 'Approved records remain marked as AI suggestions. Verify dates, grades, titles and achievements before using them in applications.'),
-            ])
-          : div('stack', [
-              text('p', 'field-help', 'LinkedIn and CV are saved as separate source evidence. Ask ChatGPT to reconcile them into a structured draft before anything enters your candidate profile.'),
-              button(ctx.busyAction === 'workspace:processProfileWithChatGPT' ? 'ChatGPT is reconciling…' : w.cv.imported ? 'Reconcile updated CV + LinkedIn' : 'Ask ChatGPT to reconcile CV + LinkedIn', 'btn btn-primary', () => ctx.run({ kind: 'workspace', action: 'processProfileWithChatGPT' }), { disabled: ctx.busyAction === 'workspace:processProfileWithChatGPT', 'aria-busy': ctx.busyAction === 'workspace:processProfileWithChatGPT' }),
-            ]),
-      ],
-    }));
+        ],
+      }),
+    );
   }
 
   /* identity */
@@ -335,8 +481,12 @@ export function profile(ctx: Ctx): HTMLElement {
       card('Profile summary (from ChatGPT reconciliation)', {
         sub: 'Prepared from your CV and LinkedIn sources to guide job matching and written answers.',
         body: [
-          p.narrative.strengths ? div('rule-row', [div('', [text('div', 'rule-name', 'Key strengths'), text('div', 'rule-note', p.narrative.strengths)])]) : null,
-          p.narrative.careerGoal ? div('rule-row', [div('', [text('div', 'rule-name', 'Career goal'), text('div', 'rule-note', p.narrative.careerGoal)])]) : null,
+          p.narrative.strengths
+            ? div('rule-row', [div('', [text('div', 'rule-name', 'Key strengths'), text('div', 'rule-note', p.narrative.strengths)])])
+            : null,
+          p.narrative.careerGoal
+            ? div('rule-row', [div('', [text('div', 'rule-name', 'Career goal'), text('div', 'rule-note', p.narrative.careerGoal)])])
+            : null,
         ],
       }),
     );
@@ -580,17 +730,23 @@ export function profile(ctx: Ctx): HTMLElement {
       body: [
         w.cvName
           ? div('row row-compact', [
-              div('', [text('div', 'cell-strong', w.cvName), text('div', 'cell-muted', 'Saved in this browser · used when an application asks for a CV.')]),
+              div('', [
+                text('div', 'cell-strong', w.cvName),
+                text('div', 'cell-muted', 'Saved in this browser · used when an application asks for a CV.'),
+              ]),
               pill('Saved', 'green'),
             ])
-          : div('note note-amber', [text('p', '', 'No CV saved yet. Add a PDF or DOCX to improve job matching and application autofill. This is optional.')]),
+          : div('note note-amber', [
+              text('p', '', 'No CV saved yet. Add a PDF or DOCX to improve job matching and application autofill. This is optional.'),
+            ]),
         w.connections.linkedin
-          ? div('inline', [
-              el('label', { class: 'btn', for: 'profile-cv-file' }, [w.cvName ? 'Replace CV' : 'Upload CV']),
-              cvFile,
-            ])
+          ? div('inline', [el('label', { class: 'btn', for: 'profile-cv-file' }, [w.cvName ? 'Replace CV' : 'Upload CV']), cvFile])
           : div('note note-violet', [
-              text('p', '', 'Read your own LinkedIn profile first so the CV is associated with the right candidate. You can skip the CV entirely and add it later.'),
+              text(
+                'p',
+                '',
+                'Read your own LinkedIn profile first so the CV is associated with the right candidate. You can skip the CV entirely and add it later.',
+              ),
             ]),
         w.cv.hasText
           ? div('note note-violet', [
@@ -606,7 +762,14 @@ export function profile(ctx: Ctx): HTMLElement {
         w.cvName || w.cv.hasText
           ? div('inline', [
               button('Delete CV', 'btn btn-danger', async () => {
-                if (confirm('Delete your CV and its extracted text from this device?'))
+                if (
+                  await confirmModal({
+                    title: 'Delete saved CV?',
+                    description: 'This deletes your uploaded CV file and its extracted text from this browser.',
+                    confirmLabel: 'Delete CV',
+                    tone: 'danger',
+                  })
+                )
                   await ctx.runNetwork({ kind: 'network', action: 'deleteCv' });
               }),
             ])

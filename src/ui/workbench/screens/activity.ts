@@ -6,7 +6,7 @@
  * suggestion until they confirm it, and the screen says so rather than quietly moving the stage.
  */
 
-import { ago, button, card, div, empty, metric, pill, plural, text } from '../dom';
+import { ago, button, card, div, emptyState, metric, pill, plural, text } from '../dom';
 import type { Ctx } from '../shell';
 import type { OutcomeEvent } from '../../../shared/persistence/campaign-store';
 
@@ -51,7 +51,13 @@ const confidencePill = (e: OutcomeEvent): HTMLElement =>
 
 export function activity(ctx: Ctx): HTMLElement {
   const { events, counts, campaign, replies, peopleIdentified } = ctx.view;
-  if (!campaign) return empty('No campaign yet', 'Application and conversation events collect here once a campaign is running.');
+  if (!campaign)
+    return emptyState({
+      icon: 'activity',
+      title: 'No campaign yet',
+      description: 'Application and conversation events collect here once a campaign is running.',
+      action: button('Create a campaign', 'btn btn-primary', () => ctx.go('setup')),
+    });
 
   const page = div('stack');
   const interviews = events.filter(e => e.type === 'interview').length;
@@ -92,10 +98,11 @@ export function activity(ctx: Ctx): HTMLElement {
               ]),
             ),
           )
-        : div('empty', [
-            text('div', 'empty-title', 'No events yet'),
-            text('p', '', 'Submitted applications, replies and employer responses appear here as they are confirmed.'),
-          ]),
+        : emptyState({
+            icon: 'activity',
+            title: 'No events yet',
+            description: 'Submitted applications, replies and employer responses appear here as they are confirmed.',
+          }),
     ],
   });
 

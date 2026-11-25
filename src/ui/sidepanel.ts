@@ -11,7 +11,23 @@ import {
   dueReminders,
   staleRequests,
 } from '../shared/network';
-import { type Tab, ui, page, toaster, node, icon, ago, request, notify, button, act, flags, onRedraw, accordion, openDashboard } from './core';
+import {
+  type Tab,
+  ui,
+  page,
+  toaster,
+  node,
+  icon,
+  ago,
+  request,
+  notify,
+  button,
+  act,
+  flags,
+  onRedraw,
+  accordion,
+  openDashboard,
+} from './core';
 import { runStatus, usage, journey, meter, tick, live, readyToContact } from './live';
 import { welcome, buildSetup } from './setup';
 import { buildSaved, buildReferrals, jobChooser } from './jobs';
@@ -698,6 +714,17 @@ function announce(s: NetworkState): void {
 const showLoadError = (e: unknown): void => {
   if (!flags.last) notify('error', errorText(e));
 };
+const panelSkeleton = (): HTMLElement => {
+  const wrap = node('div', '', 'panel-skeleton');
+  wrap.setAttribute('aria-busy', 'true');
+  for (const h of ['54px', '128px', '88px', '88px']) {
+    const b = node('span', '', 'panel-skel-block');
+    b.style.height = h;
+    wrap.append(b);
+  }
+  return wrap;
+};
+if (!flags.last) page.replaceChildren(panelSkeleton());
 void refresh().catch(showLoadError);
 const timer = setInterval(() => {
   void refresh().catch(showLoadError);
@@ -705,7 +732,6 @@ const timer = setInterval(() => {
 addEventListener('pagehide', () => clearInterval(timer), { once: true });
 
 onRedraw(render);
-
 
 // Important milestones are broadcast by the service worker so the side panel and dashboard share one feedback model.
 chrome.runtime?.onMessage?.addListener((message: unknown, sender, sendResponse) => {
@@ -726,7 +752,10 @@ chrome.runtime?.onMessage?.addListener((message: unknown, sender, sendResponse) 
   }
   if (payload.kind !== 'ui.toast' || typeof payload.message !== 'string') return false;
   broadcastMessages.push(payload.message);
-  toaster.show(payload.tone === 'error' ? 'error' : payload.tone === 'info' ? 'info' : 'success', `${typeof payload.title === 'string' ? `${payload.title}: ` : ''}${payload.message}`);
+  toaster.show(
+    payload.tone === 'error' ? 'error' : payload.tone === 'info' ? 'info' : 'success',
+    `${typeof payload.title === 'string' ? `${payload.title}: ` : ''}${payload.message}`,
+  );
   sendResponse({ shown: document.visibilityState === 'visible' });
   return false;
 });

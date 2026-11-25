@@ -6,7 +6,7 @@
  * this screen too, because "do not contact this person again" must be one click and must hold everywhere.
  */
 
-import { button, card, div, empty, metric, pill, plural, text } from '../dom';
+import { button, card, confirmModal, div, emptyState, metric, pill, plural, searchBar, text } from '../dom';
 import type { Ctx } from '../shell';
 import type { ContactRow } from '../../../background/workspace';
 
@@ -29,6 +29,7 @@ const CATEGORY: Record<string, string> = {
 };
 
 let showSuppressed = false;
+let query = '';
 
 function row(contact: ContactRow, ctx: Ctx): HTMLElement {
   const confident = contact.confidence >= 0.8;
@@ -56,22 +57,39 @@ function row(contact: ContactRow, ctx: Ctx): HTMLElement {
         : null,
       contact.suppressed
         ? pill('Suppressed', 'red')
-        : button('Never contact', 'btn btn-sm', () => ctx.run({ kind: 'workspace', action: 'suppressContact', id: contact.id })),
+        : button('Never contact', 'btn btn-sm btn-danger', async () => {
+            if (
+              await confirmModal({
+                title: `Never contact ${contact.name}?`,
+                description: 'Suppressing this contact holds permanently across every campaign and channel.',
+                confirmLabel: 'Never contact',
+                tone: 'danger',
+              })
+            )
+              await ctx.run({ kind: 'workspace', action: 'suppressContact', id: contact.id });
+          }),
     ]),
   ]);
 }
 
 export function people(ctx: Ctx): HTMLElement {
   const w = ctx.workspace;
-  if (!w) return empty('Your contacts could not be loaded', 'The message above says why. Reload the extension, then reopen this page.');
+  if (!w)
+    return emptyState({
+      icon: 'alert',
+      title: 'Your contacts could not be loaded',
+      description: 'The message above says why. Reload the extension, then reopen this page.',
+    });
   const all = w.contacts;
 
   if (!all.length)
-    return empty(
-      'No contacts yet',
-      'Once a campaign resolves its target companies, the people who could refer you appear here with the evidence behind each one.',
-      button('Open referrals', 'btn btn-primary', () => ctx.go('referrals')),
-    );
+    return emptyState({
+      icon: 'people',
+      title: 'No contacts yet',
+      description:
+        'Once a campaign resolves its target companies, the people who could refer you appear here with the evidence behind each one.',
+      action: button('Open referrals', 'btn btn-primary', () => ctx.go('referrals')),
+    });
 
   const active = all.filter(c => !c.suppressed);
   const suppressed = all.filter(c => c.suppressed);
@@ -108,18 +126,36 @@ export function people(ctx: Ctx): HTMLElement {
     tabs.append(b);
   }
 
+  const rowsHost = div('rows');
+  const drawRows = (): void => {
+    const q = query.trim().toLowerCase();
+    const list = shown.filter(c => !q || `${c.name} ${c.company ?? ''} ${c.role ?? ''} ${c.email ?? ''}`.toLowerCase().includes(q));
+    rowsHost.replaceChildren(
+      ...(list.length
+        ? list.map(c => row(c, ctx))
+        : [text('p', 'cell-muted', showSuppressed ? 'Nobody is suppressed.' : 'No matching contacts.')]),
+    );
+  };
+  drawRows();
+
   page.append(
     div('grid split', [
       card('People who could refer you', {
         sub: 'One record per person, however many companies or jobs they turn up against.',
         body: [
-          tabs,
-          shown.length
-            ? div(
-                'rows',
-                shown.map(c => row(c, ctx)),
-              )
-            : text('p', 'cell-muted', showSuppressed ? 'Nobody is suppressed.' : 'Nothing here.'),
+          div('filter-bar', [
+            tabs,
+            searchBar({
+              placeholder: 'Search name, company, role…',
+              value: query,
+              ariaLabel: 'Search people',
+              onInput: val => {
+                query = val;
+                drawRows();
+              },
+            }),
+          ]),
+          rowsHost,
         ],
       }),
       card('How contacts are treated', {

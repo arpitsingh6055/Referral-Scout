@@ -9,13 +9,14 @@
  * never "you lack this". The product does not know the difference, and the person does.
  */
 
-import { ago, button, card, div, empty, icon, metric, pill, plural, text } from '../dom';
+import { ago, button, card, div, emptyState, icon, metric, pill, plural, searchBar, text } from '../dom';
 import type { Ctx } from '../shell';
 import type { JobRow } from '../../../background/workspace';
 
 type Filter = 'strong' | 'possible' | 'blocked' | 'shortlisted' | 'all';
 
 let filter: Filter = 'all';
+let query = '';
 let openJob: string | null = null;
 
 const TIER_TONE: Record<string, 'green' | 'violet' | 'grey' | 'red'> = {
@@ -111,7 +112,9 @@ function detail(job: JobRow, ctx: Ctx, queuedRefs: Set<string>): HTMLElement {
     ),
 
     text('h3', 'card-title', 'How well does it match?'),
-    job.aiWhy ? div('note note-violet', [text('p', '', `${job.fitSource === 'chatgpt' ? 'ChatGPT assessment' : 'Profile evidence'}: ${job.aiWhy}`)]) : null,
+    job.aiWhy
+      ? div('note note-violet', [text('p', '', `${job.fitSource === 'chatgpt' ? 'ChatGPT assessment' : 'Profile evidence'}: ${job.aiWhy}`)])
+      : null,
     evidenceList(job),
 
     job.preferenceNotes.length
@@ -161,14 +164,33 @@ function row(job: JobRow, ctx: Ctx, queuedRefs: Set<string>): HTMLElement {
   return div('row row-queue', [
     div('row-title', [
       text('div', 'row-company', job.company),
-      text('div', 'cell-strong', job.title),
+      Object.assign(text('div', 'cell-strong', job.title), { title: job.title }),
       text('div', 'cell-muted', `${job.location}${job.evidence.length ? ` · ${met} of ${job.evidence.length} requirements matched` : ''}`),
     ]),
     div('col-hide', [pill(job.source.replace(/ Jobs$/, ''), 'grey')]),
     div('', [pill(job.tier === 'blocked' ? 'Not eligible' : `Fit ${job.fit}`, TIER_TONE[job.tier] ?? 'grey')]),
     div('col-hide', [text('div', 'cell-muted', job.postedAt ? ago(job.postedAt) : 'date unknown')]),
     div('inline', [
-      inQueue ? pill('In queue', 'blue') : job.judgement === 'shortlisted' ? pill('Shortlisted', 'green') : job.judgement === 'rejected' ? pill('Dismissed', 'red') : null,
+      inQueue
+        ? pill('In queue', 'blue')
+        : job.judgement === 'shortlisted'
+          ? pill('Shortlisted', 'green')
+          : job.judgement === 'rejected'
+            ? pill('Dismissed', 'red')
+            : null,
+      !inQueue && job.tier !== 'blocked'
+        ? button(
+            job.judgement === 'shortlisted' ? 'Unshortlist' : 'Shortlist',
+            job.judgement === 'shortlisted' ? 'btn btn-sm btn-ghost' : 'btn btn-sm',
+            () =>
+              ctx.run({
+                kind: 'workspace',
+                action: 'judgeJob',
+                id: job.id,
+                judgement: job.judgement === 'shortlisted' ? 'none' : 'shortlisted',
+              }),
+          )
+        : null,
       button(openJob === job.id ? 'Hide' : 'Why?', 'btn btn-sm', () => {
         openJob = openJob === job.id ? null : job.id;
         ctx.redraw();
@@ -185,23 +207,39 @@ export function jobs(ctx: Ctx): HTMLElement {
     const search = ctx.workspace?.jobSearch;
     const linkedinConnected = !!ctx.workspace?.connections.linkedin;
     if (search?.status === 'finding') {
-      page.append(div('banner banner-progress', [
-        icon('search', 18),
-        `Searching LinkedIn Jobs. ${search.found} jobs found; ${search.cursor} of ${search.totalTerms || 'several'} search titles checked. Referral Scout will then assess the results against your CV and LinkedIn background.`,
-        button('Finish with current results', 'btn btn-sm', () => ctx.runNetwork({ kind: 'network', action: 'finishJobSearch' })),
-      ]));
+      page.append(
+        div('banner banner-progress', [
+          icon('search', 18),
+          `Searching LinkedIn Jobs. ${search.found} jobs found; ${search.cursor} of ${search.totalTerms || 'several'} search titles checked. Referral Scout will then assess the results against your CV and LinkedIn background.`,
+          button('Finish with current results', 'btn btn-sm', () => ctx.runNetwork({ kind: 'network', action: 'finishJobSearch' })),
+        ]),
+      );
     }
-    page.append(empty(
-      search?.status === 'choosing' ? 'No suitable jobs in this search' : linkedinConnected ? 'No jobs discovered yet' : 'Connect LinkedIn first',
-      search?.status === 'choosing'
-        ? 'The search finished without producing jobs to review. Try broadening the role or location in Campaign.'
-        : linkedinConnected
-          ? 'Start a LinkedIn Jobs search using the roles and location saved in Campaign. Referral Scout searches related titles, reads available descriptions and ranks them against your CV and LinkedIn background.'
-          : 'Read your own LinkedIn profile in Candidate profile first so Referral Scout can verify your session before searching LinkedIn Jobs.',
-      linkedinConnected
-        ? button(search?.status === 'finding' ? 'Search is running' : 'Find jobs on LinkedIn', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' }), { disabled: search?.status === 'finding' })
-        : button('Open Candidate profile', 'btn btn-primary', () => ctx.go('profile')),
-    ));
+    page.append(
+      emptyState({
+        icon: linkedinConnected ? 'briefcase' : 'person',
+        title:
+          search?.status === 'choosing'
+            ? 'No suitable jobs in this search'
+            : linkedinConnected
+              ? 'No jobs discovered yet'
+              : 'Connect LinkedIn first',
+        description:
+          search?.status === 'choosing'
+            ? 'The search finished without producing jobs to review. Try broadening the role or location in Campaign.'
+            : linkedinConnected
+              ? 'Start a LinkedIn Jobs search using the roles and location saved in Campaign. Referral Scout searches related titles, reads available descriptions and ranks them against your CV and LinkedIn background.'
+              : 'Read your own LinkedIn profile in Candidate profile first so Referral Scout can verify your session before searching LinkedIn Jobs.',
+        action: linkedinConnected
+          ? button(
+              search?.status === 'finding' ? 'Search is running' : 'Find jobs on LinkedIn',
+              'btn btn-primary',
+              () => ctx.runNetwork({ kind: 'network', action: 'findJobs' }),
+              { disabled: search?.status === 'finding' },
+            )
+          : button('Open Candidate profile', 'btn btn-primary', () => ctx.go('profile')),
+      }),
+    );
     return page;
   }
 
@@ -217,21 +255,33 @@ export function jobs(ctx: Ctx): HTMLElement {
   if (ctx.workspace?.jobSearch?.status === 'finding') {
     const search = ctx.workspace.jobSearch;
     const ranking = search.ranking;
-    page.append(div('banner banner-progress', [
-      icon('search', 18),
-      div('', [
-        text('div', 'rule-name', ranking
-          ? `Assessing your fit: ${ranking.done} of ${ranking.total} job descriptions reviewed`
-          : `Searching LinkedIn Jobs: ${search.found} jobs found across ${search.cursor} of ${search.totalTerms || 'several'} search titles`),
-        text('div', 'cell-muted', 'Referral Scout is using your saved CV and LinkedIn profile. You can keep using the dashboard while the search runs.'),
+    page.append(
+      div('banner banner-progress', [
+        icon('search', 18),
+        div('', [
+          text(
+            'div',
+            'rule-name',
+            ranking
+              ? `Assessing your fit: ${ranking.done} of ${ranking.total} job descriptions reviewed`
+              : `Searching LinkedIn Jobs: ${search.found} jobs found across ${search.cursor} of ${search.totalTerms || 'several'} search titles`,
+          ),
+          text(
+            'div',
+            'cell-muted',
+            'Referral Scout is using your saved CV and LinkedIn profile. You can keep using the dashboard while the search runs.',
+          ),
+        ]),
+        button('Finish with current results', 'btn btn-sm', () => ctx.runNetwork({ kind: 'network', action: 'finishJobSearch' })),
       ]),
-      button('Finish with current results', 'btn btn-sm', () => ctx.runNetwork({ kind: 'network', action: 'finishJobSearch' })),
-    ]));
+    );
   } else if (ctx.workspace?.jobSearch?.status === 'choosing') {
-    page.append(div('banner banner-note', [
-      icon('check', 18),
-      `Search complete: ${ctx.workspace.jobSearch.found} jobs are ready for review. Open each job's reasoning and shortlist only the roles you want.`,
-    ]));
+    page.append(
+      div('banner banner-note', [
+        icon('check', 18),
+        `Search complete: ${ctx.workspace.jobSearch.found} jobs are ready for review. Open each job's reasoning and shortlist only the roles you want.`,
+      ]),
+    );
   }
   page.append(
     div('grid metrics', [
@@ -261,21 +311,35 @@ export function jobs(ctx: Ctx): HTMLElement {
     tabs.append(b);
   }
 
-  const shown = all.filter(MATCH[filter]);
+  const rowsHost = div('rows');
+  const drawRows = (): void => {
+    const q = query.trim().toLowerCase();
+    const matchesQuery = (j: JobRow): boolean => !q || `${j.title} ${j.company} ${j.location} ${j.source}`.toLowerCase().includes(q);
+    const shown = all.filter(MATCH[filter]).filter(matchesQuery);
+    rowsHost.replaceChildren(
+      ...(shown.length ? shown.map(j => row(j, ctx, queuedUrls)) : [text('p', 'cell-muted', 'No matching jobs in this view.')]),
+    );
+  };
+  drawRows();
   const selected = openJob ? all.find(j => j.id === openJob) : undefined;
+
+  const filterBar = div('filter-bar', [
+    tabs,
+    searchBar({
+      placeholder: 'Filter by role, company, location…',
+      value: query,
+      ariaLabel: 'Filter discovered jobs',
+      onInput: val => {
+        query = val;
+        drawRows();
+      },
+    }),
+  ]);
 
   const list = card('Discovered jobs', {
     sub: 'Eligibility first, then how well your evidence matches. Effort only separates jobs that are otherwise equal.',
     link: button('Re-check against my profile', 'btn-link', () => ctx.run({ kind: 'workspace', action: 'requalify' })),
-    body: [
-      tabs,
-      shown.length
-        ? div(
-            'rows',
-            shown.map(j => row(j, ctx, queuedUrls)),
-          )
-        : text('p', 'cell-muted', 'Nothing in this view.'),
-    ],
+    body: [filterBar, rowsHost],
   });
 
   const side = selected
@@ -302,7 +366,14 @@ export function jobs(ctx: Ctx): HTMLElement {
 
   page.append(div('grid split', [list, side]));
 
-  if (ctx.workspace && !ctx.workspace.connections.linkedin && !ctx.workspace.cv.hasText && !ctx.workspace.profile.skills.length && !ctx.workspace.profile.employment.some(e => e.technologies.length) && !ctx.workspace.profile.projects.some(p => p.skills.length))
+  if (
+    ctx.workspace &&
+    !ctx.workspace.connections.linkedin &&
+    !ctx.workspace.cv.hasText &&
+    !ctx.workspace.profile.skills.length &&
+    !ctx.workspace.profile.employment.some(e => e.technologies.length) &&
+    !ctx.workspace.profile.projects.some(p => p.skills.length)
+  )
     page.append(
       div('banner banner-note', [
         icon('info', 18),
