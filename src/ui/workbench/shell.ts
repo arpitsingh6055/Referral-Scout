@@ -127,6 +127,114 @@ let cachedMission: ActiveMissionState = getCachedActiveMission();
 let drawn = '';
 let deferred: { view: CampaignView; workspace: WorkspaceView | null } | null = null;
 let mobileDrawerOpen = false;
+let cachedWindowId: number | undefined;
+let cachedLinkedInTabId: number | undefined;
+let fallbackPopoverEl: HTMLElement | null = null;
+
+function primeSurfaceCache(): void {
+  try {
+    const c = (globalThis as { chrome?: typeof chrome }).chrome;
+    void c?.windows
+      ?.getCurrent?.()
+      ?.then?.(w => {
+        if (w?.id !== undefined) cachedWindowId = w.id;
+      })
+      ?.catch?.(() => undefined);
+    void c?.tabs
+      ?.query?.({ url: ['https://www.linkedin.com/*', 'https://linkedin.com/*'] })
+      ?.then?.(tabs => {
+        const hit = tabs.find(t => t.id !== undefined);
+        if (hit?.id !== undefined) cachedLinkedInTabId = hit.id;
+      })
+      ?.catch?.(() => undefined);
+    c?.tabs?.onUpdated?.addListener?.((tabId, _info, tab) => {
+      if (tab.url && /^https:\/\/(www\.)?linkedin\.com\//i.test(tab.url)) {
+        cachedLinkedInTabId = tabId;
+      }
+    });
+    c?.tabs?.onRemoved?.addListener?.(tabId => {
+      if (cachedLinkedInTabId === tabId) cachedLinkedInTabId = undefined;
+    });
+  } catch {
+    // Ignore outside extension runtime.
+  }
+}
+
+primeSurfaceCache();
+
+function showSidePanelFallbackPopover(url?: string): void {
+  fallbackPopoverEl?.remove();
+  const targetUrl = url || 'https://www.linkedin.com/jobs/';
+  const pop = el('div', {
+    class: 'sidepanel-fallback-popover',
+    role: 'alertdialog',
+    'aria-label': 'Side Panel blocked by browser policy',
+  });
+  const closeBtn = button('×', 'btn btn-ghost btn-sm', () => {
+    pop.remove();
+    if (fallbackPopoverEl === pop) fallbackPopoverEl = null;
+  });
+  closeBtn.setAttribute('aria-label', 'Dismiss notice');
+  const focusBtn = button('Focus LinkedIn Tab →', 'btn btn-sm btn-primary', () => {
+    void chrome.runtime
+      ?.sendMessage?.({ kind: 'surface', action: 'focus-linkedin-tab', url: targetUrl, tabId: cachedLinkedInTabId })
+      ?.catch?.(() => undefined);
+    pop.remove();
+    if (fallbackPopoverEl === pop) fallbackPopoverEl = null;
+  });
+  pop.append(
+    div('sidepanel-fallback-head', [text('strong', '', 'Side Panel needs a toolbar click'), closeBtn]),
+    text(
+      'p',
+      'sidepanel-fallback-body',
+      'Your browser blocked auto-opening the Side Panel. Click the Referral Scout icon in your toolbar (pin it for 1-click access).',
+    ),
+    div('sidepanel-fallback-actions', [focusBtn]),
+  );
+  document.body.append(pop);
+  fallbackPopoverEl = pop;
+}
+
+/**
+ * Invokes `chrome.sidePanel.open()` synchronously on line 1 of a user click handler (zero `await` before it)
+ * so Chromium and Microsoft Edge preserve the userGesture token, then focuses the LinkedIn tab.
+ */
+function summonSidePanelWithGesture(url?: string): void {
+  const c = (globalThis as { chrome?: typeof chrome }).chrome;
+  const sidePanel = c?.sidePanel;
+  const targetWinId = cachedWindowId ?? c?.windows?.WINDOW_ID_CURRENT;
+
+  if (sidePanel?.open && targetWinId !== undefined) {
+    try {
+      void sidePanel.setOptions?.({ path: 'sidepanel.html', enabled: true })?.catch?.(() => undefined);
+      const openPromise = sidePanel.open({ windowId: targetWinId });
+      if (url) {
+        void c?.runtime
+          ?.sendMessage?.({ kind: 'surface', action: 'focus-linkedin-tab', url, tabId: cachedLinkedInTabId })
+          ?.catch?.(() => undefined);
+      }
+      void Promise.resolve(openPromise).catch(() => {
+        showSidePanelFallbackPopover(url);
+      });
+      return;
+    } catch {
+      showSidePanelFallbackPopover(url);
+      return;
+    }
+  }
+
+  void c?.runtime
+    ?.sendMessage?.(url ? { kind: 'surface', action: 'open-linkedin-panel', url } : { kind: 'surface', action: 'open-panel' })
+    ?.then?.((res: unknown) => {
+      const reply = res as { opened?: boolean } | undefined;
+      if (reply && reply.opened === false) {
+        showSidePanelFallbackPopover(url);
+      }
+    })
+    ?.catch?.(() => {
+      showSidePanelFallbackPopover(url);
+    });
+}
 
 const root = document.getElementById('app')!;
 const floatingToasts = createToaster(document.body);
@@ -224,7 +332,7 @@ function rail(ctx: Ctx): { aside: HTMLElement; backdrop: HTMLElement } {
     ]),
     nav,
     c
-      ? div('rail-foot', [
+      ? div(running ? 'rail-foot is-running' : 'rail-foot', [
           div('rail-foot-label', [
             el('span', {
               class: running
@@ -236,14 +344,14 @@ function rail(ctx: Ctx): { aside: HTMLElement; backdrop: HTMLElement } {
                     : 'dot dot-ready',
             }),
             running
-              ? 'Campaign active'
+              ? 'Engine running'
               : ctx.view.inboxCounts.open
                 ? 'Needs you'
                 : c.status === 'paused'
                   ? 'Paused'
                   : c.status === 'completed'
                     ? 'Completed'
-                    : 'Ready to start',
+                    : 'Idle',
           ]),
           text('div', 'rail-foot-name', c.name),
           text(
@@ -521,17 +629,7 @@ function render(force = false): void {
       render(true);
     },
     openPanel: (url?: string) => {
-      void chrome.runtime
-        .sendMessage(url ? { kind: 'surface', action: 'open-linkedin-panel', url } : { kind: 'surface', action: 'open-panel' })
-        .then(res => {
-          const reply = res as { opened?: boolean } | undefined;
-          if (reply && reply.opened === false) {
-            floatingToasts.show('info', 'LinkedIn opened — click the Referral Scout icon if Side Panel stays closed.');
-          }
-        })
-        .catch(() => {
-          if (url) ctx.openExternal(url);
-        });
+      summonSidePanelWithGesture(url);
     },
     go: route => {
       mobileDrawerOpen = false;
@@ -588,9 +686,7 @@ function render(force = false): void {
     });
     const navigateHud = (target: HudState): void => {
       if (target.command === 'summonLinkedIn') {
-        void chrome.runtime
-          .sendMessage({ kind: 'surface', action: 'summon-workspace', surface: 'linkedin_tab' })
-          .catch(() => ctx.openPanel(target.inspectTabUrl || 'https://www.linkedin.com/jobs/'));
+        summonSidePanelWithGesture(target.inspectTabUrl || 'https://www.linkedin.com/jobs/');
         return;
       }
       if (target.inspectTabId !== undefined || target.inspectTabUrl) {

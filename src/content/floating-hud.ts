@@ -3,9 +3,10 @@
  *
  * Dual-mode on host pages:
  * 1. Form Autofill HUD (`updatePageHud`) when filling LinkedIn/ATS forms.
- * 2. Floating Wayfinding Re-Entry Pill (`initInPageWayfindingHud`) whenever an active Referral Scout
- *    mission is running or awaiting review while the Chrome Side Panel is closed (`!mission.isSidePanelOpen`),
- *    allowing 1-click Side Panel recovery directly from the web page without toolbar-icon hunting.
+ * 2. Floating Wayfinding Re-Entry Pill & Quick-Control Drawer (`initInPageWayfindingHud`) whenever an active
+ *    Referral Scout mission is running or awaiting review while the Chrome Side Panel is closed
+ *    (`!mission.isSidePanelOpen`), allowing instant on-page controls + 1-click Full Workbench launch without
+ *    relying on `chrome.sidePanel.open()` from a webpage content-script gesture.
  */
 
 import { getCachedActiveMission, readActiveMission, subscribeActiveMission, type ActiveMissionState } from '../shared/progress-store';
@@ -20,9 +21,18 @@ export interface PageHudPayload {
 
 const FONT = "font:500 12.5px/1.35 system-ui,-apple-system,'Segoe UI',sans-serif;box-sizing:border-box";
 
+let hostEl: HTMLElement | null = null;
 let root: ShadowRoot | null = null;
 let cardEl: HTMLElement | null = null;
+let drawerEl: HTMLElement | null = null;
+let drawerTitleEl: HTMLElement | null = null;
+let drawerPctEl: HTMLElement | null = null;
+let drawerTickerEl: HTMLElement | null = null;
+let drawerTrackEl: HTMLElement | null = null;
+let drawerFillEl: HTMLElement | null = null;
+let drawerPauseBtn: HTMLButtonElement | null = null;
 let fillEl: HTMLElement | null = null;
+let trackEl: HTMLElement | null = null;
 let pctEl: HTMLElement | null = null;
 let titleEl: HTMLElement | null = null;
 let detailEl: HTMLElement | null = null;
@@ -31,54 +41,230 @@ let closeBtn: HTMLButtonElement | null = null;
 let miniPillBtn: HTMLButtonElement | null = null;
 let dismissed = false;
 let minimized = false;
+let drawerOpen = false;
 let hasApplyOverride = false;
 let currentMode: 'apply' | 'wayfinding' = 'apply';
 let hideTimer: ReturnType<typeof setTimeout> | undefined;
 let wayfindingInitialized = false;
 
-function openControlsFromPage(): void {
+function sendRuntimeMessage(payload: Record<string, unknown>, onDone?: (res: unknown) => void): void {
   try {
-    void (globalThis as { chrome?: typeof chrome }).chrome?.runtime
-      ?.sendMessage?.({ kind: 'surface', action: 'open-panel' })
-      ?.catch?.(() => {
-        void (globalThis as { chrome?: typeof chrome }).chrome?.runtime
-          ?.sendMessage?.({ type: 'OPEN_SIDE_PANEL' })
-          ?.catch?.(() => undefined);
-      });
+    const runtime = (globalThis as { chrome?: typeof chrome }).chrome?.runtime;
+    if (!runtime?.sendMessage) {
+      onDone?.(undefined);
+      return;
+    }
+    void Promise.resolve(runtime.sendMessage(payload))
+      .then(res => onDone?.(res))
+      .catch(() => onDone?.(undefined));
   } catch {
-    // Ignore when extension runtime is unavailable in unit tests.
+    onDone?.(undefined);
   }
+}
+
+function openControlsFromPage(triggerBtn?: HTMLButtonElement | null): void {
+  const prevText = triggerBtn?.textContent ?? 'Try Native Side Panel';
+  if (triggerBtn) {
+    triggerBtn.textContent = 'Opening…';
+    triggerBtn.disabled = true;
+  }
+  const restore = (label = prevText, delayMs = 0): void => {
+    if (!triggerBtn) return;
+    if (delayMs > 0) {
+      triggerBtn.textContent = label;
+      setTimeout(() => {
+        if (triggerBtn) {
+          triggerBtn.textContent = prevText;
+          triggerBtn.disabled = false;
+        }
+      }, delayMs);
+    } else {
+      triggerBtn.textContent = label;
+      triggerBtn.disabled = false;
+    }
+  };
+  sendRuntimeMessage({ kind: 'surface', action: 'open-panel' }, res => {
+    const reply = res as { opened?: boolean } | undefined;
+    if (reply?.opened) {
+      restore();
+    } else {
+      restore('Use toolbar icon ↑', 2200);
+    }
+  });
+}
+
+function syncDrawer(mission: ActiveMissionState): void {
+  if (!drawerEl || !hostEl) return;
+  hostEl.dataset.rsDrawerOpen = String(drawerOpen);
+  drawerEl.style.display = drawerOpen ? 'block' : 'none';
+  if (!drawerOpen) return;
+
+  const pct = Math.max(0, Math.min(100, Math.round(mission.percent || 25)));
+  if (drawerTitleEl) drawerTitleEl.textContent = mission.stageLabel || 'Referral Scout';
+  if (drawerPctEl) drawerPctEl.textContent = `${pct}%`;
+  if (drawerTickerEl) drawerTickerEl.textContent = mission.liveSummary || 'Synced with Referral Scout';
+  if (drawerFillEl) drawerFillEl.style.width = `${pct}%`;
+  if (drawerTrackEl) drawerTrackEl.className = mission.active ? 'track is-running' : 'track';
+  if (drawerPauseBtn) drawerPauseBtn.textContent = mission.active ? 'Pause Engine' : 'Resume Engine';
+}
+
+/** Toggles the instant on-page Shadow-DOM Quick-Control Drawer on LinkedIn. */
+export function toggleQuickControlDrawer(force?: boolean): boolean {
+  drawerOpen = force !== undefined ? force : !drawerOpen;
+  if (drawerOpen) minimized = false;
+  if (!ensureHost()) return drawerOpen;
+  renderWayfinding(getCachedActiveMission());
+  return drawerOpen;
 }
 
 function ensureHost(): boolean {
   if (root && document.contains(root.host)) return true;
   if (!document.body || typeof CSSStyleSheet !== 'function') return false;
 
-  const host = document.createElement('referral-scout-hud');
-  root = host.attachShadow({ mode: 'closed' });
+  hostEl = document.createElement('referral-scout-hud');
+  hostEl.dataset.rsDrawerOpen = String(drawerOpen);
+  root = hostEl.attachShadow({ mode: 'closed' });
   const sheet = new CSSStyleSheet();
   sheet.replaceSync(
-    `:host{all:initial;position:fixed;right:16px;bottom:16px;z-index:2147483647;display:block;max-width:calc(100vw - 32px);color-scheme:light dark}` +
-      `.box{${FONT};width:336px;max-width:calc(100vw - 32px);background:rgba(15,23,42,0.94);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);color:#f8fafc;border:1px solid rgba(148,163,184,0.28);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,0.34);overflow:hidden}` +
+    `:host{all:initial;position:fixed;right:16px;bottom:16px;z-index:2147483647;display:flex;flex-direction:column;align-items:flex-end;gap:10px;max-width:calc(100vw - 32px);color-scheme:light dark}` +
+      `@keyframes rs-cd-stripe{from{background-position:0 0}to{background-position:24px 0}}` +
+      `@keyframes rs-cd-sheen{0%{transform:translateX(-100%)}100%{transform:translateX(220%)}}` +
+      `@keyframes rs-cd-radar{0%{box-shadow:0 0 0 0 rgba(124,102,255,0.6)}70%{box-shadow:0 0 0 7px rgba(124,102,255,0)}100%{box-shadow:0 0 0 0 rgba(124,102,255,0)}}` +
+      `.box,.drawer{${FONT};width:348px;max-width:calc(100vw - 32px);background:rgba(15,23,42,0.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);color:#f8fafc;border:1px solid rgba(148,163,184,0.28);border-radius:12px;box-shadow:0 14px 36px rgba(0,0,0,0.38);overflow:hidden}` +
       `.row{display:flex;align-items:center;gap:10px;padding:10px 12px}` +
       `.pct{${FONT};font-variant-numeric:tabular-nums;font-weight:700;font-size:12px;color:#c4b5fd;min-width:34px;text-align:right;flex:none}` +
       `.copy{flex:1;min-width:0}` +
       `.title{${FONT};font-weight:600;color:#ffffff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}` +
       `.sub{${FONT};font-size:11.5px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}` +
-      `.btn{${FONT};border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:#ffffff;border-radius:7px;padding:5px 9px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap}` +
-      `.btn:hover{background:rgba(255,255,255,0.24)}` +
-      `.close{${FONT};border:0;background:transparent;color:#94a3b8;font-size:15px;line-height:1;padding:2px 4px;cursor:pointer;border-radius:6px}` +
+      `.btn{${FONT};border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.12);color:#ffffff;border-radius:7px;padding:5px 9px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap}` +
+      `.btn:hover:not(:disabled){background:rgba(255,255,255,0.22)}` +
+      `.btn:disabled{opacity:0.65;cursor:default}` +
+      `.btn-primary{background:#6d54ff;border-color:#7c66ff;color:#ffffff}` +
+      `.btn-primary:hover:not(:disabled){background:#7c66ff}` +
+      `.close{${FONT};border:0;background:transparent;color:#94a3b8;font-size:15px;line-height:1;padding:2px 6px;cursor:pointer;border-radius:6px}` +
       `.close:hover{color:#fff;background:rgba(255,255,255,0.12)}` +
-      `.track{height:3px;background:rgba(255,255,255,0.12)}` +
-      `.fill{display:block;height:100%;background:#7c66ff;transition:width 180ms cubic-bezier(0.16,1,0.3,1)}` +
+      `.track{position:relative;height:4px;background:rgba(255,255,255,0.12);overflow:hidden}` +
+      `.fill{display:block;position:relative;height:100%;background:#7c66ff;transition:width 220ms cubic-bezier(0.16,1,0.3,1);overflow:hidden}` +
+      `.track.is-running .fill{background-image:repeating-linear-gradient(-45deg,#7c66ff 0 6px,#9380ff 6px 12px);background-size:24px 24px;animation:rs-cd-stripe 1s linear infinite}` +
+      `.track.is-running .fill::after{content:'';position:absolute;inset:0;width:45%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.45),transparent);animation:rs-cd-sheen 1.6s ease-in-out infinite}` +
       `.box.done .fill,.box.done .pct{background:#10b981;color:#6ee7b7}` +
       `.box.done .pct{background:transparent}` +
       `.box.err .fill{background:#ef4444}` +
       `.box.err .pct{color:#fca5a5}` +
-      `.mini{${FONT};display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:999px;background:rgba(15,23,42,0.92);color:#f8fafc;border:1px solid rgba(148,163,184,0.32);box-shadow:0 8px 24px rgba(0,0,0,0.28);font-weight:600;font-size:12px;cursor:pointer}`,
+      `.mini{${FONT};display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:999px;background:rgba(15,23,42,0.92);color:#f8fafc;border:1px solid rgba(148,163,184,0.32);box-shadow:0 8px 24px rgba(0,0,0,0.28);font-weight:600;font-size:12px;cursor:pointer}` +
+      `.drawer-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(148,163,184,0.16)}` +
+      `.drawer-badge{${FONT};width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,#5e43f3,#7c66ff);color:#fff;font-weight:800;font-size:10px;display:grid;place-items:center;flex:none}` +
+      `.drawer-radar{width:7px;height:7px;border-radius:50%;background:#34d399;flex:none;animation:rs-cd-radar 1.8s infinite}` +
+      `.drawer-body{padding:10px 12px;display:flex;flex-direction:column;gap:8px}` +
+      `.drawer-ticker{${FONT};font-size:12px;color:#cbd5e1}` +
+      `.drawer-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}` +
+      `.drawer-foot{display:flex;flex-direction:column;gap:6px;padding-top:4px;border-top:1px solid rgba(148,163,184,0.14)}` +
+      `.drawer-hint{${FONT};font-size:11px;color:#94a3b8;text-align:center}` +
+      `@media (prefers-reduced-motion: reduce){.track.is-running .fill,.track.is-running .fill::after,.drawer-radar{animation:none!important}}`,
   );
   root.adoptedStyleSheets = [sheet];
 
+  /* --- Expanded Quick-Control Drawer --- */
+  drawerEl = document.createElement('section');
+  drawerEl.className = 'drawer';
+  drawerEl.setAttribute('aria-label', 'Referral Scout Quick Controls');
+  drawerEl.style.display = 'none';
+
+  const dHead = document.createElement('div');
+  dHead.className = 'drawer-head';
+  const dBadge = document.createElement('span');
+  dBadge.className = 'drawer-badge';
+  dBadge.textContent = 'RS';
+  const dRadar = document.createElement('span');
+  dRadar.className = 'drawer-radar';
+  dRadar.setAttribute('aria-hidden', 'true');
+  drawerTitleEl = document.createElement('div');
+  drawerTitleEl.className = 'title copy';
+  drawerPctEl = document.createElement('span');
+  drawerPctEl.className = 'pct';
+  const dClose = document.createElement('button');
+  dClose.type = 'button';
+  dClose.className = 'close';
+  dClose.setAttribute('aria-label', 'Close quick controls');
+  dClose.textContent = '▾';
+  dClose.addEventListener('click', () => {
+    drawerOpen = false;
+    renderWayfinding(getCachedActiveMission());
+  });
+  dHead.append(dBadge, dRadar, drawerTitleEl, drawerPctEl, dClose);
+
+  drawerTrackEl = document.createElement('div');
+  drawerTrackEl.className = 'track';
+  drawerFillEl = document.createElement('span');
+  drawerFillEl.className = 'fill';
+  drawerTrackEl.append(drawerFillEl);
+
+  const dBody = document.createElement('div');
+  dBody.className = 'drawer-body';
+  drawerTickerEl = document.createElement('div');
+  drawerTickerEl.className = 'drawer-ticker';
+
+  const dGrid = document.createElement('div');
+  dGrid.className = 'drawer-grid';
+
+  const scanBtn = document.createElement('button');
+  scanBtn.type = 'button';
+  scanBtn.className = 'btn';
+  scanBtn.textContent = 'Scan Jobs on Page';
+  scanBtn.addEventListener('click', () => {
+    scanBtn.textContent = 'Starting scan…';
+    sendRuntimeMessage({ kind: 'network', action: 'findJobs' }, () => {
+      setTimeout(() => {
+        scanBtn.textContent = 'Scan Jobs on Page';
+      }, 1500);
+    });
+  });
+
+  const refsBtn = document.createElement('button');
+  refsBtn.type = 'button';
+  refsBtn.className = 'btn';
+  refsBtn.textContent = 'Find Referrers';
+  refsBtn.addEventListener('click', () => {
+    sendRuntimeMessage({ kind: 'surface', action: 'open-tab', route: 'referrals' });
+  });
+
+  drawerPauseBtn = document.createElement('button');
+  drawerPauseBtn.type = 'button';
+  drawerPauseBtn.className = 'btn';
+  drawerPauseBtn.textContent = 'Pause Engine';
+  drawerPauseBtn.addEventListener('click', () => {
+    const currentlyActive = getCachedActiveMission().active;
+    sendRuntimeMessage({ kind: 'network', action: currentlyActive ? 'pause' : 'resume' });
+  });
+
+  const panelBtn = document.createElement('button');
+  panelBtn.type = 'button';
+  panelBtn.className = 'btn';
+  panelBtn.textContent = 'Try Native Side Panel';
+  panelBtn.addEventListener('click', () => openControlsFromPage(panelBtn));
+
+  dGrid.append(scanBtn, refsBtn, drawerPauseBtn, panelBtn);
+
+  const workbenchBtn = document.createElement('button');
+  workbenchBtn.type = 'button';
+  workbenchBtn.className = 'btn btn-primary';
+  workbenchBtn.textContent = 'Open Full Workbench →';
+  workbenchBtn.addEventListener('click', () => {
+    sendRuntimeMessage({ kind: 'surface', action: 'open-tab', route: 'jobs' });
+  });
+
+  const hint = document.createElement('div');
+  hint.className = 'drawer-hint';
+  hint.textContent = 'Or click the RS icon in your browser toolbar';
+
+  const dFoot = document.createElement('div');
+  dFoot.className = 'drawer-foot';
+  dFoot.append(workbenchBtn, hint);
+
+  dBody.append(drawerTickerEl, dGrid, dFoot);
+  drawerEl.append(dHead, drawerTrackEl, dBody);
+
+  /* --- Compact Bottom Pill / Card --- */
   cardEl = document.createElement('div');
   cardEl.className = 'box';
 
@@ -102,7 +288,7 @@ function ensureHost(): boolean {
   jumpBtn.textContent = 'Next gap';
   jumpBtn.addEventListener('click', () => {
     if (currentMode === 'wayfinding') {
-      openControlsFromPage();
+      toggleQuickControlDrawer();
       return;
     }
     const target = document.querySelector<HTMLElement>('[data-rs-mark="you"], [data-rs-mark="check"]');
@@ -117,6 +303,7 @@ function ensureHost(): boolean {
   closeBtn.textContent = '×';
   closeBtn.addEventListener('click', () => {
     if (currentMode === 'wayfinding') {
+      drawerOpen = false;
       minimized = true;
       renderWayfinding(getCachedActiveMission());
       return;
@@ -126,13 +313,13 @@ function ensureHost(): boolean {
   });
 
   row.append(pctEl, copy, jumpBtn, closeBtn);
-  const track = document.createElement('div');
-  track.className = 'track';
+  trackEl = document.createElement('div');
+  trackEl.className = 'track';
   fillEl = document.createElement('span');
   fillEl.className = 'fill';
-  track.append(fillEl);
+  trackEl.append(fillEl);
 
-  cardEl.append(row, track);
+  cardEl.append(row, trackEl);
 
   miniPillBtn = document.createElement('button');
   miniPillBtn.type = 'button';
@@ -140,12 +327,11 @@ function ensureHost(): boolean {
   miniPillBtn.style.display = 'none';
   miniPillBtn.addEventListener('click', () => {
     minimized = false;
-    openControlsFromPage();
-    renderWayfinding(getCachedActiveMission());
+    toggleQuickControlDrawer(true);
   });
 
-  root.append(cardEl, miniPillBtn);
-  document.body.append(host);
+  root.append(drawerEl, cardEl, miniPillBtn);
+  document.body.append(hostEl);
   return true;
 }
 
@@ -157,9 +343,11 @@ export function updatePageHud(payload: PageHudPayload): void {
   if (payload.status === 'running') dismissed = false;
   if (dismissed || !ensureHost() || !cardEl || !fillEl || !pctEl || !titleEl || !detailEl || !jumpBtn || !miniPillBtn) return;
 
+  if (drawerEl) drawerEl.style.display = 'none';
   miniPillBtn.style.display = 'none';
   cardEl.style.display = 'block';
   cardEl.className = `box${payload.status === 'done' ? ' done' : payload.status === 'error' ? ' err' : ''}`;
+  if (trackEl) trackEl.className = payload.status === 'running' ? 'track is-running' : 'track';
   const pct = Math.max(0, Math.min(100, Math.round(payload.percent)));
   pctEl.textContent = `${pct}%`;
   fillEl.style.width = `${pct}%`;
@@ -178,11 +366,14 @@ export function updatePageHud(payload: PageHudPayload): void {
   }
 }
 
-/** Renders or hides the non-intrusive Shadow DOM Re-Entry Pill when the Side Panel is closed on a host tab. */
+/** Renders or hides the non-intrusive Shadow DOM Re-Entry Pill & Quick-Control Drawer on host tabs. */
 export function renderWayfinding(mission: ActiveMissionState): void {
   if (hasApplyOverride) return;
   const shouldShow = !mission.isSidePanelOpen && (mission.active || mission.pendingBlockerCount > 0);
   if (!shouldShow) {
+    drawerOpen = false;
+    if (hostEl) hostEl.dataset.rsDrawerOpen = 'false';
+    if (drawerEl) drawerEl.style.display = 'none';
     if (cardEl) cardEl.style.display = 'none';
     if (miniPillBtn) miniPillBtn.style.display = 'none';
     return;
@@ -190,6 +381,8 @@ export function renderWayfinding(mission: ActiveMissionState): void {
   if (!ensureHost() || !cardEl || !fillEl || !pctEl || !titleEl || !detailEl || !jumpBtn || !miniPillBtn) return;
   currentMode = 'wayfinding';
   const pct = Math.max(0, Math.min(100, Math.round(mission.percent || 25)));
+
+  syncDrawer(mission);
 
   if (minimized) {
     cardEl.style.display = 'none';
@@ -201,12 +394,13 @@ export function renderWayfinding(mission: ActiveMissionState): void {
   miniPillBtn.style.display = 'none';
   cardEl.style.display = 'block';
   cardEl.className = 'box';
+  if (trackEl) trackEl.className = mission.active ? 'track is-running' : 'track';
   pctEl.textContent = `${pct}%`;
   fillEl.style.width = `${pct}%`;
   titleEl.textContent = `RS · ${mission.stageLabel}`;
   detailEl.textContent = `${mission.liveSummary} · Side Panel closed`;
   jumpBtn.hidden = false;
-  jumpBtn.textContent = 'Open Controls →';
+  jumpBtn.textContent = drawerOpen ? 'Hide Controls ▾' : 'Open Controls →';
 }
 
 /** Boots the cross-surface in-page wayfinding pill on LinkedIn & supported ATS domains. */

@@ -47,7 +47,7 @@ export async function openWorkbench(route = ''): Promise<void> {
   await openManagedTab({ url, mode: 'foreground', purpose: 'user_navigation' });
 }
 
-export async function openPanel(tabId?: number): Promise<void> {
+export async function openPanel(tabId?: number): Promise<boolean> {
   const activeTab =
     tabId !== undefined
       ? await chrome.tabs.get(tabId).catch(() => undefined)
@@ -57,12 +57,20 @@ export async function openPanel(tabId?: number): Promise<void> {
   if (id !== undefined) {
     try {
       await chrome.sidePanel.open({ tabId: id });
-      return;
+      return true;
     } catch {
       // Fall back to windowId below if tab-level open is rejected.
     }
   }
-  if (windowId !== undefined) await chrome.sidePanel.open({ windowId }).catch(() => undefined);
+  if (windowId !== undefined) {
+    try {
+      await chrome.sidePanel.open({ windowId });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 const DEFAULT_LINKEDIN_URL = 'https://www.linkedin.com/jobs/';
@@ -127,6 +135,47 @@ export async function openLinkedInWithSidePanel(targetUrl?: string): Promise<{ o
   return { opened };
 }
 
+/** Focuses an existing LinkedIn tab (or opens one) without touching the Side Panel gesture flow. */
+export async function focusLinkedInTab(
+  targetUrl?: string,
+  preferredTabId?: number,
+): Promise<{ focused: boolean; tabId?: number; windowId?: number }> {
+  if (preferredTabId !== undefined) {
+    const focused = await focusManagedTab(preferredTabId, targetUrl ? safeLinkedInUrl(targetUrl) : undefined);
+    if (focused) {
+      const tab = await chrome.tabs.get(preferredTabId).catch(() => undefined);
+      return {
+        focused: true,
+        ...(tab?.id !== undefined ? { tabId: tab.id } : {}),
+        ...(tab?.windowId !== undefined ? { windowId: tab.windowId } : {}),
+      };
+    }
+  }
+  const url = safeLinkedInUrl(targetUrl);
+  const existingTabs = await chrome.tabs.query({ url: ['https://www.linkedin.com/*', 'https://linkedin.com/*'] }).catch(() => []);
+  const matching = targetUrl && existingTabs.find(t => t.url === url) ? existingTabs.find(t => t.url === url) : existingTabs[0];
+  if (matching?.id !== undefined) {
+    const handle = await openManagedTab({
+      url: targetUrl ? url : '',
+      mode: 'foreground',
+      purpose: 'user_navigation',
+      reuseTabId: matching.id,
+      ...(matching.windowId !== undefined ? { windowId: matching.windowId } : {}),
+    }).catch(() => undefined);
+    return {
+      focused: !!handle,
+      ...(handle?.tabId !== undefined ? { tabId: handle.tabId } : {}),
+      ...(handle?.windowId !== undefined ? { windowId: handle.windowId } : {}),
+    };
+  }
+  const handle = await openManagedTab({ url, mode: 'foreground', purpose: 'user_navigation' }).catch(() => undefined);
+  return {
+    focused: !!handle,
+    ...(handle?.tabId !== undefined ? { tabId: handle.tabId } : {}),
+    ...(handle?.windowId !== undefined ? { windowId: handle.windowId } : {}),
+  };
+}
+
 const MENU_TAB = 'rs-open-tab';
 const MENU_PANEL = 'rs-open-panel';
 
@@ -155,7 +204,7 @@ const createMenu = (properties: chrome.contextMenus.CreateProperties): Promise<v
 export function registerSurfaces(): void {
   chrome.action.onClicked.addListener(tab => {
     // With the panel as default the browser opens it itself and this never fires.
-    void defaultSurface().then(surface => (surface === 'panel' ? openPanel(tab.id) : openWorkbench()));
+    void defaultSurface().then(surface => (surface === 'panel' ? void openPanel(tab.id) : openWorkbench()));
   });
 
   chrome.contextMenus?.onClicked.addListener((info, tab) => {
@@ -226,7 +275,7 @@ export function registerSurfaceMessages(): void {
     const rawType = (input as { type?: unknown }).type;
     if (rawType === 'OPEN_SIDE_PANEL') {
       const tabId = sender.tab?.id;
-      void openPanel(tabId).then(() => respond({ ok: true, opened: true }));
+      void openPanel(tabId).then(opened => respond({ ok: true, opened }));
       return true;
     }
 
@@ -240,14 +289,29 @@ export function registerSurfaceMessages(): void {
     };
     if (message.action === 'open-tab')
       void openWorkbench(typeof message.route === 'string' ? message.route : '').then(() => respond({ ok: true }));
-    else if (message.action === 'open-panel') {
+    else if (message.action === 'summon-controls') {
+      void (async () => {
+        const openedPanel = await openPanel(sender.tab?.id);
+        if (openedPanel) {
+          respond({ ok: true, surface: 'panel' });
+          return;
+        }
+        await openWorkbench('jobs');
+        respond({ ok: true, surface: 'workbench' });
+      })();
+    } else if (message.action === 'open-panel') {
       if (typeof message.url === 'string' && message.url) {
         void openLinkedInWithSidePanel(message.url).then(res => respond({ ok: true, ...res }));
       } else {
-        void openPanel(sender.tab?.id).then(() => respond({ ok: true, opened: true }));
+        void openPanel(sender.tab?.id).then(opened => respond({ ok: true, opened }));
       }
     } else if (message.action === 'open-linkedin-panel')
       void openLinkedInWithSidePanel(typeof message.url === 'string' ? message.url : undefined).then(res => respond({ ok: true, ...res }));
+    else if (message.action === 'focus-linkedin-tab')
+      void focusLinkedInTab(
+        typeof message.url === 'string' ? message.url : undefined,
+        typeof message.tabId === 'number' ? message.tabId : undefined,
+      ).then(res => respond({ ok: true, ...res }));
     else if (message.action === 'focus-tab')
       void focusManagedTab(
         typeof message.tabId === 'number' ? message.tabId : undefined,

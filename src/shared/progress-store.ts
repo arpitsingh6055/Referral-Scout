@@ -417,11 +417,13 @@ export function selectPrimaryProgressTask(tasks: Partial<Record<ProcessId, Progr
   const creep = Math.min(6, Math.floor(elapsedSinceUpdate / 4));
   const percent = Math.min(97, top.percent + creep);
   const etaSeconds =
-    top.etaSeconds !== undefined ? Math.max(1, Math.round(top.etaSeconds - Math.min(top.etaSeconds - 1, elapsedSinceUpdate))) : undefined;
+    top.etaSeconds !== undefined && top.etaSeconds > 0
+      ? Math.max(0, Math.round(top.etaSeconds - Math.min(top.etaSeconds, elapsedSinceUpdate)))
+      : undefined;
   return {
     ...top,
     percent,
-    ...(etaSeconds !== undefined ? { etaSeconds } : {}),
+    ...(etaSeconds !== undefined && etaSeconds > 0 ? { etaSeconds } : {}),
   };
 }
 

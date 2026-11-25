@@ -17,6 +17,7 @@ import type { JobRow } from '../../../background/workspace';
 type Filter = 'strong' | 'possible' | 'blocked' | 'shortlisted' | 'all';
 
 let filter: Filter = 'all';
+let userSelectedFilter = false;
 let query = '';
 let openJob: string | null = null;
 
@@ -238,6 +239,7 @@ export function jobs(ctx: Ctx): HTMLElement {
     if (key) contactsByCompany.set(key, (contactsByCompany.get(key) ?? 0) + 1);
   }
   if (!all.length) {
+    userSelectedFilter = false;
     const page = div('stack');
     const search = ctx.workspace?.jobSearch;
     const linkedinConnected = !!ctx.workspace?.connections.linkedin;
@@ -286,6 +288,10 @@ export function jobs(ctx: Ctx): HTMLElement {
     all: all.length,
   };
 
+  if (ctx.workspace?.jobSearch?.status === 'choosing' && counts.strong > 0 && !userSelectedFilter) {
+    filter = 'strong';
+  }
+
   const page = div('stack');
   if (ctx.workspace?.jobSearch?.status === 'finding') {
     const search = ctx.workspace.jobSearch;
@@ -314,7 +320,9 @@ export function jobs(ctx: Ctx): HTMLElement {
     page.append(
       div('banner banner-note', [
         icon('check', 18),
-        `Search complete: ${ctx.workspace.jobSearch.found} jobs are ready for review. Open each job's reasoning and shortlist only the roles you want.`,
+        counts.shortlisted > 0
+          ? `${counts.shortlisted} role${counts.shortlisted === 1 ? '' : 's'} shortlisted. Review any remaining matches below or click Queue ${counts.shortlisted} shortlisted above to move to Applications.`
+          : `Search complete: ${ctx.workspace.jobSearch.found} roles found. Review the strong matches below and shortlist the ones you want.`,
       ]),
     );
   }
@@ -338,6 +346,7 @@ export function jobs(ctx: Ctx): HTMLElement {
     ['all', `All ${counts.all}`],
   ] as [Filter, string][]) {
     const b = button(label, 'tab', () => {
+      userSelectedFilter = true;
       filter = key;
       ctx.redraw();
     });
@@ -398,9 +407,6 @@ export function jobs(ctx: Ctx): HTMLElement {
         const rankNum = companyOrder.get(group.key) ?? 1;
         const refs = contactsByCompany.get(group.key) ?? 0;
         const shortlistedCount = group.items.filter(j => j.judgement === 'shortlisted').length;
-        const unqueuedShortlisted = group.items.filter(
-          j => j.judgement === 'shortlisted' && !queuedUrls.has(j.id) && !queuedUrls.has(j.url),
-        ).length;
         const monogram = group.name.trim().charAt(0).toUpperCase() || 'C';
         const panelUrl = group.items[0]?.url || 'https://www.linkedin.com/jobs/';
         const rationale = `Rank #${rankNum}: ${pinned ? 'Pinned priority, ' : ''}${shortlistedCount ? `${shortlistedCount} shortlisted, ` : ''}best fit ${group.topFit}/100 across ${plural(group.items.length, 'role')}`;
@@ -408,11 +414,9 @@ export function jobs(ctx: Ctx): HTMLElement {
         rankBadge.title = rationale;
 
         const primaryCta =
-          unqueuedShortlisted > 0
-            ? button('Queue shortlisted', 'btn btn-sm btn-primary', () => ctx.run({ kind: 'workspace', action: 'enqueueShortlisted' }))
-            : refs > 0
-              ? button('Referrers →', 'btn btn-sm btn-primary', () => ctx.go('referrals'))
-              : button('Side Panel →', 'btn btn-sm btn-primary', () => ctx.openPanel(panelUrl));
+          refs > 0
+            ? button('Referrers →', 'btn btn-sm btn-primary', () => ctx.go('referrals'))
+            : button('Side Panel →', 'btn btn-sm btn-primary', () => ctx.openPanel(panelUrl));
 
         return div('company-group', [
           div('company-group-head', [

@@ -216,6 +216,7 @@
 
 .dot-running {
   background: var(--success);
+  animation: rs-radar-pulse 1.8s ease-out infinite;
 }
 .dot-paused {
   background: var(--warning);
@@ -262,7 +263,7 @@
 }
 
 .page {
-  padding: var(--sp-6) var(--sp-8) calc(96px + env(safe-area-inset-bottom, 0px));
+  padding: var(--sp-6) var(--sp-8) calc(120px + env(safe-area-inset-bottom, 0px));
   width: 100%;
   max-width: 1360px;
 }
@@ -2432,20 +2433,139 @@ details .inline input[type='checkbox'] {
   cursor: pointer;
 }
 
+@keyframes rs-ring-spin {
+  to {
+    transform: rotate(270deg);
+  }
+}
+
+@keyframes rs-stripe-flow {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 24px 0;
+  }
+}
+
+@keyframes rs-shimmer-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+@keyframes rs-radar-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 58%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.floating-hud.is-processing .hud-ring.is-spinning {
+  animation: rs-ring-spin 2.2s linear infinite;
+}
+
+.hud-radar {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  flex: none;
+  animation: rs-radar-pulse 1.8s ease-out infinite;
+}
+
 .hud-progress-track {
-  height: 3px;
+  height: 4px;
   background: var(--bg-elevated);
+  overflow: hidden;
 }
 
 .hud-progress-fill {
   display: block;
+  position: relative;
   height: 100%;
   background: var(--accent-primary);
   transition: width 220ms var(--ease-out);
+  overflow: hidden;
+}
+
+.hud-progress-track.is-running .hud-progress-fill {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--accent-primary) 0 6px,
+    color-mix(in srgb, var(--accent-primary) 68%, #ffffff) 6px 12px
+  );
+  background-size: 24px 24px;
+  animation: rs-stripe-flow 1s linear infinite;
+}
+
+.hud-progress-track.is-running .hud-progress-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.42), transparent);
+  animation: rs-shimmer-sweep 1.6s ease-in-out infinite;
 }
 
 .floating-hud.is-ready .hud-progress-fill {
   background: var(--success);
+}
+
+.sidepanel-fallback-popover {
+  position: fixed;
+  right: 20px;
+  bottom: 92px;
+  z-index: 60;
+  width: min(340px, calc(100vw - 32px));
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+  padding: var(--sp-3) var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.sidepanel-fallback-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.sidepanel-fallback-body {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin: 0;
+}
+
+.sidepanel-fallback-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot-running,
+  .hud-radar,
+  .floating-hud.is-processing .hud-ring.is-spinning,
+  .hud-progress-track.is-running .hud-progress-fill,
+  .hud-progress-track.is-running .hud-progress-fill::after {
+    animation: none !important;
+  }
 }
 
 .is-hud-spotlight {

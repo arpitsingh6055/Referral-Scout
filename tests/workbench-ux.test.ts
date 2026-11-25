@@ -1254,3 +1254,136 @@ it('Master Interactive Controls Sweep: welcome CV id, settings export/theme, job
     expect(document.body.childElementCount).toBeGreaterThan(0);
   }
 });
+
+it('HUD advances smoothly instead of freezing at 22% and clears stale job_search tasks when choosing', () => {
+  const ctx = makeCtx();
+  const baseNow = 1_700_000_000_000;
+  ctx.workspace!.jobSearch = {
+    status: 'finding',
+    cursor: 0,
+    totalTerms: 0,
+    found: 2,
+    startedAt: baseNow - 20_000,
+  };
+  const early = computeHudState({
+    route: 'jobs',
+    view: ctx.view,
+    workspace: ctx.workspace,
+    busyAction: '',
+    busyMessage: '',
+    now: baseNow - 20_000,
+  })!;
+  const later = computeHudState({
+    route: 'jobs',
+    view: ctx.view,
+    workspace: ctx.workspace,
+    busyAction: '',
+    busyMessage: '',
+    now: baseNow,
+  })!;
+  expect(early.percent).toBe(8);
+  expect(later.percent).toBeGreaterThan(22);
+
+  // Stale persisted job_search running task must not trap HUD once status is choosing.
+  ctx.workspace!.jobSearch = { status: 'choosing', cursor: 2, totalTerms: 2, found: 5 };
+  const afterFinish = computeHudState({
+    route: 'jobs',
+    view: ctx.view,
+    workspace: ctx.workspace,
+    busyAction: '',
+    busyMessage: '',
+    persistedTasks: {
+      job_search: {
+        id: 'job_search',
+        status: 'running',
+        percent: 22,
+        label: 'Searching jobs…',
+        startedAt: baseNow - 30_000,
+        updatedAt: baseNow - 10_000,
+      },
+    },
+    now: baseNow,
+  })!;
+  expect(afterFinish.mode).not.toBe('processing');
+});
+
+it('jobs screen defaults to Strong matches post-scan and removes redundant per-company Queue shortlisted button', () => {
+  const ctx = makeCtx();
+  ctx.workspace!.jobSearch = { status: 'choosing', cursor: 2, totalTerms: 2, found: 2 };
+  ctx.workspace!.jobs = [
+    {
+      id: 'job:1',
+      company: 'Acme',
+      title: 'PM Intern',
+      location: 'Remote',
+      url: 'https://www.linkedin.com/jobs/view/101/',
+      source: 'LinkedIn Jobs',
+      applyType: 'easy-apply',
+      fit: 92,
+      fitAssessed: true,
+      tier: 'strong',
+      eligibility: 'eligible',
+      freshness: 'fresh',
+      evidence: [],
+      checks: [],
+      rejectionReasons: [],
+      preferenceNotes: [],
+      judgement: 'shortlisted',
+      rank: 92,
+    },
+    {
+      id: 'job:2',
+      company: 'Beta',
+      title: 'Ops Intern',
+      location: 'Remote',
+      url: 'https://www.linkedin.com/jobs/view/102/',
+      source: 'LinkedIn Jobs',
+      applyType: 'easy-apply',
+      fit: 65,
+      fitAssessed: true,
+      tier: 'possible',
+      eligibility: 'eligible',
+      freshness: 'fresh',
+      evidence: [],
+      checks: [],
+      rejectionReasons: [],
+      preferenceNotes: [],
+      judgement: 'none',
+      rank: 65,
+    },
+  ];
+  document.body.replaceChildren(jobs(ctx));
+  const strongTab = [...document.querySelectorAll('[role="tab"]')].find(t => t.textContent?.startsWith('Strong'));
+  expect(strongTab?.getAttribute('aria-selected')).toBe('true');
+  const buttons = [...document.querySelectorAll('button')].map(b => b.textContent);
+  expect(buttons).not.toContain('Queue shortlisted');
+  expect(document.body.textContent).toContain('1 role shortlisted');
+});
+
+it('content floating-hud expands Shadow-DOM Quick-Control Drawer immediately on toggle without blocking on sidePanel.open', async () => {
+  const { renderWayfinding, toggleQuickControlDrawer } = await import('../src/content/floating-hud');
+  const mission = {
+    currentStage: 'job_search',
+    activeRoute: 'jobs',
+    stageLabel: 'Scanning LinkedIn Jobs',
+    liveSummary: '18 roles found',
+    percent: 54,
+    active: true,
+    pendingBlockerCount: 0,
+    recommendedSurface: 'linkedin_tab' as const,
+    activeTabId: 88,
+    activeTabUrl: 'https://www.linkedin.com/jobs/',
+    isSidePanelOpen: false,
+    updatedAt: Date.now(),
+  };
+  renderWayfinding(mission);
+  const host = document.querySelector('referral-scout-hud') as HTMLElement | null;
+  expect(host).toBeTruthy();
+  expect(host?.dataset.rsDrawerOpen).toBe('false');
+
+  toggleQuickControlDrawer(true);
+  expect(host?.dataset.rsDrawerOpen).toBe('true');
+
+  toggleQuickControlDrawer(false);
+  expect(host?.dataset.rsDrawerOpen).toBe('false');
+});
