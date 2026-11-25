@@ -10,6 +10,54 @@ import { canonicalCompany } from '../../../shared/domain/job';
 import { ago, button, card, div, emptyState, icon, metric, pill, plural, progress, text } from '../dom';
 import type { Ctx } from '../shell';
 
+function buildTodayPriorities(ctx: Ctx): HTMLElement | null {
+  const actions = (ctx.view.actions ?? []).filter(a => a.status === 'open').slice(0, 5);
+  if (!actions.length) return null;
+  return card("Today's Priorities", {
+    sub: 'Highest-impact moves across your applications, replies, and outreach.',
+    link: button('Sync Gmail', 'btn btn-sm', () => ctx.run({ kind: 'campaign', action: 'gmailSync' })),
+    body: [
+      div(
+        'action-feed',
+        actions.map(a =>
+          div('row row-compact', [
+            div('row-title', [
+              div('inline', [
+                pill(
+                  a.priorityScore >= 90 ? 'Urgent' : a.priorityScore >= 75 ? 'Action' : 'Next',
+                  a.priorityScore >= 90 ? 'red' : a.priorityScore >= 75 ? 'amber' : 'violet',
+                ),
+                a.companyName ? text('span', 'row-company', a.companyName) : null,
+              ]),
+              text('div', 'cell-strong', a.title),
+              text('div', 'cell-muted', a.reason),
+            ]),
+            div('inline', [
+              button(a.ctaLabel, 'btn btn-sm btn-primary', () => {
+                if (a.kind === 'outreach-approval' && a.outreachId) {
+                  return ctx.run({ kind: 'campaign', action: 'approveOutreach', outreachId: a.outreachId });
+                }
+                if (a.kind === 'reply-needs-response' || a.kind === 'ambiguous-thread') {
+                  ctx.go('people');
+                  return;
+                }
+                if (a.kind === 'review-high-fit-jobs') {
+                  ctx.go('jobs');
+                  return;
+                }
+                ctx.go('needs-you');
+              }),
+              button('Snooze', 'btn btn-sm btn-ghost', () =>
+                ctx.run({ kind: 'campaign', action: 'dismissAction', actionId: a.id, snoozeHours: 24 }),
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    ],
+  });
+}
+
 function buildCommandCenter(ctx: Ctx): HTMLElement | null {
   const jobs = ctx.workspace?.jobs ?? [];
   const contacts = ctx.workspace?.contacts ?? [];
@@ -120,6 +168,8 @@ export function overview(ctx: Ctx): HTMLElement {
     });
 
   const page = div('stack');
+  const todayPriorities = buildTodayPriorities(ctx);
+  if (todayPriorities) page.append(todayPriorities);
   const discovery = ctx.workspace?.jobSearch;
   const discoveredJobs = ctx.workspace?.jobs ?? [];
 

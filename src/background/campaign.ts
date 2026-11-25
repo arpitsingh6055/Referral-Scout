@@ -10,22 +10,48 @@ import { z } from 'zod';
 import { focusManagedTab } from './network-browser';
 import {
   activeCampaign,
+  allActionItems,
   allCampaigns,
+  allContacts,
+  allConversations,
   allExceptions,
   allFacts,
+  allJobs,
+  allOpportunityNotes,
+  allOutreach,
+  changeActionItem,
   changeCampaign,
+  changeConversation,
   changeException,
+  changeOutreach,
   changeTask,
   eventsFor,
+  getProfile,
   getTask,
   openExceptionsFor,
   recordEvent,
+  saveActionItems,
   saveCampaign,
   saveFacts,
+  saveOpportunityNote,
+  saveOutreach,
   saveTasks,
   tasksFor,
   type OutcomeEvent,
 } from '../shared/persistence/campaign-store';
+import {
+  checkOutreachCollision,
+  evaluateReadiness,
+  reconcileActions,
+  type ActionItem,
+  type ApplicationReadiness,
+  type Conversation,
+  type OpportunityNote,
+} from '../shared/domain/opportunity';
+import { advance, type OutreachTask } from '../shared/domain/outreach';
+import { computeAnalyticsSummary, type AnalyticsSummary } from '../shared/analytics';
+import { syncOutcomes } from './gmail';
+import { migrateV3ToV4 } from './migration-v4';
 import { read, write } from '../storage/state';
 import { applyControl, newCampaign, stages, type Campaign, type Control } from '../shared/domain/campaign';
 import { canonicalCompany } from '../shared/domain/job';
@@ -355,14 +381,22 @@ export interface CampaignView {
   workers: { active: number; limit: number };
   peopleIdentified: number;
   replies: number;
+  actions?: ActionItem[];
+  conversations?: Conversation[];
+  outreach?: OutreachTask[];
+  opportunityNotes?: Record<string, OpportunityNote>;
+  readiness?: ApplicationReadiness;
+  analytics?: AnalyticsSummary;
 }
 
 import { KIND_LABELS, RESOLUTION } from '../shared/domain/exceptions';
 import { STATE_LABELS } from '../shared/state-machines/application-task';
 
 export async function campaignView(): Promise<CampaignView> {
+  await migrateV3ToV4().catch(() => undefined);
   const campaign = (await activeCampaign()) ?? null;
   const [facts, network] = await Promise.all([allFacts(), getNetwork().catch(() => null)]);
+  const readiness = evaluateReadiness(facts, !!network?.cv);
   const empty: CampaignView = {
     campaign,
     counts: counts([]),
@@ -378,15 +412,56 @@ export async function campaignView(): Promise<CampaignView> {
     peopleIdentified: network?.contacts?.length ?? 0,
     // A reply is an outcome the person marked, not a contact state: a connection can be accepted without a word back.
     replies: (network?.contacts ?? []).filter(c => c.outcome === 'replied' || c.outcome === 'referred').length,
+    actions: [],
+    conversations: [],
+    outreach: [],
+    opportunityNotes: {},
+    readiness,
   };
   if (!campaign) return empty;
 
-  const [tasks, open, events] = await Promise.all([tasksFor(campaign.id), openExceptionsFor(campaign.id), eventsFor(campaign.id, 40)]);
+  const [tasks, open, events, jobs, contacts, outreach, conversations, existingActions, notes, profile] = await Promise.all([
+    tasksFor(campaign.id),
+    openExceptionsFor(campaign.id),
+    eventsFor(campaign.id, 60),
+    allJobs(),
+    allContacts(),
+    allOutreach(),
+    allConversations(),
+    allActionItems(),
+    allOpportunityNotes(),
+    getProfile(),
+  ]);
+  const actions = reconcileActions({
+    campaignId: campaign.id,
+    jobs,
+    tasks,
+    exceptions: open,
+    outreach,
+    contacts,
+    conversations,
+    existing: existingActions,
+  });
+  await saveActionItems(actions).catch(() => undefined);
+  const opportunityNotes: Record<string, OpportunityNote> = {};
+  for (const n of notes) opportunityNotes[n.jobId] = n;
+  const analytics = computeAnalyticsSummary({
+    profileReady: !!profile.identity.fullName,
+    jobs,
+    tasks,
+    outreach,
+    events,
+  });
   const found = network?.jobSearch?.found?.length ?? 0;
   const qualified = (network?.jobSearch?.found ?? []).filter(j => j.picked).length || tasks.length;
 
   return {
     ...empty,
+    actions,
+    conversations: [...conversations].sort((a, b) => b.lastMessageAt - a.lastMessageAt),
+    outreach,
+    opportunityNotes,
+    analytics,
     counts: counts(tasks),
     queue: tasks
       .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -525,6 +600,39 @@ export const campaignRequest = z.discriminatedUnion('action', [
     pinned: z.boolean(),
   }),
   z.object({ kind: z.literal('campaign'), action: z.literal('migrate') }),
+  z.object({ kind: z.literal('campaign'), action: z.literal('gmailSync'), sinceDays: z.number().int().min(1).max(90).optional() }),
+  z.object({
+    kind: z.literal('campaign'),
+    action: z.literal('confirmConversation'),
+    conversationId: z.string().max(200),
+    opportunityId: z.string().max(200),
+  }),
+  z.object({
+    kind: z.literal('campaign'),
+    action: z.literal('saveOpportunityNote'),
+    jobId: z.string().max(200),
+    company: z.string().max(200),
+    title: z.string().max(250),
+    outcome: z.enum(['interviewing', 'offer', 'rejected', 'withdrawn']).optional(),
+    notes: z.string().max(4000).default(''),
+    interviewDate: z.string().max(80).optional(),
+  }),
+  z.object({
+    kind: z.literal('campaign'),
+    action: z.literal('createOutreachDraft'),
+    contactId: z.string().max(200),
+    opportunityId: z.string().max(200).optional(),
+    channel: z.enum(['linkedin-invite', 'linkedin-message', 'email', 'manual']).default('linkedin-invite'),
+    message: z.string().trim().min(1).max(4000),
+    allowMultiRole: z.boolean().optional(),
+  }),
+  z.object({ kind: z.literal('campaign'), action: z.literal('approveOutreach'), outreachId: z.string().max(200) }),
+  z.object({
+    kind: z.literal('campaign'),
+    action: z.literal('dismissAction'),
+    actionId: z.string().max(200),
+    snoozeHours: z.number().min(1).max(168).optional(),
+  }),
 ]);
 
 export type CampaignRequest = z.infer<typeof campaignRequest>;
@@ -661,6 +769,101 @@ async function handle(req: CampaignRequest): Promise<CampaignView> {
     }
     case 'migrate':
       await migrateAnswerBank(true);
+      break;
+    case 'gmailSync':
+      await syncOutcomes(req.sinceDays !== undefined ? { sinceDays: req.sinceDays } : {});
+      break;
+    case 'confirmConversation':
+      await changeConversation(req.conversationId, c =>
+        c
+          ? {
+              ...c,
+              attributedOpportunityIds: [req.opportunityId],
+              attributionState: 'confirmed',
+              attributionEvidence: 'Confirmed by you',
+              updatedAt: Date.now(),
+            }
+          : c,
+      );
+      break;
+    case 'saveOpportunityNote': {
+      const current = await activeCampaign();
+      const now = Date.now();
+      await saveOpportunityNote({
+        id: req.jobId,
+        jobId: req.jobId,
+        ...(req.outcome ? { outcome: req.outcome } : {}),
+        notes: req.notes,
+        ...(req.interviewDate ? { interviewDate: req.interviewDate } : {}),
+        updatedAt: now,
+      });
+      if (current && req.outcome) {
+        const typeMap = {
+          interviewing: 'interview',
+          offer: 'offer',
+          rejected: 'rejected',
+          withdrawn: 'withdrawn',
+        } as const;
+        await recordEvent({
+          campaignId: current.id,
+          entityId: req.jobId,
+          entityKind: 'application',
+          type: typeMap[req.outcome],
+          company: req.company,
+          title: req.title,
+          source: 'user',
+          occurredAt: now,
+          confidence: 'verified',
+        });
+      }
+      break;
+    }
+    case 'createOutreachDraft': {
+      const current = await activeCampaign();
+      if (!current) throw new Error('Create a campaign first.');
+      const [contacts, existingOutreach] = await Promise.all([allContacts(), allOutreach()]);
+      const contact = contacts.find(c => c.id === req.contactId);
+      if (!contact) throw new Error('Contact not found.');
+      const collision = checkOutreachCollision({
+        contact,
+        ...(req.opportunityId ? { opportunityId: req.opportunityId } : {}),
+        existingTasks: existingOutreach,
+      });
+      if (collision.blocked) throw new Error(collision.warning ?? 'Outreach blocked by collision guard.');
+      if (collision.warning && !req.allowMultiRole) throw new Error(collision.warning);
+      const now = Date.now();
+      const task: OutreachTask = {
+        id: `out:${now}:${Math.random().toString(36).slice(2, 7)}`,
+        campaignId: current.id,
+        contactId: contact.id,
+        ...(req.opportunityId ? { jobId: req.opportunityId } : {}),
+        channel: req.channel,
+        state: 'draft-ready',
+        message: req.message,
+        messageVersion: 1,
+        followUps: [],
+        createdAt: now,
+        updatedAt: now,
+        history: [{ at: now, from: 'identified', to: 'draft-ready', reason: 'Draft created from Opportunity Workspace.' }],
+      };
+      await saveOutreach([task]);
+      break;
+    }
+    case 'approveOutreach':
+      await changeOutreach(req.outreachId, t =>
+        t ? { ...advance(t, 'approved', 'Approved by you.', Date.now()), approvedAt: Date.now() } : t,
+      );
+      break;
+    case 'dismissAction':
+      await changeActionItem(req.actionId, a =>
+        a
+          ? {
+              ...a,
+              ...(req.snoozeHours ? { snoozedUntil: Date.now() + req.snoozeHours * 3_600_000 } : { status: 'dismissed' as const }),
+              updatedAt: Date.now(),
+            }
+          : a,
+      );
       break;
   }
   return campaignView();

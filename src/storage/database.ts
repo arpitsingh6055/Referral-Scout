@@ -53,6 +53,9 @@ export interface Records {
   events: Keyed;
   notifications: Keyed;
   audit: Keyed;
+  conversations: Keyed;
+  actionItems: Keyed;
+  opportunityNotes: Keyed;
 }
 export type Store = keyof Records;
 const stores: Store[] = [
@@ -72,17 +75,21 @@ const stores: Store[] = [
   'events',
   'notifications',
   'audit',
+  'conversations',
+  'actionItems',
+  'opportunityNotes',
 ];
 export const DB_NAME = 'cold-contact';
 /**
  * 1 - meta and aiJobs only (the per-tab engine).
  * 2 - the campaign layer.
  * 3 - the full entity set of specification 18.
+ * 4 - opportunity-centred coordination: conversations, actionItems, opportunityNotes.
  *
  * Upgrades only ever add stores. Nothing existing is rewritten or dropped, so an upgrade cannot lose the person's
  * saved people, answers or history, and rolling back to the previous build leaves their data readable.
  */
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 let pending: Promise<IDBDatabase> | undefined;
 let resetGeneration = 0;
 let resettingData = false;

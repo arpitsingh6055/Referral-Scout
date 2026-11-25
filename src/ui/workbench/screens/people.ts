@@ -29,7 +29,7 @@ const CATEGORY: Record<string, string> = {
   unknown: 'Unclassified',
 };
 
-let showSuppressed = false;
+let viewMode: 'active' | 'conversations' | 'suppressed' = 'active';
 let query = '';
 
 function row(contact: ContactRow, ctx: Ctx, pinnedSet: Set<string>): HTMLElement {
@@ -100,19 +100,15 @@ export function people(ctx: Ctx): HTMLElement {
 
   const active = all.filter(c => !c.suppressed);
   const suppressed = all.filter(c => c.suppressed);
-  const shown = showSuppressed ? suppressed : active;
+  const convs = ctx.view.conversations ?? [];
+  const shown = viewMode === 'suppressed' ? suppressed : active;
 
   const page = div('stack');
   page.append(
     div('grid metrics', [
       metric('people', 'Contacts', active.length, `across ${plural(new Set(active.map(c => c.company)).size, 'company', 'companies')}`),
       metric('check', 'Confirmed identity', active.filter(c => c.confidence >= 0.8).length, 'safe to approach'),
-      metric(
-        'mail',
-        'With an address',
-        active.filter(c => c.email).length,
-        `${active.filter(c => c.emailConfidence === 'verified').length} verified`,
-      ),
+      metric('mail', 'Conversations', convs.length, `${convs.filter(c => c.status === 'needs-reply').length} needing reply`),
       metric('alert', 'Suppressed', suppressed.length, suppressed.length ? 'never contacted again' : 'none'),
     ]),
   );
@@ -120,17 +116,70 @@ export function people(ctx: Ctx): HTMLElement {
   const tabs = div('tabs');
   tabs.setAttribute('role', 'tablist');
   tabs.setAttribute('aria-label', 'Contact filters');
-  for (const [key, label] of [
-    [false, `Contacts ${active.length}`],
-    [true, `Suppressed ${suppressed.length}`],
-  ] as [boolean, string][]) {
+  for (const [mode, label] of [
+    ['active', `Contacts ${active.length}`],
+    ['conversations', `Conversations ${convs.length}`],
+    ['suppressed', `Suppressed ${suppressed.length}`],
+  ] as const) {
     const b = button(label, 'tab', () => {
-      showSuppressed = key;
+      viewMode = mode;
       ctx.redraw();
     });
     b.setAttribute('role', 'tab');
-    b.setAttribute('aria-selected', String(showSuppressed === key));
+    b.setAttribute('aria-selected', String(viewMode === mode));
     tabs.append(b);
+  }
+
+  if (viewMode === 'conversations') {
+    const jobs = ctx.workspace?.jobs ?? [];
+    page.append(
+      card('People & Conversations', {
+        sub: 'LinkedIn invitations, messages, and Gmail threads attributed to exact opportunities.',
+        link: button('Sync Gmail Replies', 'btn btn-sm btn-primary', () => ctx.run({ kind: 'campaign', action: 'gmailSync' })),
+        body: [
+          tabs,
+          convs.length
+            ? div(
+                'stack',
+                convs.map(c => {
+                  const coKey = canonicalCompany(c.companyName ?? '');
+                  const coJobs = jobs.filter(j => canonicalCompany(j.company) === coKey);
+                  return div('conv-card', [
+                    div('inline', [
+                      text('strong', '', c.contactName),
+                      c.companyName ? text('span', 'row-company', c.companyName) : null,
+                      pill(c.channel === 'gmail' ? 'Gmail' : 'LinkedIn', 'blue'),
+                      pill(
+                        c.attributionState === 'confirmed' ? 'Role confirmed' : 'Confirm role',
+                        c.attributionState === 'confirmed' ? 'green' : 'amber',
+                      ),
+                    ]),
+                    c.subject ? text('div', 'cell-strong', c.subject) : null,
+                    c.attributionEvidence ? text('div', 'cell-muted', c.attributionEvidence) : null,
+                    c.attributionState !== 'confirmed' && coJobs.length
+                      ? div(
+                          'inline',
+                          coJobs
+                            .slice(0, 3)
+                            .map(j =>
+                              button(`Assign: ${j.title}`, 'btn btn-sm', () =>
+                                ctx.run({ kind: 'campaign', action: 'confirmConversation', conversationId: c.id, opportunityId: j.id }),
+                              ),
+                            ),
+                        )
+                      : null,
+                  ]);
+                }),
+              )
+            : emptyState({
+                icon: 'mail',
+                title: 'No conversations yet',
+                description: 'Click Sync Gmail Replies or reach out on LinkedIn to track conversations here.',
+              }),
+        ],
+      }),
+    );
+    return page;
   }
 
   const pinnedSet = new Set(ctx.view.campaign?.referral.pinnedCompanies ?? []);
@@ -147,7 +196,7 @@ export function people(ctx: Ctx): HTMLElement {
     rowsHost.replaceChildren(
       ...(list.length
         ? list.map(c => row(c, ctx, pinnedSet))
-        : [text('p', 'cell-muted', showSuppressed ? 'Nobody is suppressed.' : 'No matching contacts.')]),
+        : [text('p', 'cell-muted', viewMode === 'suppressed' ? 'Nobody is suppressed.' : 'No matching contacts.')]),
     );
   };
   drawRows();
