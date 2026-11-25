@@ -6,6 +6,7 @@
  * this screen too, because "do not contact this person again" must be one click and must hold everywhere.
  */
 
+import { canonicalCompany } from '../../../shared/domain/job';
 import { button, card, confirmModal, div, emptyState, metric, pill, plural, searchBar, text } from '../dom';
 import type { Ctx } from '../shell';
 import type { ContactRow } from '../../../background/workspace';
@@ -31,11 +32,12 @@ const CATEGORY: Record<string, string> = {
 let showSuppressed = false;
 let query = '';
 
-function row(contact: ContactRow, ctx: Ctx): HTMLElement {
+function row(contact: ContactRow, ctx: Ctx, pinnedSet: Set<string>): HTMLElement {
   const confident = contact.confidence >= 0.8;
+  const companyPinned = !!contact.company && pinnedSet.has(canonicalCompany(contact.company));
   return div('row row-queue', [
     div('row-title', [
-      text('div', 'row-company', contact.company ?? ''),
+      div('inline', [text('span', 'row-company', contact.company ?? ''), companyPinned ? pill('Pinned', 'violet') : null]),
       text('div', 'cell-strong', contact.name),
       text('div', 'cell-muted', `${contact.role ?? 'Role unknown'} · ${RELATIONSHIP[contact.relationship] ?? contact.relationship}`),
     ]),
@@ -50,6 +52,11 @@ function row(contact: ContactRow, ctx: Ctx): HTMLElement {
         : pill(contact.profileUrl ? 'LinkedIn only' : 'No route', contact.profileUrl ? 'grey' : 'red'),
     ]),
     div('inline', [
+      contact.company && ctx.view.campaign
+        ? button(companyPinned ? 'Pinned ★' : 'Pin', companyPinned ? 'btn btn-sm btn-primary' : 'btn btn-sm', () =>
+            ctx.run({ kind: 'campaign', action: 'pinCompany', company: contact.company!, pinned: !companyPinned }),
+          )
+        : null,
       contact.profileUrl
         ? button('Open profile', 'btn btn-sm', () => {
             window.open(contact.profileUrl!, '_blank', 'noopener');
@@ -126,13 +133,20 @@ export function people(ctx: Ctx): HTMLElement {
     tabs.append(b);
   }
 
+  const pinnedSet = new Set(ctx.view.campaign?.referral.pinnedCompanies ?? []);
   const rowsHost = div('rows');
   const drawRows = (): void => {
     const q = query.trim().toLowerCase();
-    const list = shown.filter(c => !q || `${c.name} ${c.company ?? ''} ${c.role ?? ''} ${c.email ?? ''}`.toLowerCase().includes(q));
+    const list = shown
+      .filter(c => !q || `${c.name} ${c.company ?? ''} ${c.role ?? ''} ${c.email ?? ''}`.toLowerCase().includes(q))
+      .sort(
+        (a, b) =>
+          Number(pinnedSet.has(canonicalCompany(b.company ?? ''))) - Number(pinnedSet.has(canonicalCompany(a.company ?? ''))) ||
+          b.confidence - a.confidence,
+      );
     rowsHost.replaceChildren(
       ...(list.length
-        ? list.map(c => row(c, ctx))
+        ? list.map(c => row(c, ctx, pinnedSet))
         : [text('p', 'cell-muted', showSuppressed ? 'Nobody is suppressed.' : 'No matching contacts.')]),
     );
   };

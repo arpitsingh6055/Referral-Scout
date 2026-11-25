@@ -326,6 +326,7 @@ function actionProgress(action: string): string {
     removeRecord: 'Removing record and re-checking jobs…',
     saveFact: 'Saving answer to your Answer Bank…',
     clearFact: 'Clearing answer from your Answer Bank…',
+    pinCompany: 'Updating company boost priority…',
     judgeJob: 'Updating your job shortlist decision…',
     requalify: 'Re-checking discovered jobs against your profile…',
     enqueueShortlisted: 'Adding shortlisted jobs to your application queue…',

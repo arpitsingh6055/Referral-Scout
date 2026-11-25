@@ -18,6 +18,7 @@ import { loadApplySession, startApplyOnTab, applyRunning, checkSubmitted, type A
 import {
   activeCampaign,
   allTasks,
+  changeException,
   changeTask,
   getCampaign,
   getTask,
@@ -29,13 +30,14 @@ import {
 } from '../shared/persistence/campaign-store';
 import { read, write } from '../storage/state';
 import { mayClaim, mayContinue, type Campaign } from '../shared/domain/campaign';
-import { raise, type ApplicationException, type ExceptionKind } from '../shared/domain/exceptions';
+import { raise, resolve as resolveExc, type ApplicationException, type ExceptionKind } from '../shared/domain/exceptions';
 import {
   heartbeat,
   isActive,
   nextEligible,
   orphaned,
   safeToRetry,
+  staleNeedsYou,
   transition,
   withLease,
   type ApplicationTask,
@@ -381,6 +383,22 @@ export async function tick(): Promise<void> {
       await changeTask(dead.id, old => (old ? transition(old, { to: safeToRetry(old) ? 'queued' : 'uncertain', reason }) : old));
     }
 
+    // Heal any parked task whose blocking exceptions have all already been resolved or closed.
+    const open = await openExceptionsFor(campaign.id);
+    const openIds = new Set(open.map(e => e.id));
+    for (const healed of staleNeedsYou(tasks, openIds)) {
+      if (workers.has(healed.id)) continue;
+      await changeTask(healed.id, old =>
+        old && old.state === 'needs-you'
+          ? transition(old, {
+              to: 'queued',
+              reason: 'All blocking questions were resolved; returned to queue automatically.',
+              patch: { blockedBy: [] },
+            })
+          : old,
+      );
+    }
+
     if (!mayClaim(campaign)) return;
     const since = startOfToday();
     const doneToday = tasks.filter(t => t.state === 'submitted' && t.updatedAt >= since).length;
@@ -443,10 +461,30 @@ export async function reconcile(id: string): Promise<'submitted' | 'unknown'> {
       ? transition(old, {
           to: 'submitted',
           reason: 'The page confirmed the application after all.',
-          patch: { submission: { ...(old.submission ?? {}), confirmedAt: Date.now(), how: 'site-confirmation' } },
+          patch: {
+            blockedBy: [],
+            submission: { ...(old.submission ?? {}), confirmedAt: Date.now(), how: 'site-confirmation' },
+          },
         })
       : old,
   );
+  const uncertainOpen = (await openExceptionsFor(task.campaignId)).filter(
+    e => e.kind === 'submission-uncertain' && e.affected.some(a => a.applicationId === id),
+  );
+  for (const exc of uncertainOpen) {
+    await changeException(exc.id, e => (e ? resolveExc(e, { applyTo: exc.affected.map(a => a.applicationId), savedToBank: false }) : e));
+  }
+  await recordEvent({
+    campaignId: task.campaignId,
+    entityId: id,
+    entityKind: 'application',
+    type: 'submitted',
+    company: task.company,
+    title: task.title,
+    source: 'site',
+    occurredAt: Date.now(),
+    confidence: 'verified',
+  });
   return 'submitted';
 }
 

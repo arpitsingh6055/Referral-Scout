@@ -25,6 +25,8 @@ export interface ReferralRules {
   emailMode: 'off' | 'draft' | 'send-verified';
   /** Days after sending to follow up, then stop. */
   followUpDays: number[];
+  /** Canonical company keys the person has pinned/boosted so outreach & budget prioritize them first. */
+  pinnedCompanies?: string[];
 }
 
 export interface ApplicationRules extends AdmissionRules {

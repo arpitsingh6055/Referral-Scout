@@ -13,6 +13,7 @@ import {
   priorityOf,
   progressOf,
   safeToRetry,
+  staleNeedsYou,
   transition,
   TransitionError,
   withLease,
@@ -216,6 +217,19 @@ describe('submission safety', () => {
 
   it('allows a retry once the submission is confirmed', () => {
     expect(safeToRetry(task({ submission: { attemptedAt: NOW, confirmedAt: NOW + 1 } }))).toBe(true);
+  });
+
+  it('allows explicit not-submitted confirmation to return an uncertain item to queued', () => {
+    expect(canTransition('uncertain', 'queued')).toBe(true);
+    const t = transition(task({ state: 'uncertain' }), { to: 'queued', reason: 'Confirmed not submitted' });
+    expect(t.state).toBe('queued');
+  });
+
+  it('identifies orphaned needs-you tasks whose blocking exceptions are already closed', () => {
+    const orphanedTask = task({ id: 'o1', state: 'needs-you', blockedBy: ['exc-closed'] });
+    const genuinelyBlocked = task({ id: 'b1', state: 'needs-you', blockedBy: ['exc-open'] });
+    const attemptedTask = task({ id: 'a1', state: 'needs-you', blockedBy: ['exc-closed'], submission: { attemptedAt: NOW } });
+    expect(staleNeedsYou([orphanedTask, genuinelyBlocked, attemptedTask], new Set(['exc-open'])).map(t => t.id)).toEqual(['o1']);
   });
 });
 

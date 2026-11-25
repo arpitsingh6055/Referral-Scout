@@ -5,6 +5,8 @@ import type { Ctx } from '../src/ui/workbench/shell';
 import { overview, overviewHeader } from '../src/ui/workbench/screens/overview';
 import { jobs } from '../src/ui/workbench/screens/jobs';
 import { needsYou } from '../src/ui/workbench/screens/needs-you';
+import { referrals } from '../src/ui/workbench/screens/referrals';
+import { people } from '../src/ui/workbench/screens/people';
 import { answers } from '../src/ui/workbench/screens/answers';
 import { profile } from '../src/ui/workbench/screens/profile';
 import { confirmModal, field, pageSkeleton, setFieldError } from '../src/ui/workbench/dom';
@@ -573,4 +575,93 @@ it('overview renders guided Launchpad instead of empty zeros and shows LinkedIn 
   document.body.replaceChildren(overview(ctx));
   expect(document.body.textContent).toContain('Searching LinkedIn in another tab');
   expect(document.body.textContent).toContain('Open LinkedIn Tab');
+});
+
+it('referrals, jobs, people and HUD surface company rank breakdowns, pin boosts and urgent Needs you jumps', async () => {
+  const ctx = makeCtx();
+  ctx.workspace!.jobs = [
+    {
+      id: 'job:acme',
+      company: 'Acme Pvt Ltd',
+      title: 'Product Intern',
+      location: 'Bengaluru',
+      url: 'https://www.linkedin.com/jobs/view/11/',
+      source: 'LinkedIn Jobs',
+      applyType: 'easy-apply',
+      fit: 92,
+      fitAssessed: true,
+      tier: 'strong',
+      eligibility: 'eligible',
+      freshness: 'fresh',
+      evidence: [],
+      checks: [],
+      rejectionReasons: [],
+      preferenceNotes: [],
+      judgement: 'shortlisted',
+      rank: 92,
+    },
+  ];
+  ctx.workspace!.contacts = [
+    {
+      id: 'c:1',
+      name: 'Neha Rao',
+      company: 'Acme',
+      role: 'Talent Partner',
+      relationship: 'alumni',
+      category: 'recruiter',
+      confidence: 0.9,
+      channel: 'email',
+      email: 'neha@acme.com',
+      emailConfidence: 'verified',
+      profileUrl: 'https://linkedin.com/in/neha',
+    },
+  ];
+
+  document.body.replaceChildren(referrals(ctx));
+  expect(document.body.textContent).toContain('Company ranking & boost priority');
+  expect(document.body.textContent).toContain('Role fit 92/100');
+  const pinRefBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Pin company')!;
+  pinRefBtn.click();
+  await vi.waitFor(() => expect(ctx.run).toHaveBeenCalledWith({ kind: 'campaign', action: 'pinCompany', company: 'Acme', pinned: true }));
+
+  ctx.view.campaign!.referral.pinnedCompanies = ['acme'];
+  document.body.replaceChildren(jobs(ctx));
+  const jobSearchInput = document.querySelector<HTMLInputElement>('input[type="search"]');
+  if (jobSearchInput && jobSearchInput.value) {
+    jobSearchInput.value = '';
+    jobSearchInput.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  expect(document.body.textContent).toContain('Pinned');
+
+  document.body.replaceChildren(people(ctx));
+  expect(document.body.textContent).toContain('Pinned ★');
+
+  ctx.view.inboxCounts = { open: 1, urgent: 1, facts: 0, reviews: 0, blocked: 1 };
+  ctx.view.inbox = [
+    {
+      id: 'exc:sec',
+      kind: 'security',
+      kindLabel: 'Security check',
+      prompt: 'Complete verification challenge on the open tab.',
+      resolution: 'open-tab',
+      affected: [{ applicationId: 'app:9', company: 'Acme', title: 'Product Intern' }],
+      createdAt: Date.now(),
+    },
+  ];
+  const hudState = computeHudState({
+    route: 'overview',
+    view: ctx.view,
+    workspace: ctx.workspace,
+    busyAction: '',
+    busyMessage: '',
+  })!;
+  expect(hudState.mode).toBe('error');
+  expect(hudState.ctaLabel).toBe('Resolve now →');
+  expect(hudState.targetRoute).toBe('needs-you');
+
+  ctx.workspace!.jobSearch = { status: 'choosing', cursor: 2, totalTerms: 2, found: 1 };
+  document.body.replaceChildren(needsYou(ctx));
+  expect(document.body.textContent).toContain('Referral Scout never solves security checks');
+  expect(document.body.textContent).toContain('1 discovered roles are waiting for your shortlist picks');
+  expect([...document.querySelectorAll('button')].find(b => b.textContent === 'Skip')).toBeTruthy();
 });

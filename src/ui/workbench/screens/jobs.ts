@@ -9,6 +9,7 @@
  * never "you lack this". The product does not know the difference, and the person does.
  */
 
+import { canonicalCompany } from '../../../shared/domain/job';
 import { ago, button, card, div, emptyState, icon, metric, pill, plural, searchBar, text } from '../dom';
 import type { Ctx } from '../shell';
 import type { JobRow } from '../../../background/workspace';
@@ -63,9 +64,10 @@ function evidenceList(job: JobRow): HTMLElement {
   );
 }
 
-function detail(job: JobRow, ctx: Ctx, queuedRefs: Set<string>): HTMLElement {
+function detail(job: JobRow, ctx: Ctx, queuedRefs: Set<string>, pinnedSet: Set<string>): HTMLElement {
   const blocked = job.tier === 'blocked';
   const alreadyQueued = queuedRefs.has(job.id) || queuedRefs.has(job.url);
+  const companyPinned = pinnedSet.has(canonicalCompany(job.company));
   return div('card', [
     div('card-head', [
       div('', [
@@ -96,6 +98,7 @@ function detail(job: JobRow, ctx: Ctx, queuedRefs: Set<string>): HTMLElement {
               : 'Age unknown',
         job.freshness === 'stale' ? 'red' : 'grey',
       ),
+      companyPinned ? pill('Company pinned', 'violet') : null,
     ]),
 
     blocked ? div('note note-amber', [text('p', '', `Not eligible: ${job.rejectionReasons.join(' ')}`)]) : null,
@@ -151,6 +154,11 @@ function detail(job: JobRow, ctx: Ctx, queuedRefs: Set<string>): HTMLElement {
       job.judgement === 'rejected'
         ? button('Restore job', 'btn', () => ctx.run({ kind: 'workspace', action: 'judgeJob', id: job.id, judgement: 'none' }))
         : button('Not for me', 'btn', () => ctx.run({ kind: 'workspace', action: 'judgeJob', id: job.id, judgement: 'rejected' })),
+      ctx.view.campaign
+        ? button(companyPinned ? 'Pinned ★' : 'Pin company', companyPinned ? 'btn btn-primary' : 'btn', () =>
+            ctx.run({ kind: 'campaign', action: 'pinCompany', company: job.company, pinned: !companyPinned }),
+          )
+        : null,
       button('Open posting', 'btn', () => {
         window.open(job.url, '_blank', 'noopener');
       }),
@@ -158,12 +166,13 @@ function detail(job: JobRow, ctx: Ctx, queuedRefs: Set<string>): HTMLElement {
   ]);
 }
 
-function row(job: JobRow, ctx: Ctx, queuedRefs: Set<string>): HTMLElement {
+function row(job: JobRow, ctx: Ctx, queuedRefs: Set<string>, pinnedSet: Set<string>): HTMLElement {
   const met = job.evidence.filter(e => e.state === 'met').length;
   const inQueue = queuedRefs.has(job.id) || queuedRefs.has(job.url);
+  const companyPinned = pinnedSet.has(canonicalCompany(job.company));
   return div('row row-queue', [
     div('row-title', [
-      text('div', 'row-company', job.company),
+      div('inline', [text('span', 'row-company', job.company), companyPinned ? pill('Pinned', 'violet') : null]),
       Object.assign(text('div', 'cell-strong', job.title), { title: job.title }),
       text('div', 'cell-muted', `${job.location}${job.evidence.length ? ` · ${met} of ${job.evidence.length} requirements matched` : ''}`),
     ]),
@@ -202,6 +211,7 @@ function row(job: JobRow, ctx: Ctx, queuedRefs: Set<string>): HTMLElement {
 export function jobs(ctx: Ctx): HTMLElement {
   const all = ctx.workspace?.jobs ?? [];
   const queuedUrls = new Set(ctx.view.queue.flatMap(q => [q.jobId, q.url].filter((v): v is string => !!v)));
+  const pinnedSet = new Set(ctx.view.campaign?.referral.pinnedCompanies ?? []);
   if (!all.length) {
     const page = div('stack');
     const search = ctx.workspace?.jobSearch;
@@ -315,9 +325,15 @@ export function jobs(ctx: Ctx): HTMLElement {
   const drawRows = (): void => {
     const q = query.trim().toLowerCase();
     const matchesQuery = (j: JobRow): boolean => !q || `${j.title} ${j.company} ${j.location} ${j.source}`.toLowerCase().includes(q);
-    const shown = all.filter(MATCH[filter]).filter(matchesQuery);
+    const shown = all
+      .filter(MATCH[filter])
+      .filter(matchesQuery)
+      .sort(
+        (a, b) =>
+          Number(pinnedSet.has(canonicalCompany(b.company))) - Number(pinnedSet.has(canonicalCompany(a.company))) || b.rank - a.rank,
+      );
     rowsHost.replaceChildren(
-      ...(shown.length ? shown.map(j => row(j, ctx, queuedUrls)) : [text('p', 'cell-muted', 'No matching jobs in this view.')]),
+      ...(shown.length ? shown.map(j => row(j, ctx, queuedUrls, pinnedSet)) : [text('p', 'cell-muted', 'No matching jobs in this view.')]),
     );
   };
   drawRows();
@@ -343,7 +359,7 @@ export function jobs(ctx: Ctx): HTMLElement {
   });
 
   const side = selected
-    ? detail(selected, ctx, queuedUrls)
+    ? detail(selected, ctx, queuedUrls, pinnedSet)
     : card('Why a job is here', {
         body: [
           div('note note-violet', [

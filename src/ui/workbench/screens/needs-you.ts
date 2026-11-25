@@ -102,23 +102,42 @@ function itemCard(item: InboxRow, ctx: Ctx): HTMLElement {
       ),
     );
   } else if (item.resolution === 'open-tab') {
+    body.append(
+      div('note note-amber', [
+        text(
+          'p',
+          '',
+          item.kind === 'security'
+            ? 'Referral Scout never solves security checks. Complete it in the open tab, then click Done — resume.'
+            : 'Sign in on the employer portal tab, then click Done — resume so Referral Scout continues automatically.',
+        ),
+      ]),
+    );
     action.append(
       button('Open tab', 'btn btn-sm', () => ctx.run({ kind: 'campaign', action: 'open', id: item.affected[0]!.applicationId })),
       button('Done — resume', 'btn btn-primary btn-sm', () =>
         ctx.run({ kind: 'campaign', action: 'resolve', exceptionId: item.id, saveToBank: false, then: 'resume' }),
       ),
+      button('Skip', 'btn btn-ghost btn-sm', () => ctx.run({ kind: 'campaign', action: 'skip', id: item.affected[0]!.applicationId })),
     );
   } else if (item.resolution === 'review') {
+    body.append(
+      div('note note-violet', [
+        text('p', '', 'Every field is filled and waiting for your final check on the application page before Submit is pressed.'),
+      ]),
+    );
     action.append(
       button('Open application', 'btn btn-sm', () => ctx.run({ kind: 'campaign', action: 'open', id: item.affected[0]!.applicationId })),
       button('Reviewed', 'btn btn-primary btn-sm', () =>
         ctx.run({ kind: 'campaign', action: 'resolve', exceptionId: item.id, saveToBank: false, then: 'resume' }),
       ),
+      button('Skip', 'btn btn-ghost btn-sm', () => ctx.run({ kind: 'campaign', action: 'skip', id: item.affected[0]!.applicationId })),
     );
   } else {
     action.append(
-      button('Retry', 'btn btn-sm', () => ctx.run({ kind: 'campaign', action: 'retry', id: item.affected[0]!.applicationId })),
-      button('Skip', 'btn btn-sm', () => ctx.run({ kind: 'campaign', action: 'skip', id: item.affected[0]!.applicationId })),
+      button('Retry', 'btn btn-primary btn-sm', () => ctx.run({ kind: 'campaign', action: 'retry', id: item.affected[0]!.applicationId })),
+      button('Open page', 'btn btn-sm', () => ctx.run({ kind: 'campaign', action: 'open', id: item.affected[0]!.applicationId })),
+      button('Skip', 'btn btn-ghost btn-sm', () => ctx.run({ kind: 'campaign', action: 'skip', id: item.affected[0]!.applicationId })),
     );
   }
 
@@ -135,10 +154,18 @@ export function needsYou(ctx: Ctx): HTMLElement {
       action: button('Create a campaign', 'btn btn-primary', () => ctx.go('setup')),
     });
 
+  const choosingJobs = ctx.workspace?.jobSearch?.status === 'choosing' && (ctx.workspace?.jobs?.length ?? 0) > 0;
   const inboxCard = card('Needs you inbox', {
     sub: 'Exceptions are isolated; unrelated applications carry on.',
     link: inboxCounts.open ? pill(`${inboxCounts.open} open`, 'amber') : pill('All clear', 'green'),
     body: [
+      choosingJobs
+        ? div('banner banner-note', [
+            pill('Outreach search', 'violet'),
+            text('span', '', `${ctx.workspace!.jobSearch!.found} discovered roles are waiting for your shortlist picks.`),
+            button('Choose jobs →', 'btn btn-sm btn-primary', () => ctx.go('jobs')),
+          ])
+        : null,
       inbox.length
         ? div(
             '',
