@@ -62,6 +62,19 @@ export function activity(ctx: Ctx): HTMLElement {
   const page = div('stack');
   const interviews = events.filter(e => e.type === 'interview').length;
   const referred = events.filter(e => e.type === 'referral-submitted' || e.type === 'referral-offered').length;
+  const analytics = ctx.view.analytics;
+
+  if (analytics) {
+    page.append(
+      div('note note-violet', [
+        text(
+          'p',
+          '',
+          `Weekly North Star: ${analytics.weeklyProgressedOpportunities} opportunity milestone(s) progressed this week · ${analytics.activated ? 'Workspace activated ✓' : 'Shortlist or queue 1 role to activate'}${analytics.sampleReliable ? '' : ' · Needs ≥ 10 opportunities for reliable conversion rates.'}`,
+        ),
+      ]),
+    );
+  }
 
   page.append(
     div('grid metrics', [

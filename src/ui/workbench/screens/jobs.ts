@@ -10,6 +10,7 @@
  */
 
 import { canonicalCompany } from '../../../shared/domain/job';
+import { opportunityWorkspace } from '../components/opportunity-workspace';
 import { ago, button, card, div, el, emptyState, icon, metric, pill, plural, searchBar, text } from '../dom';
 import type { Ctx } from '../shell';
 import type { JobRow } from '../../../background/workspace';
@@ -27,7 +28,6 @@ const TIER_TONE: Record<string, 'green' | 'violet' | 'grey' | 'red'> = {
   weak: 'grey',
   blocked: 'red',
 };
-const ELIGIBILITY_TONE: Record<string, 'green' | 'amber' | 'red'> = { eligible: 'green', unknown: 'amber', ineligible: 'red' };
 
 const MATCH: Record<Filter, (j: JobRow) => boolean> = {
   strong: j => j.tier === 'strong',
@@ -36,136 +36,6 @@ const MATCH: Record<Filter, (j: JobRow) => boolean> = {
   shortlisted: j => j.judgement === 'shortlisted',
   all: () => true,
 };
-
-function evidenceList(job: JobRow): HTMLElement {
-  if (!job.evidence.length)
-    return text('p', 'cell-muted', 'This posting did not list its requirements separately, so there is nothing to match against yet.');
-  return div(
-    '',
-    job.evidence.map(e =>
-      div('rule-row', [
-        div('', [
-          text('div', 'rule-name', e.requirement),
-          text(
-            'div',
-            'rule-note',
-            e.state === 'met'
-              ? `Matched with ${e.matchedWith ?? 'your profile'}`
-              : e.state === 'missing'
-                ? 'Not found in your profile'
-                : 'Could not be read from the posting',
-          ),
-        ]),
-        pill(
-          e.state === 'met' ? 'Met' : e.state === 'missing' ? 'Not found' : 'Unclear',
-          e.state === 'met' ? 'green' : e.state === 'missing' ? 'amber' : 'grey',
-        ),
-      ]),
-    ),
-  );
-}
-
-function detail(job: JobRow, ctx: Ctx, queuedRefs: Set<string>, pinnedSet: Set<string>): HTMLElement {
-  const blocked = job.tier === 'blocked';
-  const alreadyQueued = queuedRefs.has(job.id) || queuedRefs.has(job.url);
-  const companyPinned = pinnedSet.has(canonicalCompany(job.company));
-  return div('card', [
-    div('card-head', [
-      div('', [
-        text('div', 'card-title', `${job.title} — ${job.company}`),
-        text('div', 'card-sub', `${job.location} · ${job.source} · ${job.applyType}`),
-      ]),
-      div('card-link', [
-        button('Close', 'btn-link', () => {
-          openJob = null;
-          ctx.redraw();
-        }),
-      ]),
-    ]),
-
-    div('inline', [
-      pill(job.fitAssessed ? `Fit ${job.fit}/100` : 'Fit not assessed', TIER_TONE[job.tier] ?? 'grey'),
-      pill(
-        job.eligibility === 'eligible' ? 'Eligible' : job.eligibility === 'ineligible' ? 'Not eligible' : 'Eligibility unknown',
-        ELIGIBILITY_TONE[job.eligibility] ?? 'grey',
-      ),
-      pill(
-        job.freshness === 'fresh'
-          ? 'Posted recently'
-          : job.freshness === 'stale'
-            ? 'Old or closed'
-            : job.freshness === 'recent'
-              ? 'Still recent'
-              : 'Age unknown',
-        job.freshness === 'stale' ? 'red' : 'grey',
-      ),
-      companyPinned ? pill('Company pinned', 'violet') : null,
-    ]),
-
-    blocked ? div('note note-amber', [text('p', '', `Not eligible: ${job.rejectionReasons.join(' ')}`)]) : null,
-
-    text('h3', 'card-title', 'Can you hold this job?'),
-    div(
-      '',
-      job.checks.map(c =>
-        div('rule-row', [
-          div('', [text('div', 'rule-name', c.label), text('div', 'rule-note', c.reason)]),
-          pill(c.state === 'eligible' ? 'Yes' : c.state === 'ineligible' ? 'No' : 'Unknown', ELIGIBILITY_TONE[c.state] ?? 'grey'),
-        ]),
-      ),
-    ),
-
-    text('h3', 'card-title', 'How well does it match?'),
-    job.aiWhy
-      ? div('note note-violet', [text('p', '', `${job.fitSource === 'chatgpt' ? 'ChatGPT assessment' : 'Profile evidence'}: ${job.aiWhy}`)])
-      : null,
-    evidenceList(job),
-
-    job.preferenceNotes.length
-      ? div('note note-violet', [text('p', '', `Against what you asked for: ${job.preferenceNotes.join(' ')}`)])
-      : null,
-
-    div('inline', [
-      job.judgement === 'shortlisted'
-        ? button('Remove from shortlist', 'btn', () => ctx.run({ kind: 'workspace', action: 'judgeJob', id: job.id, judgement: 'none' }))
-        : button('Shortlist', 'btn btn-primary', () =>
-            ctx.run({ kind: 'workspace', action: 'judgeJob', id: job.id, judgement: 'shortlisted' }),
-          ),
-      alreadyQueued
-        ? button('View in queue', 'btn', () => ctx.go('applications'))
-        : button('Add to application queue', 'btn', () =>
-            ctx.run({
-              kind: 'campaign',
-              action: 'enqueue',
-              jobs: [
-                {
-                  jobId: job.id,
-                  url: job.url,
-                  company: job.company,
-                  title: job.title,
-                  location: job.location,
-                  fit: job.fit,
-                  route: job.applyType === 'easy-apply' ? 'easy-apply' : job.applyType === 'ats' ? 'external' : 'unknown',
-                  source: job.source,
-                  ...(job.postedAt ? { postedAt: job.postedAt } : {}),
-                },
-              ],
-            }),
-          ),
-      job.judgement === 'rejected'
-        ? button('Restore job', 'btn', () => ctx.run({ kind: 'workspace', action: 'judgeJob', id: job.id, judgement: 'none' }))
-        : button('Not for me', 'btn', () => ctx.run({ kind: 'workspace', action: 'judgeJob', id: job.id, judgement: 'rejected' })),
-      ctx.view.campaign
-        ? button(companyPinned ? 'Pinned ★' : 'Pin company', companyPinned ? 'btn btn-primary' : 'btn', () =>
-            ctx.run({ kind: 'campaign', action: 'pinCompany', company: job.company, pinned: !companyPinned }),
-          )
-        : null,
-      button('Open posting', 'btn', () => {
-        ctx.openExternal(job.url);
-      }),
-    ]),
-  ]);
-}
 
 function row(job: JobRow, ctx: Ctx, queuedRefs: Set<string>, pinnedSet: Set<string>): HTMLElement {
   const met = job.evidence.filter(e => e.state === 'met').length;
@@ -465,7 +335,10 @@ export function jobs(ctx: Ctx): HTMLElement {
   });
 
   const side = selected
-    ? detail(selected, ctx, queuedUrls, pinnedSet)
+    ? opportunityWorkspace(selected, ctx, () => {
+        openJob = null;
+        ctx.redraw();
+      })
     : card('Why a job is here', {
         body: [
           div('note note-violet', [

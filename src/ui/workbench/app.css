@@ -2568,6 +2568,36 @@ details .inline input[type='checkbox'] {
   }
 }
 
+.opp-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.opp-tabs {
+  margin-bottom: var(--sp-1);
+}
+
+.opp-footer {
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.conv-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.action-feed {
+  display: flex;
+  flex-direction: column;
+}
+
 .is-hud-spotlight {
   outline: 2px solid var(--accent-primary);
   outline-offset: 4px;

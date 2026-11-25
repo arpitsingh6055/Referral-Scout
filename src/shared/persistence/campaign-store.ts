@@ -26,6 +26,7 @@ import type { Campaign } from '../domain/campaign';
 import { canonicalCompany, type Company, type Job } from '../domain/job';
 import { emptyProfile, touch, type CandidateProfile } from '../domain/profile';
 import type { Contact, OutreachTask } from '../domain/outreach';
+import type { ActionItem, Conversation, OpportunityNote } from '../domain/opportunity';
 import type { AIContext, AuditEvent, GmailThread, Notification } from '../domain/system';
 
 type CampaignStore = Extract<
@@ -44,6 +45,9 @@ type CampaignStore = Extract<
   | 'events'
   | 'notifications'
   | 'audit'
+  | 'conversations'
+  | 'actionItems'
+  | 'opportunityNotes'
 >;
 
 /** Read, change and save one record in a single transaction. Returning undefined from `fn` leaves it untouched. */
@@ -275,4 +279,28 @@ export async function eventsFor(campaignId: string, limit = 50): Promise<Outcome
     .filter(e => e.campaignId === campaignId)
     .sort((a, b) => b.occurredAt - a.occurredAt)
     .slice(0, limit);
+}
+
+/* ---------- opportunity-centred coordination stores (v4) ---------- */
+export const allConversations = (): Promise<Conversation[]> => list<Conversation>('conversations');
+export const saveConversations = (c: readonly Conversation[]): Promise<void> => putMany('conversations', c);
+export const changeConversation = (
+  id: string,
+  fn: (c: Conversation | undefined) => Conversation | undefined,
+): Promise<Conversation | undefined> => change<Conversation>('conversations', id, fn);
+
+export const allActionItems = (): Promise<ActionItem[]> => list<ActionItem>('actionItems');
+export const saveActionItems = (a: readonly ActionItem[]): Promise<void> => putMany('actionItems', a);
+export const changeActionItem = (id: string, fn: (a: ActionItem | undefined) => ActionItem | undefined): Promise<ActionItem | undefined> =>
+  change<ActionItem>('actionItems', id, fn);
+
+export const allOpportunityNotes = (): Promise<OpportunityNote[]> => list<OpportunityNote>('opportunityNotes');
+export const saveOpportunityNote = (n: OpportunityNote): Promise<void> => save('opportunityNotes', n);
+
+export async function outreachForOpportunity(jobId: string): Promise<OutreachTask[]> {
+  return (await allOutreach()).filter(t => t.jobId === jobId);
+}
+
+export async function outreachForContact(contactId: string): Promise<OutreachTask[]> {
+  return (await allOutreach()).filter(t => t.contactId === contactId);
 }
