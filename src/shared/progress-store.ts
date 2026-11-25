@@ -44,7 +44,42 @@ export type ProgressTaskInput = Omit<ProgressTask, 'updatedAt' | 'startedAt'> & 
 };
 
 export const PROGRESS_STORAGE_KEY = 'rs_live_progress_v1';
+export const ACTIVE_MISSION_KEY = 'rs_active_mission_v1';
 const LOCAL_EVENT = 'rs-progress-store-update';
+const MISSION_LOCAL_EVENT = 'rs-active-mission-update';
+
+export type MissionSurface = 'workbench' | 'linkedin_tab' | 'ats_tab';
+
+export interface ActiveMissionState {
+  currentStage: string;
+  activeRoute: string;
+  stageLabel: string;
+  liveSummary: string;
+  percent: number;
+  active: boolean;
+  pendingBlockerCount: number;
+  recommendedSurface: MissionSurface;
+  activeTabId?: number;
+  activeTabUrl?: string;
+  isSidePanelOpen: boolean;
+  updatedAt: number;
+}
+
+const DEFAULT_MISSION: ActiveMissionState = {
+  currentStage: 'overview',
+  activeRoute: 'overview',
+  stageLabel: 'Campaign Ready',
+  liveSummary: 'Open Dashboard or Side Panel to continue',
+  percent: 0,
+  active: false,
+  pendingBlockerCount: 0,
+  recommendedSurface: 'workbench',
+  isSidePanelOpen: false,
+  updatedAt: 0,
+};
+
+let memoryMission: ActiveMissionState = { ...DEFAULT_MISSION };
+let missionWriteChain: Promise<void> = Promise.resolve();
 
 const PROCESS_PRIORITY: Record<ProcessId, number> = {
   cv_parse: 100,
@@ -179,7 +214,142 @@ export function clearAllProgressTasks(): Promise<void> {
       notifySameContext({});
     })
     .catch(() => undefined);
+  void clearActiveMission();
   return writeChain;
+}
+
+/** Reads the unified cross-surface ActiveMissionState from extension storage (or in-memory test fallback). */
+export async function readActiveMission(): Promise<ActiveMissionState> {
+  const area = storageArea();
+  if (area) {
+    try {
+      const got = await area.get(ACTIVE_MISSION_KEY);
+      const raw = got?.[ACTIVE_MISSION_KEY] as ActiveMissionState | undefined;
+      if (raw && typeof raw === 'object') {
+        memoryMission = { ...DEFAULT_MISSION, ...raw };
+        return memoryMission;
+      }
+    } catch {
+      // Fall back safely in test mocks without chrome.storage.
+    }
+  }
+  return memoryMission;
+}
+
+export function getCachedActiveMission(): ActiveMissionState {
+  return memoryMission;
+}
+
+function notifyMissionSameContext(next: ActiveMissionState): void {
+  try {
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent(MISSION_LOCAL_EVENT, { detail: next }));
+    }
+  } catch {
+    // Service worker context has no DOM window.
+  }
+}
+
+/** Atomically merges partial mission state updates into `rs_active_mission_v1`. */
+export function publishActiveMission(patch: Partial<ActiveMissionState>): Promise<ActiveMissionState> {
+  let result = memoryMission;
+  missionWriteChain = missionWriteChain
+    .then(async () => {
+      const cur = await readActiveMission();
+      const next: ActiveMissionState = {
+        ...cur,
+        ...patch,
+        updatedAt: patch.updatedAt ?? Date.now(),
+      };
+      memoryMission = next;
+      result = next;
+      const area = storageArea();
+      if (area) {
+        await area.set({ [ACTIVE_MISSION_KEY]: next }).catch(() => undefined);
+      }
+      notifyMissionSameContext(next);
+    })
+    .catch(() => undefined);
+  return missionWriteChain.then(() => result);
+}
+
+export function clearActiveMission(): Promise<void> {
+  missionWriteChain = missionWriteChain
+    .then(async () => {
+      memoryMission = { ...DEFAULT_MISSION, isSidePanelOpen: memoryMission.isSidePanelOpen };
+      const area = storageArea();
+      if (area) {
+        await area.remove(ACTIVE_MISSION_KEY).catch(() => undefined);
+      }
+      notifyMissionSameContext(memoryMission);
+    })
+    .catch(() => undefined);
+  return missionWriteChain;
+}
+
+/** Subscribes to cross-context ActiveMissionState updates across Workbench, Side Panel, and Content Scripts. */
+export function subscribeActiveMission(listener: (mission: ActiveMissionState) => void): () => void {
+  const onLocal = (e: Event): void => {
+    const detail = (e as CustomEvent<ActiveMissionState>).detail;
+    listener(detail ?? memoryMission);
+  };
+  const onStorage = (changes: Record<string, chrome.storage.StorageChange>, areaName: string): void => {
+    if ((areaName !== 'local' && areaName !== 'session') || !changes[ACTIVE_MISSION_KEY]) return;
+    const raw = (changes[ACTIVE_MISSION_KEY].newValue ?? DEFAULT_MISSION) as ActiveMissionState;
+    memoryMission = { ...DEFAULT_MISSION, ...raw };
+    listener(memoryMission);
+  };
+
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener(MISSION_LOCAL_EVENT, onLocal);
+  }
+  try {
+    (globalThis as { chrome?: typeof chrome }).chrome?.storage?.onChanged?.addListener(onStorage);
+  } catch {
+    // Storage listener unavailable outside extension pages.
+  }
+
+  return () => {
+    if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+      window.removeEventListener(MISSION_LOCAL_EVENT, onLocal);
+    }
+    try {
+      (globalThis as { chrome?: typeof chrome }).chrome?.storage?.onChanged?.removeListener(onStorage);
+    } catch {
+      // Ignore cleanup errors.
+    }
+  };
+}
+
+export interface HomingAction {
+  action: 'navigate-route' | 'summon-linkedin' | 'none';
+  label: string;
+  route?: string;
+  tabId?: number;
+  url?: string;
+}
+
+/** Computes the 1-click "Return to Where You Belong" homing target from any Workbench screen. */
+export function returnToWhereYouBelong(mission: ActiveMissionState, currentRoute: string): HomingAction {
+  if (!mission.active && mission.pendingBlockerCount <= 0) {
+    return { action: 'none', label: '' };
+  }
+  if (mission.activeRoute && mission.activeRoute !== currentRoute) {
+    return {
+      action: 'navigate-route',
+      label: 'Return to Active Step →',
+      route: mission.activeRoute,
+    };
+  }
+  if (mission.recommendedSurface !== 'workbench' || !mission.isSidePanelOpen) {
+    return {
+      action: 'summon-linkedin',
+      label: mission.isSidePanelOpen ? 'Focus Active LinkedIn Tab →' : 'Open Side Panel on LinkedIn →',
+      ...(mission.activeTabId !== undefined ? { tabId: mission.activeTabId } : {}),
+      ...(mission.activeTabUrl ? { url: mission.activeTabUrl } : {}),
+    };
+  }
+  return { action: 'none', label: '' };
 }
 
 /** Subscribes to live changes from both `chrome.storage.onChanged` and same-page CustomEvents. */

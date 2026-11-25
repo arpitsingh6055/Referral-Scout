@@ -13,10 +13,14 @@ import { confirmModal, field, pageSkeleton, setFieldError } from '../src/ui/work
 import { computeHudState, createFloatingHud } from '../src/ui/workbench/components/floating-hud';
 import { guidedReviewWorkspace, resetReviewSession } from '../src/ui/workbench/components/guided-review';
 import {
+  clearActiveMission,
   clearAllProgressTasks,
+  publishActiveMission,
   publishProgressTask,
+  readActiveMission,
   readProgressTasks,
   resolveMacroJourney,
+  returnToWhereYouBelong,
   selectPrimaryProgressTask,
 } from '../src/shared/progress-store';
 import { computePanelHudState, createSidePanelHud } from '../src/ui/side-panel/floating-hud';
@@ -1084,4 +1088,53 @@ it('resumable Draft review exposes expandable editable sections, filtered merge 
   const reopenBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Re-open AI Review / Edit')!;
   reopenBtn.click();
   await vi.waitFor(() => expect(ctx.run).toHaveBeenCalledWith({ kind: 'workspace', action: 'reopenProfileReview' }));
+});
+
+it('Cross-surface homing beacon & in-page Shadow DOM Re-Entry Pill sync Side Panel state and active route', async () => {
+  await clearActiveMission();
+  const mission = await publishActiveMission({
+    currentStage: 'job_search',
+    activeRoute: 'jobs',
+    stageLabel: 'Scanning LinkedIn Jobs',
+    liveSummary: '12 roles found',
+    percent: 45,
+    active: true,
+    pendingBlockerCount: 0,
+    recommendedSurface: 'linkedin_tab',
+    activeTabId: 88,
+    activeTabUrl: 'https://www.linkedin.com/jobs/',
+    isSidePanelOpen: false,
+  });
+  expect((await readActiveMission()).activeTabId).toBe(88);
+
+  // Wandering onto Settings produces Return to Active Step -> jobs.
+  expect(returnToWhereYouBelong(mission, 'settings')).toEqual({
+    action: 'navigate-route',
+    label: 'Return to Active Step →',
+    route: 'jobs',
+  });
+
+  // Viewing active route while Side Panel is closed prompts 1-click Side Panel on LinkedIn.
+  expect(returnToWhereYouBelong(mission, 'jobs')).toMatchObject({
+    action: 'summon-linkedin',
+    label: 'Open Side Panel on LinkedIn →',
+    tabId: 88,
+  });
+
+  const ctx = makeCtx();
+  const hudOnSettings = computeHudState({
+    route: 'settings',
+    view: ctx.view,
+    workspace: ctx.workspace,
+    busyAction: '',
+    busyMessage: '',
+    mission,
+  });
+  expect(hudOnSettings?.ctaLabel).toBe('Return to Active Step →');
+  expect(hudOnSettings?.targetRoute).toBe('jobs');
+
+  // Verify open-panel/wayfinding state transitions safely in DOM.
+  const { renderWayfinding } = await import('../src/content/floating-hud');
+  renderWayfinding(mission);
+  renderWayfinding({ ...mission, isSidePanelOpen: true });
 });

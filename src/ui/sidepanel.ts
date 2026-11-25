@@ -39,9 +39,13 @@ import { computePanelHudState, createSidePanelHud, type PanelHudAction } from '.
 import type { CampaignView } from '../background/campaign';
 import {
   clearAllProgressTasks,
+  getCachedActiveMission,
   getCachedProgressTasks,
+  readActiveMission,
   readProgressTasks,
+  subscribeActiveMission,
   subscribeProgressTasks,
+  type ActiveMissionState,
   type ProcessId,
   type ProgressTask,
 } from '../shared/progress-store';
@@ -51,6 +55,13 @@ const campaignHost = node('div', '', 'rs-campaign-host');
 const panelHud = createSidePanelHud(document.body);
 let cachedCampaignView: CampaignView | null = null;
 let cachedProgressTasks: Partial<Record<ProcessId, ProgressTask>> = getCachedProgressTasks();
+let cachedMission: ActiveMissionState = getCachedActiveMission();
+
+try {
+  (globalThis as { chrome?: typeof chrome }).chrome?.runtime?.connect?.({ name: 'sidepanel-lifecycle' });
+} catch {
+  // Ignore outside extension runtime.
+}
 
 const handlePanelHudAction = (action: PanelHudAction): void => {
   if (action.kind === 'focus-tab') {
@@ -215,10 +226,10 @@ function render(s: NetworkState): void {
     setTab('home');
     (document.querySelector('.home-turn') ?? document.querySelector('.todos'))?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
   });
-  const dashboard = node('button', 'Dashboard', 'dashboard-link');
+  const dashboard = node('button', 'Expand in Full Workbench →', 'dashboard-link');
   dashboard.type = 'button';
   dashboard.addEventListener('click', () => {
-    void openDashboard('overview').catch(e => notify('error', errorText(e)));
+    void openDashboard(cachedMission.activeRoute || 'overview').catch(e => notify('error', errorText(e)));
   });
   top.append(node('div', 'RS', 'mark'), node('span', 'Referral Scout', 'name'), dashboard, pill, gear);
   const openPeople = (filter: string): void => {
@@ -800,6 +811,15 @@ const timer = setInterval(() => {
   void refresh().catch(showLoadError);
 }, 2500);
 addEventListener('pagehide', () => clearInterval(timer), { once: true });
+
+void readActiveMission()
+  .then(m => {
+    cachedMission = m;
+  })
+  .catch(() => undefined);
+subscribeActiveMission(m => {
+  cachedMission = m;
+});
 
 onRedraw(render);
 subscribeProgressTasks(tasks => {
