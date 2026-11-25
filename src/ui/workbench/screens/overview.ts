@@ -155,7 +155,14 @@ export function overview(ctx: Ctx): HTMLElement {
         ]),
         div('inline', [
           button('View Live Results →', 'btn btn-primary', () => ctx.go('jobs')),
-          button('Open LinkedIn Tab', 'btn', () => ctx.openExternal('https://www.linkedin.com/jobs/')),
+          button(
+            'Open LinkedIn Tab & Panel',
+            'btn',
+            () =>
+              void chrome.runtime
+                ?.sendMessage?.({ kind: 'surface', action: 'summon-workspace', surface: 'linkedin_tab' })
+                ?.catch?.(() => ctx.openPanel('https://www.linkedin.com/jobs/')),
+          ),
         ]),
       ]),
     );

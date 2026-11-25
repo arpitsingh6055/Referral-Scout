@@ -70,6 +70,7 @@ import { seekerEvidence, suggestSpecializationsFromProfile, type SeekerSource } 
 import { extractJson } from '../parsers/json';
 import { networkCommand, networkTab, closeWorkWindow, readPagesInParallel, PARALLEL_PAGES } from './network-browser';
 import { prepareIntroduction, prepareInvitation, askChatGpt } from './network-ai';
+import { publishActiveMission } from '../shared/progress-store';
 
 /** Saved settings with defaults filled in. Templates are the default for the first note; v0.10.0 briefly defaulted to ChatGPT, so existing installs are moved back once. A later choice is kept. */
 function settingsOf(s: NetworkState): NonNullable<NetworkState['settings']> {
@@ -195,8 +196,67 @@ export async function updateNetwork(fn: (s: NetworkState) => NetworkState): Prom
     return next;
   });
   void showTurn(state);
+  void syncMissionFromNetwork(state);
   announceImportantStatus(previous?.status, state.status);
   return state;
+}
+
+function syncMissionFromNetwork(s: NetworkState): Promise<unknown> {
+  const pending = turnCount(s);
+  if (s.jobSearch?.status === 'finding') {
+    const r = s.jobSearch.ranking;
+    const totalTerms = s.plan?.terms.length ?? 0;
+    const pct = r?.total
+      ? Math.max(10, Math.min(98, Math.round((r.done / r.total) * 100)))
+      : totalTerms
+        ? Math.max(10, Math.min(95, Math.round((s.jobSearch.cursor / totalTerms) * 100)))
+        : 28;
+    return publishActiveMission({
+      currentStage: 'job_search',
+      activeRoute: 'jobs',
+      stageLabel: r ? 'Scoring LinkedIn Jobs' : 'Scanning LinkedIn Jobs',
+      liveSummary: `${s.jobSearch.found.length} jobs found${r ? ` · scored ${r.done}/${r.total}` : ''}`,
+      percent: pct,
+      active: true,
+      pendingBlockerCount: pending,
+      recommendedSurface: 'linkedin_tab',
+    });
+  }
+  if (s.jobSearch?.status === 'choosing' && s.jobSearch.found.length) {
+    return publishActiveMission({
+      currentStage: 'job_shortlist',
+      activeRoute: 'jobs',
+      stageLabel: 'Shortlisting Matched Jobs',
+      liveSummary: `${s.jobSearch.found.length} roles ready for review`,
+      percent: 72,
+      active: true,
+      pendingBlockerCount: pending,
+      recommendedSurface: 'workbench',
+    });
+  }
+  const waitingReferrals = (s.referralJobs ?? []).some(j => !j.finishedAt);
+  if (pending > 0 || s.active || waitingReferrals) {
+    return publishActiveMission({
+      currentStage: pending > 0 ? 'referrals_turn' : 'outreach_running',
+      activeRoute: pending > 0 ? 'referrals' : 'people',
+      stageLabel: pending > 0 ? 'Waiting on Your Pick' : 'Finding & Messaging Referrers',
+      liveSummary: s.status || `${pending} items waiting for review`,
+      percent: pending > 0 ? 78 : 85,
+      active: Boolean(s.active || waitingReferrals),
+      pendingBlockerCount: pending,
+      recommendedSurface: 'linkedin_tab',
+    });
+  }
+  return publishActiveMission({
+    currentStage: 'overview',
+    activeRoute: 'overview',
+    stageLabel: 'Campaign Ready',
+    liveSummary: s.status || 'Open Dashboard or Side Panel to continue',
+    percent: s.profile ? 100 : 25,
+    active: false,
+    pendingBlockerCount: 0,
+    recommendedSurface: 'workbench',
+  });
 }
 /** How many things are waiting for the person: approvals, people needing attention, a question, companies to choose. */
 export function turnCount(s: NetworkState): number {

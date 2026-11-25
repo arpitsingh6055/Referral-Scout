@@ -1,4 +1,5 @@
 import { networkPageCommand, networkReplySchema, type NetworkPageCommand } from '../shared/network';
+import { publishActiveMission } from '../shared/progress-store';
 import { read, write } from '../storage/state';
 
 export type TabMode = 'background' | 'foreground';
@@ -376,6 +377,7 @@ export async function networkTab(url: string, signal: AbortSignal): Promise<numb
     id = await openWorkTab(url, 'linkedin', false);
     await write('network-tab', id);
   } else await chrome.tabs.update(id, { url, active: false });
+  void publishActiveMission({ activeTabId: id, activeTabUrl: url });
   await readyNetworkTab(id, signal);
   return id;
 }

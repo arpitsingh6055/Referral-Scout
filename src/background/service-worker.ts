@@ -5,7 +5,14 @@ import { registerApplyMessages } from './apply';
 import { networkTick, updateNetwork } from './network';
 import { registerCampaignMessages, migrateAnswerBank } from './campaign';
 import { registerGmailMessages } from './gmail';
-import { applySurfaceBehaviour, installMenus, openWorkbench, registerSurfaceMessages, registerSurfaces } from './surfaces';
+import {
+  applySurfaceBehaviour,
+  installMenus,
+  openWorkbench,
+  registerSidePanelLifecycle,
+  registerSurfaceMessages,
+  registerSurfaces,
+} from './surfaces';
 import { registerWorkspaceMessages } from './workspace';
 import { registerRunner, ensureRunnerAlarm, recoverQueue, tick, abortAll } from './runner';
 registerNetworkMessages();
@@ -16,6 +23,7 @@ registerGmailMessages();
 registerRunner();
 registerSurfaces();
 registerSurfaceMessages();
+registerSidePanelLifecycle();
 registerWorkspaceMessages();
 // Clicking an important background notification takes the person back into the workbench; notifications are
 // otherwise passive and never perform a consequential action on their own.

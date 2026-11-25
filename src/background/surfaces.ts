@@ -7,6 +7,7 @@
  * background storage, and the user can change the toolbar default at any time.
  */
 
+import { publishActiveMission, readActiveMission, type MissionSurface } from '../shared/progress-store';
 import { read, write } from '../storage/state';
 import { trustedExtension } from '../validators/security';
 import { focusManagedTab, openManagedTab } from './network-browser';
@@ -176,19 +177,74 @@ export function installMenus(): Promise<void> {
   return menus;
 }
 
+const openSidePanelPorts = new Set<chrome.runtime.Port>();
+
+/** Tracks Side Panel open/close lifetime via `runtime.connect({ name: 'sidepanel-lifecycle' })`. */
+export function registerSidePanelLifecycle(): void {
+  chrome.runtime?.onConnect?.addListener(port => {
+    if (port.name !== 'sidepanel-lifecycle') return;
+    if (port.sender?.id && port.sender.id !== chrome.runtime.id) return;
+    openSidePanelPorts.add(port);
+    void publishActiveMission({ isSidePanelOpen: true });
+    port.onDisconnect.addListener(() => {
+      openSidePanelPorts.delete(port);
+      void publishActiveMission({ isSidePanelOpen: openSidePanelPorts.size > 0 });
+    });
+  });
+}
+
+export const isSidePanelOpen = (): boolean => openSidePanelPorts.size > 0;
+
+/**
+ * Unified NavigationCoordinator (`summonActiveWorkspace`): jumps straight back to whichever surface
+ * currently owns the mission (`workbench` route OR the active LinkedIn/ATS tab + Side Panel).
+ */
+export async function summonActiveWorkspace(surfaceOverride?: MissionSurface, senderTabId?: number): Promise<{ opened: boolean }> {
+  const mission = await readActiveMission();
+  const targetSurface = surfaceOverride ?? mission.recommendedSurface;
+  if (targetSurface === 'workbench') {
+    await openWorkbench(mission.activeRoute || 'overview');
+    return { opened: true };
+  }
+  const targetTabId = senderTabId ?? mission.activeTabId;
+  if (targetTabId !== undefined) {
+    const focused = await focusManagedTab(targetTabId, mission.activeTabUrl || DEFAULT_LINKEDIN_URL);
+    if (focused) {
+      await openPanel(targetTabId);
+      return { opened: true };
+    }
+  }
+  return openLinkedInWithSidePanel(mission.activeTabUrl || DEFAULT_LINKEDIN_URL);
+}
+
 /** The side panel's "Open dashboard" button comes through here, so tab reuse works from both surfaces. */
 export function registerSurfaceMessages(): void {
   chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
-    if (!input || typeof input !== 'object' || (input as { kind?: unknown }).kind !== 'surface') return false;
+    if (!input || typeof input !== 'object') return false;
     if (!trustedExtension(sender, chrome.runtime.id)) return false;
-    const message = input as { action?: string; route?: string; url?: string; tabId?: number; surface?: Surface };
+
+    const rawType = (input as { type?: unknown }).type;
+    if (rawType === 'OPEN_SIDE_PANEL') {
+      const tabId = sender.tab?.id;
+      void openPanel(tabId).then(() => respond({ ok: true, opened: true }));
+      return true;
+    }
+
+    if ((input as { kind?: unknown }).kind !== 'surface') return false;
+    const message = input as {
+      action?: string;
+      route?: string;
+      url?: string;
+      tabId?: number;
+      surface?: Surface | MissionSurface;
+    };
     if (message.action === 'open-tab')
       void openWorkbench(typeof message.route === 'string' ? message.route : '').then(() => respond({ ok: true }));
     else if (message.action === 'open-panel') {
       if (typeof message.url === 'string' && message.url) {
         void openLinkedInWithSidePanel(message.url).then(res => respond({ ok: true, ...res }));
       } else {
-        void openPanel().then(() => respond({ ok: true, opened: true }));
+        void openPanel(sender.tab?.id).then(() => respond({ ok: true, opened: true }));
       }
     } else if (message.action === 'open-linkedin-panel')
       void openLinkedInWithSidePanel(typeof message.url === 'string' ? message.url : undefined).then(res => respond({ ok: true, ...res }));
@@ -197,7 +253,13 @@ export function registerSurfaceMessages(): void {
         typeof message.tabId === 'number' ? message.tabId : undefined,
         typeof message.url === 'string' ? message.url : undefined,
       ).then(focused => respond({ ok: true, focused }));
-    else if (message.action === 'set-default' && (message.surface === 'tab' || message.surface === 'panel'))
+    else if (message.action === 'summon-workspace') {
+      const override =
+        message.surface === 'workbench' || message.surface === 'linkedin_tab' || message.surface === 'ats_tab'
+          ? message.surface
+          : undefined;
+      void summonActiveWorkspace(override, sender.tab?.id).then(res => respond({ ok: true, ...res }));
+    } else if (message.action === 'set-default' && (message.surface === 'tab' || message.surface === 'panel'))
       void setDefaultSurface(message.surface).then(() => respond({ ok: true }));
     else if (message.action === 'get-default') void defaultSurface().then(surface => respond({ ok: true, surface }));
     else return false;

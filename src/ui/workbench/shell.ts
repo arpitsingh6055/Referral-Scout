@@ -14,10 +14,15 @@ import { computeHudState, createFloatingHud, type HudState } from './components/
 import { getReviewProgressSnapshot, resetReviewSession } from './components/guided-review';
 import {
   clearProgressTask,
+  getCachedActiveMission,
   getCachedProgressTasks,
   publishProgressTask,
+  readActiveMission,
   readProgressTasks,
+  returnToWhereYouBelong,
+  subscribeActiveMission,
   subscribeProgressTasks,
+  type ActiveMissionState,
   type ProcessId,
   type ProgressTask,
 } from '../../shared/progress-store';
@@ -117,6 +122,7 @@ let busyStartedAt = 0;
 let aiError = '';
 let cvProgress = { active: false, percent: 0, label: '', startedAt: 0 };
 let persistedTasks: Partial<Record<ProcessId, ProgressTask>> = getCachedProgressTasks();
+let cachedMission: ActiveMissionState = getCachedActiveMission();
 let drawn = '';
 let deferred: { view: CampaignView; workspace: WorkspaceView | null } | null = null;
 let mobileDrawerOpen = false;
@@ -548,10 +554,17 @@ function render(force = false): void {
       busyMessage,
       busyStartedAt,
       persistedTasks,
+      mission: cachedMission,
       ...(cvProgress.active ? { cvProgress } : {}),
       reviewProgress: getReviewProgressSnapshot(shop),
     });
     const navigateHud = (target: HudState): void => {
+      if (target.command === 'summonLinkedIn') {
+        void chrome.runtime
+          .sendMessage({ kind: 'surface', action: 'summon-workspace', surface: 'linkedin_tab' })
+          .catch(() => ctx.openPanel(target.inspectTabUrl || 'https://www.linkedin.com/jobs/'));
+        return;
+      }
       if (target.inspectTabId !== undefined || target.inspectTabUrl) {
         void chrome.runtime
           .sendMessage({
@@ -638,8 +651,51 @@ function render(force = false): void {
     crumbItems.push(text('span', 'crumb-current', header.title));
   }
 
+  const homing = returnToWhereYouBelong(cachedMission, current);
+  const jobSearchRunningAway = shop?.jobSearch?.status === 'finding' && current !== 'jobs';
+  const showMissionBar = homing.action !== 'none' || jobSearchRunningAway;
+  const missionBar = showMissionBar
+    ? el('div', { class: 'mission-bar', role: 'region', 'aria-label': 'Active workflow homing navigation' }, [
+        div('mission-bar-copy', [
+          el('span', { class: 'dot dot-running' }),
+          div('', [
+            text(
+              'div',
+              'cell-strong',
+              jobSearchRunningAway
+                ? `Active: Scanning LinkedIn Jobs (${shop?.jobSearch?.found ?? 0} found)`
+                : `Active: ${cachedMission.stageLabel} (${cachedMission.percent}%)`,
+            ),
+            text(
+              'div',
+              'cell-muted',
+              `${jobSearchRunningAway ? 'Job search running in LinkedIn tab' : cachedMission.liveSummary}${!cachedMission.isSidePanelOpen ? ' · Side Panel closed' : ''}`,
+            ),
+          ]),
+        ]),
+        div('inline', [
+          (homing.route && homing.route !== current) || jobSearchRunningAway
+            ? button('Return to Active Step →', 'btn btn-sm btn-primary', () =>
+                ctx.go((jobSearchRunningAway ? 'jobs' : homing.route) as Route),
+              )
+            : null,
+          !cachedMission.isSidePanelOpen || cachedMission.recommendedSurface !== 'workbench' || jobSearchRunningAway
+            ? button(
+                'Focus Active LinkedIn Tab →',
+                'btn btn-sm',
+                () =>
+                  void chrome.runtime
+                    .sendMessage({ kind: 'surface', action: 'summon-workspace', surface: 'linkedin_tab' })
+                    .catch(() => ctx.openPanel(cachedMission.activeTabUrl || 'https://www.linkedin.com/jobs/')),
+              )
+            : null,
+        ]),
+      ])
+    : null;
+
   const page = el('main', { class: 'page' }, [
     div('crumb', crumbItems),
+    missionBar,
     head,
     busyMessage
       ? el('div', { class: 'banner banner-progress', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' }, [
@@ -704,17 +760,19 @@ export async function mount(): Promise<void> {
   if (hash) current = hash;
   root.replaceChildren(div('page', [pageSkeleton()]));
   try {
-    const [a, b, tasks] = await Promise.all([
+    const [a, b, tasks, mission] = await Promise.all([
       view(),
       workspace().catch((e: unknown) => {
         error = `Your profile and jobs could not be loaded: ${e instanceof Error ? e.message : 'unknown error'}`;
         return null;
       }),
       readProgressTasks().catch(() => ({})),
+      readActiveMission().catch(() => getCachedActiveMission()),
     ]);
     state = a;
     shop = b;
     persistedTasks = tasks;
+    cachedMission = mission;
   } catch (e) {
     root.replaceChildren(
       div('page', [
@@ -816,6 +874,11 @@ export async function mount(): Promise<void> {
 
   subscribeProgressTasks(tasks => {
     persistedTasks = tasks;
+    if (state) render(true);
+  });
+
+  subscribeActiveMission(mission => {
+    cachedMission = mission;
     if (state) render(true);
   });
 

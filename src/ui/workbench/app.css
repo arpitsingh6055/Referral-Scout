@@ -167,6 +167,27 @@
   color: #fff;
 }
 
+.mission-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-3);
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 34%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent-tint) 36%, var(--bg-surface));
+}
+
+.mission-bar-copy {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+  flex: 1;
+}
+
 .rail-foot {
   background: var(--rail-surface);
   border: 1px solid var(--rail-border);

@@ -13,7 +13,14 @@
 import { button, div, el, icon, text } from '../dom';
 import type { CampaignView, WorkspaceView } from '../api';
 import type { Route } from '../shell';
-import { selectPrimaryProgressTask, resolveMacroJourney, type ProcessId, type ProgressTask } from '../../../shared/progress-store';
+import {
+  returnToWhereYouBelong,
+  selectPrimaryProgressTask,
+  resolveMacroJourney,
+  type ActiveMissionState,
+  type ProcessId,
+  type ProgressTask,
+} from '../../../shared/progress-store';
 
 export interface ReviewProgressSnapshot {
   /** Current 1-based step inside GuidedReviewWorkspace (1..3). */
@@ -34,6 +41,7 @@ export interface HudInput {
   cvProgress?: { active: boolean; percent: number; label: string; startedAt: number };
   reviewProgress?: ReviewProgressSnapshot | null;
   persistedTasks?: Partial<Record<ProcessId, ProgressTask>>;
+  mission?: ActiveMissionState;
   busyStartedAt?: number;
   now?: number;
 }
@@ -51,7 +59,7 @@ export interface HudState {
   retryTaskId?: ProcessId;
   inspectTabId?: number;
   inspectTabUrl?: string;
-  command?: 'findJobs' | 'openPanel';
+  command?: 'findJobs' | 'openPanel' | 'summonLinkedIn';
 }
 
 const AI_STAGE_PERCENT: [RegExp, number, number][] = [
@@ -181,14 +189,35 @@ export function computeHudState(input: HudInput): HudState | null {
         ? Math.max(8, Math.min(95, Math.round((w.jobSearch.cursor / w.jobSearch.totalTerms) * 100)))
         : 22;
     const remaining = ranking ? Math.max(0, ranking.total - ranking.done) : 0;
+    const awayFromJobs = route !== 'jobs';
     return {
       mode: 'processing',
       percent: pct,
       title: ranking ? `Scoring job ${ranking.done} of ${ranking.total}…` : `Found ${w.jobSearch.found} matching roles…`,
-      detail: 'Matching listings against your CV & profile',
+      detail: awayFromJobs ? 'Active in Jobs tab — return anytime' : 'Matching listings against your CV & profile',
       ...(remaining ? { etaText: `~${Math.max(3, remaining * 2)}s left` } : {}),
-      ctaLabel: 'View jobs',
+      ctaLabel: awayFromJobs ? 'Return to Active Step →' : 'View jobs',
       targetRoute: 'jobs',
+    };
+  }
+
+  /* 1b. Homing Beacon when user wanders off active flow to Settings / Profile / Answers */
+  const homing = input.mission ? returnToWhereYouBelong(input.mission, route) : null;
+  if (homing && homing.action !== 'none' && input.mission?.active) {
+    return {
+      mode: 'completion',
+      percent: Math.max(15, Math.min(99, input.mission.percent || 50)),
+      title: input.mission.stageLabel,
+      detail: `${input.mission.liveSummary}${!input.mission.isSidePanelOpen ? ' · Side Panel closed' : ''}`,
+      ctaLabel: homing.label,
+      targetRoute: (homing.route as Route) || route,
+      ...(homing.action === 'summon-linkedin'
+        ? {
+            command: 'summonLinkedIn' as const,
+            ...(homing.tabId !== undefined ? { inspectTabId: homing.tabId } : {}),
+            ...(homing.url ? { inspectTabUrl: homing.url } : {}),
+          }
+        : {}),
     };
   }
 
@@ -342,7 +371,8 @@ export function createFloatingHud(host: HTMLElement): FloatingHudController {
     );
     collapseBtn.replaceChildren(icon('chevronDown', 14));
 
-    const hasDirectAction = state.mode !== 'processing' || !!state.targetSelector || state.inspectTabId !== undefined;
+    const hasDirectAction =
+      state.mode !== 'processing' || !!state.targetSelector || state.inspectTabId !== undefined || state.targetRoute === 'jobs';
     const ctaBtn = button(
       state.ctaLabel,
       `btn btn-sm ${state.mode === 'ready' || state.mode === 'error' || state.tone === 'amber' ? 'btn-primary' : 'hud-cta'}`,

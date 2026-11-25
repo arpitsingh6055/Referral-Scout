@@ -514,3 +514,11 @@ it('does not block the extension when optional usage reporting is off', async ()
   expect(byText('button', 'Open setup dashboard')).toBeTruthy();
   expect(byText('button', 'Accept and continue')).toBeFalsy();
 });
+
+it('exposes Expand in Full Workbench button in the Side Panel header that deep-links to the Workbench', async () => {
+  await open();
+  const expandBtn = byText('button', 'Expand in Full Workbench →')!;
+  expect(expandBtn).toBeTruthy();
+  expandBtn.click();
+  await vi.waitFor(() => expect(sent.some(r => r.action === 'open-tab')).toBe(true));
+});
