@@ -10,6 +10,8 @@ import * as api from './api';
 import { send, sendNetwork, sendWorkspace, view, workspace, type CampaignView, type Request, type WorkspaceView } from './api';
 import type { NetworkRequest } from '../../shared/network';
 import { button, div, el, icon, isEditing, pageSkeleton, restoreForm, snapshotForm, text } from './dom';
+import { computeHudState, createFloatingHud, type HudState } from './components/floating-hud';
+import { getReviewProgressSnapshot, resetReviewSession } from './components/guided-review';
 import { overview, overviewHeader } from './screens/overview';
 import { applications, applicationsHeader } from './screens/applications';
 import { needsYou, needsYouHeader } from './screens/needs-you';
@@ -74,6 +76,9 @@ export interface Ctx {
   refresh: () => Promise<void>;
   fail: (message: string) => void;
   busyAction: string;
+  busyMessage?: string;
+  cvLiveMessage?: string;
+  aiError?: string;
 }
 
 const EXTRA_ROUTES: Route[] = ['welcome'];
@@ -99,12 +104,16 @@ let error = '';
 let note = '';
 let busyAction = '';
 let busyMessage = '';
+let busyStartedAt = 0;
+let aiError = '';
+let cvProgress = { active: false, percent: 0, label: '', startedAt: 0 };
 let drawn = '';
 let deferred: { view: CampaignView; workspace: WorkspaceView | null } | null = null;
 let mobileDrawerOpen = false;
 
 const root = document.getElementById('app')!;
 const floatingToasts = createToaster(document.body);
+const floatingHud = createFloatingHud(document.body);
 
 const resetToWelcome = (push = false): void => {
   try {
@@ -260,7 +269,20 @@ function screenFor(ctx: Ctx): { header: Header; body: HTMLElement } {
   }
 }
 
-const signature = (): string => JSON.stringify([current, error, note, busyAction, busyMessage, mobileDrawerOpen, state, shop]);
+const signature = (): string =>
+  JSON.stringify([
+    current,
+    error,
+    note,
+    busyAction,
+    busyMessage,
+    aiError,
+    cvProgress.active,
+    cvProgress.label,
+    mobileDrawerOpen,
+    state,
+    shop,
+  ]);
 
 function actionProgress(action: string): string {
   const labels: Record<string, string> = {
@@ -324,6 +346,8 @@ function render(force = false): void {
       if (busyAction) return;
       busyAction = `${request.kind}:${request.action}`;
       busyMessage = actionProgress(request.action);
+      busyStartedAt = Date.now();
+      if (request.action === 'processProfileWithChatGPT') aiError = '';
       note = '';
       error = '';
       render(true);
@@ -336,18 +360,22 @@ function render(force = false): void {
         state = a;
         shop = b;
         if (request.kind === 'workspace' && request.action === 'clear') resetToWelcome(true);
+        if (request.action === 'processProfileWithChatGPT') aiError = '';
         error = '';
       } catch (e) {
         error = e instanceof Error ? e.message : 'Something went wrong.';
+        if (request.action === 'processProfileWithChatGPT') aiError = error;
       } finally {
         busyAction = '';
         busyMessage = '';
+        busyStartedAt = 0;
       }
       render(true);
     },
     runNetwork: async request => {
       if (busyAction) return;
       busyAction = `network:${request.action}`;
+      busyStartedAt = Date.now();
       busyMessage =
         request.action === 'import'
           ? 'Reading your LinkedIn profile… Keep this dashboard open. Referral Scout is saving it as source evidence; ChatGPT will reconcile it with your CV before anything enters your candidate profile.'
@@ -390,6 +418,7 @@ function render(force = false): void {
       } finally {
         busyAction = '';
         busyMessage = '';
+        busyStartedAt = 0;
       }
       render(true);
     },
@@ -444,6 +473,51 @@ function render(force = false): void {
       render(true);
     },
     busyAction,
+    ...(busyMessage ? { busyMessage } : {}),
+    ...(cvProgress.active ? { cvLiveMessage: cvProgress.label } : {}),
+    ...(aiError ? { aiError } : {}),
+  };
+
+  const syncFloatingHud = (): void => {
+    if (!state) {
+      floatingHud.update(null, () => undefined);
+      return;
+    }
+    const hudState = computeHudState({
+      route: current,
+      view: state,
+      workspace: shop,
+      busyAction,
+      busyMessage,
+      busyStartedAt,
+      ...(cvProgress.active ? { cvProgress } : {}),
+      reviewProgress: getReviewProgressSnapshot(shop),
+    });
+    const navigateHud = (target: HudState): void => {
+      if (target.mode === 'ready' && target.targetRoute === 'overview' && !shop?.jobs.length) {
+        ctx.openPanel();
+        return;
+      }
+      const focusSelector = (): void => {
+        if (!target.targetSelector) return;
+        const node = root.querySelector<HTMLElement>(target.targetSelector);
+        if (!node) return;
+        node.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+        node.classList.remove('is-hud-spotlight');
+        void node.offsetWidth;
+        node.classList.add('is-hud-spotlight');
+        setTimeout(() => node.classList.remove('is-hud-spotlight'), 1400);
+        const focusEl = node.querySelector<HTMLElement>('button:not(:disabled), input:not(:disabled), label.btn');
+        focusEl?.focus({ preventScroll: true });
+      };
+      if (target.targetRoute !== current) {
+        ctx.go(target.targetRoute);
+        requestAnimationFrame(focusSelector);
+      } else {
+        focusSelector();
+      }
+    };
+    floatingHud.update(hudState, navigateHud);
   };
 
   const { header, body } = screenFor(ctx);
@@ -510,6 +584,7 @@ function render(force = false): void {
   const { aside, backdrop } = rail(ctx);
   root.replaceChildren(div('app', [aside, backdrop, div('page-wrap', [mobileBar, page])]));
   restoreForm(root, snap);
+  syncFloatingHud();
 }
 
 const routeFor = (hash: string): Route | undefined => {
@@ -618,6 +693,7 @@ export async function mount(): Promise<void> {
     if (busyAction) return;
     busyAction = 'generic';
     busyMessage = (event as CustomEvent<string>).detail || 'Working…';
+    busyStartedAt = Date.now();
     note = '';
     error = '';
     replaceTransientBanner('progress', busyMessage);
@@ -626,8 +702,25 @@ export async function mount(): Promise<void> {
     if (busyAction === 'generic') {
       busyAction = '';
       busyMessage = '';
+      busyStartedAt = 0;
     }
     render(true);
+  });
+
+  addEventListener('referral-scout-cv-progress', event => {
+    const detail = (event as CustomEvent<{ active?: boolean; percent?: number; label?: string }>).detail;
+    if (!detail) return;
+    cvProgress = {
+      active: !!detail.active,
+      percent: detail.percent ?? 0,
+      label: detail.label ?? '',
+      startedAt: detail.active ? (cvProgress.active ? cvProgress.startedAt : Date.now()) : 0,
+    };
+    render(true);
+  });
+
+  addEventListener('referral-scout-review-change', () => {
+    if (state) render(true);
   });
 
   addEventListener('referral-scout-action-error', event => {
@@ -636,6 +729,7 @@ export async function mount(): Promise<void> {
     error = typeof message === 'string' && message ? message : 'That action could not be completed. Please try again.';
     busyAction = '';
     busyMessage = '';
+    busyStartedAt = 0;
     replaceTransientBanner('error', error);
   });
 
@@ -645,8 +739,12 @@ export async function mount(): Promise<void> {
     if (payload.kind === 'ui.cleared') {
       deferred = null;
       error = '';
+      aiError = '';
       busyAction = '';
       busyMessage = '';
+      busyStartedAt = 0;
+      cvProgress = { active: false, percent: 0, label: '', startedAt: 0 };
+      resetReviewSession();
       note = 'All local data was deleted from this device.';
       resetToWelcome();
       sendResponse({ shown: document.visibilityState === 'visible' });
@@ -678,6 +776,7 @@ export async function mount(): Promise<void> {
     busyMessage = payload.message;
     const copy = root.querySelector<HTMLElement>('.banner-progress .progress-copy');
     if (copy) copy.textContent = busyMessage;
+    render(true);
     sendResponse({ shown: document.visibilityState === 'visible' });
     return false;
   });

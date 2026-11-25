@@ -147,6 +147,7 @@ const PATHS: Record<string, string> = {
   menu: 'M4 6h16M4 12h16M4 18h16',
   close: 'M6 6l12 12M18 6l-12 12',
   chevronRight: 'm9 6 6 6-6 6',
+  chevronDown: 'm6 9 6 6 6-6',
   external: 'M14 5h5v5M10 14 19 5M19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5',
   info: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 11v5M12 8h.01',
 };

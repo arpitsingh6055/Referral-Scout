@@ -3,6 +3,7 @@ import { ago, button, card, div, el, field, icon, input, pill, setFieldError, te
 import { send, sendGmail, sendNetwork, sendWorkspace } from '../api';
 import { defaultSettings } from '../../../shared/network';
 import { uploadCvForWorkbench } from '../cv-upload';
+import { guidedReviewWorkspace } from '../components/guided-review';
 import type { Ctx } from '../shell';
 
 const cvAccept = '.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -108,6 +109,7 @@ export function welcome(ctx: Ctx): HTMLElement {
         : null,
     ],
   });
+  profileCard.dataset.hudTarget = 'linkedin';
 
   const cvFile = el('input', { type: 'file', accept: cvAccept, class: 'setup-file', 'aria-label': 'Choose CV file' });
   cvFile.addEventListener('change', () => {
@@ -125,8 +127,8 @@ export function welcome(ctx: Ctx): HTMLElement {
         cvFile.value = '';
       });
   });
-  const cvCard = card('2. Your CV', {
-    sub: 'The file is stored in this browser and attached only to applications you choose to fill.',
+  const cvCard = card('2. Your CV & AI Review', {
+    sub: 'The file is stored in this browser and organized step-by-step before anything enters your profile.',
     body: [
       div('inline', [
         pill(cvReady ? 'CV saved' : 'Optional for now', cvReady ? 'green' : 'grey'),
@@ -134,43 +136,34 @@ export function welcome(ctx: Ctx): HTMLElement {
       ]),
       linkedInReady
         ? div('inline', [
-            el('label', { class: 'btn', for: 'welcome-cv-file' }, [cvReady ? 'Replace CV' : 'Upload CV']),
+            el('label', { class: cvReady ? 'btn' : 'btn btn-primary', for: 'welcome-cv-file' }, [cvReady ? 'Replace CV' : 'Upload CV']),
             cvFile,
-            cvReady
-              ? w.aiProfileDraft
-                ? button('Review ChatGPT profile draft', 'btn btn-primary', () => ctx.go('profile'))
-                : button(
-                    ctx.busyAction === 'workspace:processProfileWithChatGPT'
-                      ? 'ChatGPT is reconciling…'
-                      : w.cv.imported
-                        ? 'Reprocess updated CV + LinkedIn'
-                        : 'Ask ChatGPT to reconcile sources',
-                    'btn btn-primary',
-                    () => ctx.run({ kind: 'workspace', action: 'processProfileWithChatGPT' }),
-                    {
-                      disabled: ctx.busyAction === 'workspace:processProfileWithChatGPT',
-                      'aria-busy': ctx.busyAction === 'workspace:processProfileWithChatGPT',
-                    },
-                  )
-              : null,
-            w.aiProfileDraft
-              ? pill('ChatGPT draft ready for review', 'amber')
-              : w.cv.imported
-                ? pill('Profile created · review suggestions', 'green')
-                : null,
           ])
         : text(
             'p',
             'field-help',
             'Read your LinkedIn profile first to associate the CV with the right candidate. You can skip the CV and add it later.',
           ),
+      linkedInReady
+        ? guidedReviewWorkspace(ctx, {
+            variant: 'welcome',
+            ...(ctx.cvLiveMessage ? { cvLiveMessage: ctx.cvLiveMessage } : {}),
+            ...(ctx.aiError ? { aiError: ctx.aiError } : {}),
+            ...(ctx.busyMessage ? { busyMessage: ctx.busyMessage } : {}),
+            onApprovedNext: () => {
+              target.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+              target.focus();
+            },
+          })
+        : null,
       text(
         'p',
         'field-help',
-        'Your CV is the priority source when details disagree with LinkedIn. ChatGPT prepares a draft; nothing enters your profile until you approve it.',
+        'Your CV is the priority source when details disagree with LinkedIn. Nothing enters your profile until you confirm.',
       ),
     ],
   });
+  cvCard.dataset.hudTarget = 'cv-upload';
   cvFile.id = 'welcome-cv-file';
 
   const campaignCard = card('3. What are you looking for?', {
@@ -251,6 +244,7 @@ export function welcome(ctx: Ctx): HTMLElement {
       ]),
     ],
   });
+  campaignCard.dataset.hudTarget = 'campaign-goal';
 
   const chatCard = card('Optional connections', {
     sub: 'Only connect the services you plan to use. You can skip both and come back later.',
