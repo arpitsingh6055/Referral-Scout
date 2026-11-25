@@ -1,6 +1,6 @@
 # Referral Scout — Chrome Web Store & Microsoft Edge Add-ons Submission Packet (v0.58.2)
 
-This packet contains copy-ready metadata, permission justifications, privacy dashboard disclosures, reviewer test instructions, and visual asset checklists aligned strictly with **Referral Scout v0.58.2**.
+**Verified Release Artifact:** Build cleanly with `pnpm check && pnpm package` (all `43` Vitest suites / `713` tests passing; `dist/` checked via `scripts/check-build.mjs`; architecture documented in [docs/architecture.md](architecture.md)).
 
 ---
 

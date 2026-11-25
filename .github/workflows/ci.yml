@@ -29,9 +29,15 @@ jobs:
         run: npm install --global pnpm@11.25.0
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Test, type-check, and build
-        run: pnpm check
-      - name: Package extension
+      - name: Formatting check
+        run: pnpm format:check
+      - name: TypeScript check
+        run: pnpm typecheck
+      - name: Run unit & integration tests
+        run: pnpm test
+      - name: Production MV3 build & bundle audit
+        run: pnpm build
+      - name: Package store artifact
         run: pnpm package
       - name: Upload extension package
         uses: actions/upload-artifact@v4

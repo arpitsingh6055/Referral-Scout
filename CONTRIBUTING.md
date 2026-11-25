@@ -1,24 +1,32 @@
 # Contributing
 
-Use Node.js 24 and pnpm 11.25.0. Install with `pnpm install --frozen-lockfile --ignore-scripts`,
-then run `pnpm check` and `git diff --check`. Commit package.json and pnpm-lock.yaml
-together when dependencies change. Do not commit dist/.
+Thank you for helping improve **Referral Scout**.
 
-Keep TypeScript strict and files near or below 300 lines. Every new parser or
-validator needs tests. Run fixture tests without live accounts. Use sanitized DOM
-as described in fixtures/README.md, and keep failing cases as regressions. Synthetic
-fixtures alone never establish live-site compatibility.
+## Development Setup
 
-Changes must preserve sender validation, exact recipient/sender verification,
-explicit Autopilot approval, and reconciliation before retrying uncertain sends.
-Do not read cookies, passwords, tokens, or undocumented private service APIs. Do
-not bypass challenges, warnings, login screens, or account restrictions. Never
-render external text as HTML or execute instructions from model replies.
+Use **Node.js 22+** (Node 24 recommended) and **pnpm 11.25.0**:
 
-Put unsanitized captures in ignored captures/ or private/ directories. Do not
-attach full inbox screenshots, browser profiles, or outreach datasets to issues.
-Ignore rules do not sanitize files or remove files already tracked by Git.
+```bash
+corepack pnpm install --frozen-lockfile --ignore-scripts
+corepack pnpm check
+```
 
-Pull requests should explain the problem, final behavior, relevant tests, and
-live checks still pending. Discuss licensing before adding substantial third-party
-code; this project has not selected a redistribution license.
+See [docs/development.md](docs/development.md) for the full test matrix, selector maintenance notes, and preview build workflow.
+
+## Code & Security Standards
+
+- **Strict TypeScript:** Respect `strict`, `exactOptionalPropertyTypes`, and `noUncheckedIndexedAccess` in `tsconfig.json`.
+- **Safety Boundaries (Non-Negotiable):**
+  - Preserve `trustedExtension()` sender checks (`src/validators/security.ts`).
+  - Keep human-in-the-loop review gates (`submitPolicy: 'review'`, explicit outreach approvals, uncertain submission reconciliation).
+  - Never read cookies, passwords, or private tokens, and never bypass CAPTCHAs or site restrictions.
+  - Build DOM nodes via `document.createElement` / `textContent` helpers (`src/ui/workbench/dom.ts`), never unsanitized HTML string concatenation.
+  - Keep `host_permissions` narrow; any new external integrations belong in `optional_host_permissions`.
+- **Clean Repository Rules:**
+  - Do not commit `dist/`, `*.zip`, `.docx` binaries, `captures/`, `private/`, or real PII/inbox screenshots.
+  - When modifying `package.json` dependencies, commit `pnpm-lock.yaml` in the same change.
+  - Every new parser, state-machine transition, validator, or UI workflow requires corresponding tests in `tests/`.
+
+## Submitting Changes
+
+Open a pull request using `.github/pull_request_template.md`, summarizing the problem solved, tests added, and `pnpm check` output.

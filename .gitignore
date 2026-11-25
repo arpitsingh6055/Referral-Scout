@@ -1,7 +1,9 @@
-# Dependencies and generated output
+# Dependencies and build output
 node_modules/
 .pnpm-store/
 dist/
+preview/
+preview-workbench.html
 coverage/
 test-results/
 playwright-report/
@@ -21,7 +23,7 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Private browser captures and campaign exports; commit sanitized fixtures only
+# Private captures, exports & oversized source binaries
 private/
 exports/
 browser-profile/
@@ -32,10 +34,4 @@ captures/
 *.sqlite
 *.sqlite3
 *.db
-
-coursera-quiz-ai-solver
-*.env
-Referral_Scout_Complete_Extension_Software_Specification.docx
-# Design-review build of the workbench; never part of the extension package
-preview/
-preview-workbench.html
+*.docx
