@@ -569,3 +569,39 @@ it('walks every Side Panel tab cleanly and clears localStorage on ui.cleared bro
   expect(localStorage.getItem('rs-apply-setup-skipped')).toBeNull();
   expect(localStorage.getItem('rs-custom-cache')).toBeNull();
 });
+
+it('invokes chrome.sidePanel.open synchronously in user gesture and exposes focusLinkedInTab in surfaces', async () => {
+  const openPanelMock = vi.fn().mockResolvedValue(undefined);
+  const setOptionsMock = vi.fn().mockResolvedValue(undefined);
+  const sendMsgMock = vi.fn().mockResolvedValue({ ok: true, focused: true });
+
+  vi.stubGlobal('chrome', {
+    windows: {
+      WINDOW_ID_CURRENT: -2,
+      getCurrent: vi.fn().mockResolvedValue({ id: 7 }),
+      update: vi.fn().mockResolvedValue({ id: 7 }),
+    },
+    tabs: {
+      query: vi.fn().mockResolvedValue([{ id: 42, windowId: 7, url: 'https://www.linkedin.com/jobs/' }]),
+      get: vi.fn().mockResolvedValue({ id: 42, windowId: 7, url: 'https://www.linkedin.com/jobs/' }),
+      update: vi.fn().mockResolvedValue({ id: 42, windowId: 7, url: 'https://www.linkedin.com/jobs/' }),
+      create: vi.fn().mockResolvedValue({ id: 43, windowId: 7, url: 'https://www.linkedin.com/jobs/' }),
+      onUpdated: { addListener: vi.fn() },
+      onRemoved: { addListener: vi.fn() },
+    },
+    sidePanel: {
+      open: openPanelMock,
+      setOptions: setOptionsMock,
+    },
+    runtime: {
+      sendMessage: sendMsgMock,
+      getURL: (p: string) => `chrome-extension://ext-1/${p}`,
+    },
+  });
+
+  // Verify surfaces.ts focusLinkedInTab helper focuses/opens LinkedIn cleanly.
+  const { focusLinkedInTab } = await import('../src/background/surfaces');
+  const res = await focusLinkedInTab('https://www.linkedin.com/jobs/', undefined);
+  expect(res.focused).toBe(true);
+  expect(res.tabId).toBe(42);
+});

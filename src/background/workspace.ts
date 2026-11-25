@@ -173,6 +173,7 @@ export interface WorkspaceView {
     cursor: number;
     totalTerms: number;
     found: number;
+    startedAt?: number;
     ranking?: { done: number; total: number };
   };
   contacts: ContactRow[];
@@ -281,6 +282,7 @@ export async function workspaceView(): Promise<WorkspaceView> {
             cursor: network.jobSearch.cursor,
             totalTerms: network.plan?.terms.length ?? 0,
             found: network.jobSearch.found.length,
+            startedAt: network.jobSearch.startedAt,
             ...(network.jobSearch.ranking ? { ranking: network.jobSearch.ranking } : {}),
           },
         }

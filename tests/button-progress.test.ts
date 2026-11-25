@@ -61,3 +61,39 @@ it('keeps navigation available while a background action is pending and ignores 
   finish();
   await vi.waitFor(() => expect(first.disabled).toBe(false));
 });
+
+it('applies animated running progress classes, radar beacon, and ticker on active HUDs', async () => {
+  const { createFloatingHud } = await import('../src/ui/workbench/components/floating-hud');
+  const { createSidePanelHud } = await import('../src/ui/side-panel/floating-hud');
+
+  const wbHud = createFloatingHud(document.body);
+  wbHud.update(
+    {
+      mode: 'processing',
+      percent: 45,
+      title: 'Scanning LinkedIn Jobs…',
+      detail: 'Matching Lucidya fit score…',
+      ctaLabel: 'View jobs',
+      targetRoute: 'jobs',
+    },
+    vi.fn(),
+  );
+  expect(wbHud.element.classList.contains('is-processing')).toBe(true);
+  expect(wbHud.element.querySelector('.hud-radar')).toBeTruthy();
+  expect(wbHud.element.querySelector('.hud-ticker')?.textContent).toBe('Matching Lucidya fit score…');
+  expect(wbHud.element.querySelector('.hud-progress-track.is-running')).toBeTruthy();
+
+  const spHud = createSidePanelHud(document.body);
+  spHud.update(
+    {
+      mode: 'processing',
+      percent: 45,
+      title: '45% · Scanning LinkedIn jobs',
+      detail: 'Found 12 roles so far…',
+      ctaLabel: 'Jobs',
+      action: { kind: 'tab-referrals' },
+    },
+    vi.fn(),
+  );
+  expect(spHud.element.querySelector('.sp-hud-bar.is-running')).toBeTruthy();
+});

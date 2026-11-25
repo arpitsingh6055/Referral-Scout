@@ -276,7 +276,7 @@ export function createSidePanelHud(host: HTMLElement): SidePanelHudController {
     row.append(ringWrap, copy, cta, minBtn);
 
     const bar = document.createElement('div');
-    bar.className = 'sp-hud-bar';
+    bar.className = s.mode === 'processing' ? 'sp-hud-bar is-running' : 'sp-hud-bar';
     const fill = document.createElement('span');
     fill.style.width = `${s.percent}%`;
     bar.append(fill);

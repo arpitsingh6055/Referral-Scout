@@ -105,7 +105,11 @@ export function computeHudState(input: HudInput): HudState | null {
   const now = input.now ?? Date.now();
 
   /* 0. Rehydrated Cross-Context Background Task from chrome.storage.session */
-  const persisted = persistedTasks ? selectPrimaryProgressTask(persistedTasks, now) : null;
+  const rawPersisted = persistedTasks ? selectPrimaryProgressTask(persistedTasks, now) : null;
+  const persisted =
+    rawPersisted?.id === 'job_search' && rawPersisted.status === 'running' && w?.jobSearch && w.jobSearch.status !== 'finding'
+      ? null
+      : rawPersisted;
   if (persisted && (persisted.status === 'waiting' || persisted.needsIntervention) && !busyAction) {
     return {
       mode: 'completion',
@@ -183,11 +187,12 @@ export function computeHudState(input: HudInput): HudState | null {
 
   if (w?.jobSearch?.status === 'finding') {
     const ranking = w.jobSearch.ranking;
+    const elapsedMs = w.jobSearch.startedAt ? Math.max(0, now - w.jobSearch.startedAt) : 0;
     const pct = ranking?.total
       ? Math.max(8, Math.min(98, Math.round((ranking.done / ranking.total) * 100)))
       : w.jobSearch.totalTerms
         ? Math.max(8, Math.min(95, Math.round((w.jobSearch.cursor / w.jobSearch.totalTerms) * 100)))
-        : 22;
+        : Math.max(8, Math.min(50, Math.round(8 + elapsedMs / 800)));
     const remaining = ranking ? Math.max(0, ranking.total - ranking.done) : 0;
     const awayFromJobs = route !== 'jobs';
     return {
@@ -383,9 +388,14 @@ export function createFloatingHud(host: HTMLElement): FloatingHudController {
       ctaBtn.disabled = !hasDirectAction;
     }
 
+    const isProcessing = state.mode === 'processing';
     const copy = div('hud-copy', [
-      div('hud-title-row', [text('span', 'hud-title', state.title), state.etaText ? text('span', 'hud-eta', state.etaText) : null]),
-      text('div', 'hud-detail', state.detail),
+      div('hud-title-row', [
+        isProcessing ? el('span', { class: 'hud-radar', 'aria-hidden': 'true' }) : null,
+        text('span', 'hud-title', state.title),
+        state.etaText ? text('span', 'hud-eta', state.etaText) : null,
+      ]),
+      text('div', isProcessing ? 'hud-detail hud-ticker' : 'hud-detail', state.detail),
     ]);
 
     const body = div('hud-inner', [
@@ -394,7 +404,9 @@ export function createFloatingHud(host: HTMLElement): FloatingHudController {
       div('hud-actions', [hasDirectAction ? ctaBtn : null, collapseBtn]),
     ]);
 
-    const bar = div('hud-progress-track', [el('span', { class: 'hud-progress-fill', style: `width:${state.percent}%` })]);
+    const bar = div(isProcessing ? 'hud-progress-track is-running' : 'hud-progress-track', [
+      el('span', { class: 'hud-progress-fill', style: `width:${state.percent}%` }),
+    ]);
     element.replaceChildren(body, bar);
   };
 
