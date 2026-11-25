@@ -188,11 +188,7 @@ export function setup(ctx: Ctx): HTMLElement {
         pill(ctx.workspace?.outreachAutomatic ? 'On' : 'Off', ctx.workspace?.outreachAutomatic ? 'green' : 'grey'),
       ]),
       div('note note-amber', [
-        text(
-          'p',
-          '',
-          'Two applications at once is kept behind a test. Two page tabs are not two AI sessions: with one shared conversation the model calls queue up anyway, so a second worker adds contention rather than speed until that is measured.',
-        ),
+        text('p', '', 'Recommended: run one application at a time so ChatGPT fills each form steadily without tab contention.'),
       ]),
       div('', [save]),
     ],

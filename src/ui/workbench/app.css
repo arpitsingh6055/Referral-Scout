@@ -2226,10 +2226,11 @@ details .inline input[type='checkbox'] {
 /* ---------- persistent floating completion HUD ---------- */
 .floating-hud {
   position: fixed;
-  right: 24px;
+  left: 50%;
+  transform: translateX(-50%);
   bottom: max(20px, env(safe-area-inset-bottom, 0px));
-  z-index: 55;
-  width: min(440px, calc(100vw - 32px));
+  z-index: 50;
+  width: min(500px, calc(100vw - 32px));
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-strong);
   background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
@@ -2435,5 +2436,111 @@ details .inline input[type='checkbox'] {
     transform: translateX(-50%);
     bottom: max(14px, env(safe-area-inset-bottom, 0px));
     width: calc(100vw - 24px);
+  }
+}
+
+/* ---------- post-setup guided launchpad & cross-tab handoff ---------- */
+.launchpad-hero {
+  border-radius: var(--radius-xl);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 26%, var(--border-subtle));
+  background: linear-gradient(155deg, var(--bg-surface) 0%, color-mix(in srgb, var(--accent-tint) 65%, var(--bg-surface)) 100%);
+  padding: var(--sp-6);
+  display: grid;
+  gap: var(--sp-4);
+}
+
+.launchpad-title {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+.launchpad-sub {
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  max-width: 62ch;
+}
+
+.launchpad-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+
+.launchpad-step {
+  padding: var(--sp-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  display: grid;
+  gap: var(--sp-2);
+  align-content: start;
+}
+
+.launchpad-step.is-done {
+  border-color: color-mix(in srgb, var(--success) 35%, var(--border-subtle));
+  background: var(--bg-subtle);
+}
+
+.launchpad-step.is-active {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary) 18%, transparent);
+}
+
+.launchpad-step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.launchpad-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+
+.launchpad-step.is-done .launchpad-dot {
+  background: var(--success-tint);
+  color: var(--success);
+}
+
+.launchpad-step.is-active .launchpad-dot {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+.handoff-bridge {
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-5);
+  border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 30%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent-tint) 36%, var(--bg-surface));
+}
+
+.handoff-rail {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-2);
+}
+
+.dot-ready {
+  background: var(--accent-primary);
+}
+
+@media (max-width: 900px) {
+  .launchpad-steps,
+  .handoff-rail {
+    grid-template-columns: 1fr;
   }
 }

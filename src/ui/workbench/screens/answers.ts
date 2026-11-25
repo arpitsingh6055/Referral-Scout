@@ -158,7 +158,7 @@ export function answers(ctx: Ctx): HTMLElement {
             text(
               'p',
               '',
-              'Anything scoped to a country is asked again when the job is somewhere else. A work-authorisation answer given for India says nothing about a role in the United States.',
+              'Country-specific details such as work authorization are saved separately per country so an answer for India is never reused on a US role.',
             ),
           ]),
           div('note note-violet', [

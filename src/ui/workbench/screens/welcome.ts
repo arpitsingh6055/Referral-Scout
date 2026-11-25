@@ -344,13 +344,20 @@ export function welcome(ctx: Ctx): HTMLElement {
       text(
         'p',
         'onboarding-intro',
-        'Set up the essentials once. Referral Scout helps find relevant jobs, prepare applications and identify people who may be able to refer you.',
+        'Follow three quick steps once. Referral Scout finds relevant jobs, prepares applications and lines up referrers for you.',
       ),
       steps,
     ]),
     div('grid split-wide onboarding-columns', [
       div('stack', [profileCard, cvCard, campaignCard]),
-      div('stack', [chatCard, privacyCard, next]),
+      div('stack', [
+        next,
+        (() => {
+          const more = el('details', { class: 'advanced-settings card' });
+          more.append(el('summary', {}, ['Optional: ChatGPT, Gmail & data preferences']), div('stack', [chatCard, privacyCard]));
+          return more;
+        })(),
+      ]),
     ]),
   ]);
 }

@@ -1,9 +1,9 @@
 /**
- * Cross-context live progress store backed by `chrome.storage.session` (MV3 service worker,
+ * Cross-context live progress store backed by `chrome.storage.local` (MV3 service worker,
  * Workbench dashboard, Side Panel) with an in-memory fallback for JSDOM tests and restricted windows.
  *
- * Closing and reopening the Side Panel or Workbench tab mid-operation rehydrates exact percentages,
- * stage copy, and error/retry actions immediately without resetting back to 0%.
+ * Closing and reopening the Side Panel or Workbench tab (or restarting the browser) rehydrates exact
+ * percentages, stage copy, and error/retry actions immediately without resetting back to 0%.
  */
 
 export type ProcessId =
@@ -62,9 +62,10 @@ const DONE_TTL_MS = 8_000;
 let memoryTasks: Partial<Record<ProcessId, ProgressTask>> = {};
 let writeChain: Promise<void> = Promise.resolve();
 
-function sessionArea(): chrome.storage.StorageArea | undefined {
+function storageArea(): chrome.storage.StorageArea | undefined {
   try {
-    return (globalThis as { chrome?: typeof chrome }).chrome?.storage?.session;
+    const storage = (globalThis as { chrome?: typeof chrome }).chrome?.storage;
+    return storage?.local ?? storage?.session;
   } catch {
     return undefined;
   }
@@ -95,7 +96,7 @@ function notifySameContext(map: Partial<Record<ProcessId, ProgressTask>>): void 
 
 /** Reads all non-expired live progress tasks across MV3 storage and memory fallback. */
 export async function readProgressTasks(now = Date.now()): Promise<Partial<Record<ProcessId, ProgressTask>>> {
-  const area = sessionArea();
+  const area = storageArea();
   if (area) {
     try {
       const got = await area.get(PROGRESS_STORAGE_KEY);
@@ -103,7 +104,7 @@ export async function readProgressTasks(now = Date.now()): Promise<Partial<Recor
       memoryTasks = pruneMap(parsed, now);
       return memoryTasks;
     } catch {
-      // Fall back to in-memory cache when session storage rejects in mocks/tests.
+      // Fall back to in-memory cache when storage rejects in mocks/tests.
     }
   }
   memoryTasks = pruneMap(memoryTasks, now);
@@ -134,7 +135,7 @@ export function publishProgressTask(input: ProgressTaskInput): Promise<void> {
       };
       const nextMap: Partial<Record<ProcessId, ProgressTask>> = { ...current, [input.id]: nextTask };
       memoryTasks = nextMap;
-      const area = sessionArea();
+      const area = storageArea();
       if (area) {
         await area.set({ [PROGRESS_STORAGE_KEY]: nextMap }).catch(() => undefined);
       }
@@ -153,7 +154,7 @@ export function clearProgressTask(id: ProcessId): Promise<void> {
       const nextMap = { ...current };
       delete nextMap[id];
       memoryTasks = nextMap;
-      const area = sessionArea();
+      const area = storageArea();
       if (area) {
         await area.set({ [PROGRESS_STORAGE_KEY]: nextMap }).catch(() => undefined);
       }
@@ -168,7 +169,7 @@ export function clearAllProgressTasks(): Promise<void> {
   writeChain = writeChain
     .then(async () => {
       memoryTasks = {};
-      const area = sessionArea();
+      const area = storageArea();
       if (area) {
         await area.remove(PROGRESS_STORAGE_KEY).catch(() => undefined);
       }
@@ -185,7 +186,7 @@ export function subscribeProgressTasks(listener: (tasks: Partial<Record<ProcessI
     listener(pruneMap(detail ?? memoryTasks));
   };
   const onStorage = (changes: Record<string, chrome.storage.StorageChange>, areaName: string): void => {
-    if (areaName !== 'session' || !changes[PROGRESS_STORAGE_KEY]) return;
+    if ((areaName !== 'local' && areaName !== 'session') || !changes[PROGRESS_STORAGE_KEY]) return;
     const next = (changes[PROGRESS_STORAGE_KEY].newValue ?? {}) as Partial<Record<ProcessId, ProgressTask>>;
     memoryTasks = pruneMap(next);
     listener(memoryTasks);

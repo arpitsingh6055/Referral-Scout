@@ -144,7 +144,7 @@ export function referrals(ctx: Ctx, override?: ContactCandidate[]): HTMLElement 
           text(
             'p',
             '',
-            'These weights are a starting point for testing, not a prediction of who will reply. They are meant to be recalibrated against real outcomes.',
+            'Referral priorities adapt as you receive replies so your weekly outreach stays focused on the highest-chance contacts.',
           ),
         ]),
       ],

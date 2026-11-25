@@ -681,6 +681,16 @@ export function registerNetworkMessages(): void {
             jobSearch: { status: 'finding', cursor: 0, found: [], startedAt: Date.now() },
             status: 'Starting your job search…',
           }));
+          void publishProgressTask({
+            id: 'job_search',
+            status: 'running',
+            percent: 14,
+            label: 'Opening LinkedIn Jobs search…',
+            detail: 'Checking target roles against your CV in a background tab',
+            ctaLabel: 'View jobs →',
+            targetRoute: 'jobs',
+            etaSeconds: 30,
+          });
         }
         if (req.action === 'resume')
           await updateNetwork(s => {
@@ -700,12 +710,14 @@ export function registerNetworkMessages(): void {
             s.status = left.length ? `Resumed: ${left.join('; ')}.` : 'Resumed. Nothing was left unfinished.';
             return s;
           });
-        if (req.action === 'cancelJobSearch')
+        if (req.action === 'cancelJobSearch') {
           await updateNetwork(s => {
             delete s.jobSearch;
             s.status = 'Job search closed. Companies you already chose are kept.';
             return s;
           });
+          await clearProgressTask('job_search');
+        }
         if (req.action === 'pickJobs')
           await updateNetwork(s => {
             const search = s.jobSearch;
@@ -817,7 +829,7 @@ export function registerNetworkMessages(): void {
         if (req.action === 'checkNow')
           await updateNetwork(s => ({ ...s, checkRequested: true, status: 'Checking LinkedIn for accepted invitations and replies…' }));
         // Stop searching for jobs here and choose from what has been found so far.
-        if (req.action === 'finishJobSearch')
+        if (req.action === 'finishJobSearch') {
           await updateNetwork(s => {
             if (s.jobSearch?.status !== 'finding') throw new Error('No job search is running.');
             if (!s.jobSearch.found.length) throw new Error('Nothing has been found yet. Wait for the first results, or stop the search.');
@@ -829,6 +841,8 @@ export function registerNetworkMessages(): void {
               : 'Stopping the search and preparing the list from what was found…';
             return s;
           });
+          await clearProgressTask('job_search');
+        }
         // Stop looking for more people everywhere and reach out to those already found.
         if (req.action === 'finishScans')
           await updateNetwork(s => {
