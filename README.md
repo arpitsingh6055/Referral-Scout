@@ -4,13 +4,14 @@
 
 # Referral Scout
 
-**Find jobs that match your CV, prioritize target companies, line up referrers, and autofill applications—always under your review.**
+**Local-first Chrome & Edge assistant for CV-ranked job discovery, company prioritization, warm referrer outreach, and human-in-the-loop application autofill.**
 
-[![MV3 Extension](https://img.shields.io/badge/Manifest-V3-5b5bd6)](#architecture)
-[![Node 22+](https://img.shields.io/badge/Node-22%2B-10b981)](#for-developers)
-[![Tests](https://img.shields.io/badge/Vitest-43%20suites%20%E2%80%A2%20713%20tests-0ea5e9)](#verification--packaging)
+[![Manifest V3](https://img.shields.io/badge/Manifest-V3-5b5bd6)](manifest.json)
+[![Version](https://img.shields.io/badge/Version-0.58.2-10b981)](CHANGELOG.md)
+[![Vitest](https://img.shields.io/badge/Vitest-43%20suites%20%E2%80%A2%20713%20tests-0ea5e9)](#verification--packaging)
+[![CSP Strict](https://img.shields.io/badge/Security-Local--First%20%7C%20Strict%20CSP-6366f1)](SECURITY.md)
 
-**[Install on Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/referral-scout-jobs-and-/lhfibhgokebhefdagadklckepkbbljhc)** · **[Privacy Policy](docs/privacy.md)** · **[Store Submission Packet](docs/store-submission.md)** · **[Architecture](docs/architecture-v2.md)**
+**[Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/referral-scout-jobs-and-/lhfibhgokebhefdagadklckepkbbljhc)** · **[Architecture](docs/architecture.md)** · **[Development Guide](docs/development.md)** · **[Privacy Policy](docs/privacy.md)** · **[Store Packet](docs/store-submission.md)**
 
 </div>
 
@@ -19,116 +20,140 @@
   &nbsp;
   <img src="docs/screenshots/tracker.png" alt="Live Progress & Referral Tracker" width="260" />
   &nbsp;
-  <img src="docs/screenshots/jobs.png" alt="Jobs and Referrers per Company" width="260" />
+  <img src="docs/screenshots/jobs.png" alt="Jobs & Referrers" width="260" />
 </p>
 
 ---
 
-## Core Capabilities
+## Key Capabilities
 
-- **Guided CV & LinkedIn Review (`src/ui/workbench/components/guided-review.ts`):** Upload a PDF or DOCX CV and read your signed-in LinkedIn profile locally. ChatGPT compares both (giving CV priority on conflicts), highlights Before/After differences, and commits verified fields atomically into your Candidate Profile and Answer Bank only after you click **Accept & Apply**.
-- **6-Stage Floating Progress HUD (`src/shared/progress-store.ts`):** Persistent cross-context bottom HUD synchronized via `chrome.storage.local` across Workbench tabs, Side Panel, and host pages (closed Shadow DOM). Guides you across stages (`Connect LinkedIn` → `CV AI Review` → `Target Role` → `Find Jobs` → `Needs You / Shortlist` → `Queue & Referrals`).
-- **CV-Ranked Job Discovery & Application Queue:** Searches LinkedIn Jobs across parallel role titles, filters out mismatches and spam, scores fit against your CV, and runs an unattended, lease-backed application queue supporting LinkedIn Easy Apply and **27+ external ATS portals** (Greenhouse, Lever, Workday, Ashby, SmartRecruiters, iCIMS, BambooHR, Workable, Recruitee, Teamtailor, Naukri, Instahyre, Wellfound, Zoho Recruit, Keka, Darwinbox, Personio, and more).
-- **Transparent Company Ranking & Pin Boost (`src/shared/scoring/allocator.ts`):** Ranks target employers and contacts with plain-English score breakdowns (`Relationship`, `Role relevance`, `Hiring relevance`, `Opportunity fit`, `Evidence`) and 1-click **Pin company** boosts that prioritize outreach slots and bypass cooldown delays.
-- **Human-in-the-Loop "Needs You" & Answer Bank (`src/ui/workbench/screens/answers.ts`):** Automatically pauses an application (without blocking the queue) whenever it hits sign-in, CAPTCHA/security challenges, final submission review, or unknown fields. Includes a **3-Tier Student-Friendly Answer Bank** with 1-click pill presets, **Student Smart-Defaults**, country-scoped authorization, and Just-in-Time learning from forms.
-- **Dual-Engine Safety & Pacing:** Separates the Application Engine from the LinkedIn Referral Engine, respects daily/weekly limits and random pauses, never auto-solves CAPTCHAs, and never submits unreviewed forms unless you explicitly opt in.
+- **Smart CV & LinkedIn Reconciliation:** Parses PDF/DOCX resumes locally, compares your CV against your signed-in LinkedIn profile through ChatGPT, surfaces Before/After conflict diffs with 1-click **"Looks Good — Save All"** confirmation, and hydrates your Candidate Profile and Answer Bank atomically (`profileStorage.ts`).
+- **3-Tier Student-Friendly Answer Bank & Just-in-Time Learning:** Organizes questions into **Tier 1 Core Essentials** (1-click pill presets for authorization, availability, start date, relocation), **Tier 2 Role Preferences**, and a collapsible **Tier 3 Auto-Learned Accordion**. Detects **Student / Intern** profiles automatically to offer 1-click safe smart defaults (`Immediate`, `N/A (Student)` CTC).
+- **6-Stage Floating Progress HUD:** Cross-context persistent bottom HUD (`chrome.storage.local` + Closed-Shadow-DOM host overlays) that guides you cleanly across setup, CV review, campaign creation, LinkedIn job search, **Needs You** approvals, and active queue progress.
+- **Job Discovery, Company Ranking & Pin Priority:** Discovers LinkedIn roles, qualifies eligibility against your real profile, ranks target companies transparently (`rankCompanies()`), and supports 1-click **Pin company** boosts across **Jobs**, **Referrals**, and **People** so outreach budget prioritizes your favorite employers.
+- **Human-in-the-Loop Application Queue & Referrer Outreach:** Runs a lease-backed queue across LinkedIn Easy Apply and **27 ATS platforms** (Greenhouse, Lever, Workday, Ashby, Workable, Recruitee, Teamtailor, Naukri, Instahyre, Wellfound, Zoho Recruit, Keka, Darwinbox, and more). Automatically pauses in **Needs You** for logins, CAPTCHAs, unfamiliar questions, uncertain submissions, or final review—while healthy applications continue.
 
 ---
 
-## End-to-End User Flow
+## End-to-End User Workflow
 
 ```mermaid
 flowchart LR
-  S1["1. Connect LinkedIn & Upload CV<br/>(Local PDF/DOCX + /in/me)"] --> S2["2. Guided AI Profile Review<br/>(Before/After diffs + Fast-Path Save)"]
-  S2 --> S3["3. Answer Bank & Campaign Goal<br/>(Tier-1 Presets + Student Smart-Defaults)"]
-  S3 --> S4["4. Discover & Rank Jobs<br/>(LinkedIn Search + CV Fit Scoring)"]
-  S4 --> S5A["5a. Application Queue<br/>(Easy Apply & 27+ ATS Forms)"]
-  S4 --> S5B["5b. Company Ranking & Referrals<br/>(Pin Boost + Weekly Budget Allocator)"]
-  S5A -->|"Unknown field, login, CAPTCHA or review"| NY["Needs You Inbox & HUD Jump<br/>(Answer once -> Saved to Answer Bank)"]
-  NY -->|"Self-healing resume"| S5A
-  S5B -->|"Approval queue + Gmail drafts"| OUT["Tracked Replies & Outcomes"]
+  S1["1. Connect LinkedIn & Upload CV<br/>(Local PDF/DOCX + /in/me)"] --> S2["2. Guided AI Profile Review<br/>(Before/After diffs + 1-click Save All)"]
+  S2 --> S3["3. Answer Bank & Target Campaign<br/>(Tier-1 Presets + Student Smart-Defaults)"]
+  S3 --> S4["4. Discover Jobs & Rank Companies<br/>(CV Fit Scoring + Pin Company Boost)"]
+  S4 --> S5A["5a. Application Queue<br/>(Easy Apply & 27 ATS Portals)"]
+  S4 --> S5B["5b. Referrer Outreach<br/>(Allocator + Draft Approval + Gmail)"]
+  S5A -->|"Unknown field, login, CAPTCHA or review"| NY["Needs You Inbox & HUD Jump<br/>(Answer once -> Synced everywhere)"]
+  NY -->|"Self-healing queue resume"| S5A
+  S5B -->|"Acceptances & replies"| OUT["Outcome Tracking"]
 ```
 
 ---
 
-## Extension Architecture
+## Manifest V3 Extension Architecture
 
 ```mermaid
 flowchart TB
-  subgraph Browser_UI["Extension Surfaces (MV3 CSP strict)"]
-    WB["Workbench Dashboard<br/>(workbench.html / workbench.js)<br/>Launchpad, Jobs, Needs You, Referrals, Answers, Profile"]
-    SP["Side Panel<br/>(sidepanel.html / sidepanel.js)<br/>Quick Fill, Live Referrals & Compact HUD"]
-    HUD["Shared 6-Stage HUD Store<br/>(chrome.storage.local + events)"]
+  subgraph Surfaces["Extension Surfaces (Strict CSP)"]
+    WB["Workbench Full-Tab UI<br/>(12 screens + Guided Review + 6-Stage HUD)"]
+    SP["Side Panel Companion<br/>(Quick Fill, Referrals & Compact HUD)"]
+    SH["Closed-Shadow-DOM Page Overlays<br/>(Remember Pill + Page Progress HUD)"]
   end
 
-  subgraph SW["Background Service Worker (service-worker.js)"]
-    WK["workspace.ts & profileStorage.ts<br/>Profile, CV, Facts & Read-Back Sync"]
-    CM["campaign.ts & runner.ts<br/>Lease-Backed Queue & Exceptions"]
-    NW["network.ts & bridge.ts<br/>LinkedIn Discovery, Outreach & Sync"]
-    SEC["security.ts<br/>Sender Validation & Consent Gates"]
+  subgraph SW["Background Service Worker (MV3)"]
+    WK["workspace.ts & profileStorage.ts<br/>Profile, Facts, Smart Defaults & Snapshot Sync"]
+    RN["runner.ts & campaign.ts<br/>Lease Queue, Self-Healing Recovery & Exceptions"]
+    NW["network.ts & bridge.ts<br/>LinkedIn Discovery, Allocator & Outreach"]
+    SC["security.ts<br/>trustedExtension Sender Checks"]
   end
 
-  subgraph Pages["Host Web Pages (User-Initiated & Session-Scoped)"]
-    LI["linkedin.com<br/>(health.js + remember.ts Shadow HUD)"]
-    GPT["chatgpt.com<br/>(DOM AI Automation)"]
-    GM["mail.google.com<br/>(Draft & Reply Checks)"]
-    ATS["External ATS Portals<br/>(apply.js via runtime optional_host_permissions)"]
-  end
-
-  subgraph LocalDB["Local-First Storage"]
+  subgraph Storage["Local-First Browser Storage"]
     IDB["IndexedDB<br/>(profiles, jobs, companies, applications, exceptions, facts, contacts, events)"]
-    CS["chrome.storage.local<br/>(rs_live_progress_v1, rs_profile_snapshot_v1, settings)"]
+    LOC["chrome.storage.local<br/>(rs_live_progress_v1, rs_profile_snapshot_v1, settings)"]
   end
 
-  WB <-->|"chrome.runtime.sendMessage (trustedExtension)"| SW
-  SP <-->|"chrome.runtime.sendMessage (trustedExtension)"| SW
-  WB <--> HUD
-  SP <--> HUD
-  SW <--> IDB
-  SW <--> CS
-  SW <-->|"tabs / scripting"| Pages
+  subgraph Sites["Host Browser Tabs (Session-Scoped)"]
+    LI["linkedin.com"]
+    GPT["chatgpt.com"]
+    GM["mail.google.com"]
+    ATS["External ATS Portals (per-origin opt-in)"]
+  end
+
+  WB <--> SW
+  SP <--> SW
+  SW <--> Storage
+  SW <-->|"tabs / scripting"| Sites
+  SH -.->|"host-isolated UI"| Sites
 ```
 
 ---
 
-## Quick Start & Installation
+## Repository Structure
 
-### Option A — Microsoft Edge Add-ons / Unpacked Store ZIP
-- **Microsoft Edge Add-ons:** [Install Referral Scout](https://microsoftedge.microsoft.com/addons/detail/referral-scout-jobs-and-/lhfibhgokebhefdagadklckepkbbljhc)
-- **Quick Local Install Scripts (v0.58.2):**
-  - **Windows (PowerShell):** `powershell -ExecutionPolicy Bypass -File install/install-windows.ps1`
-  - **macOS (Bash):** `bash install/install-mac.sh`
+```text
+.
+├── manifest.json                 # Chrome & Edge MV3 extension manifest (v0.58.2)
+├── package.json                  # Dependencies, scripts (check, test, build, package)
+├── install/                      # Unpacked installer scripts (macOS & Windows)
+├── public/icons/                 # Extension icons (16, 32, 48, 128 PNG)
+├── scripts/
+│   ├── check-build.mjs           # Automated MV3 bundle, CSP, version & asset validator
+│   └── package-extension.mjs     # Builds deterministic store-ready referral-scout.zip
+├── src/
+│   ├── background/               # Service worker, runner, campaign, workspace, network, gmail
+│   ├── connectors/job-sources/   # Source adapter contract & normalizers
+│   ├── content/                  # Host-page scripts (apply.ts, network.ts, shadow-DOM HUD)
+│   ├── shared/                   # Domain models, state machines, allocator, progress-store
+│   └── ui/                       # Workbench (12 screens) & Side Panel components
+├── tests/                        # 43 Vitest test files (713 unit & integration tests)
+└── docs/
+    ├── architecture.md           # Deep technical architecture & schemas
+    ├── development.md            # Dev setup, testing, selectors & release checklist
+    ├── privacy.md                # Store-compliant privacy policy
+    ├── store-submission.md       # Chrome Web Store & Edge Add-ons review packet
+    └── screenshots/              # Store preview screenshots
+```
 
-### Option B — Build Unpacked from Source (`Chrome` & `Edge`)
-Requires **Node.js 22+** (Node 24 recommended) and **pnpm 11.25.0**:
+---
+
+## Quickstart
+
+### Install & Build Unpacked (`Chrome` & `Edge`)
+
+Requires **Node.js 22+** and **pnpm 11.25.0**:
 
 ```bash
 corepack pnpm install --frozen-lockfile --ignore-scripts
-corepack pnpm build    # builds dist/ and runs MV3 manifest, CSP, icon & asset checks
+corepack pnpm build
 ```
 
-Then load [`dist/`](dist/) in `chrome://extensions` or `edge://extensions` with **Developer mode** enabled → **Load unpacked**.
+Load the generated `dist/` folder in `chrome://extensions` or `edge://extensions` (**Developer mode** → **Load unpacked**).
+
+### Unpacked Release Installers
+
+- **Windows (PowerShell):** `powershell -ExecutionPolicy Bypass -File install/install-windows.ps1`
+- **macOS (Bash):** `bash install/install-mac.sh`
 
 ---
 
 ## Verification & Packaging
 
 ```bash
-pnpm format:check   # Prettier check (src, tests, scripts)
-pnpm typecheck      # Strict TypeScript check (tsc --noEmit)
-pnpm test           # Vitest suite (43 test files, 713 tests)
-pnpm check          # Full CI gate: format + vitest + tsc + vite builds + scripts/check-build.mjs
-pnpm package        # Builds & verifies referral-scout.zip with SHA-256 summary
+pnpm format:check   # Prettier style check (src, tests, scripts)
+pnpm typecheck      # Strict TypeScript check
+pnpm test           # 43 suites, 713 tests (Vitest + JSDOM + fake-indexeddb)
+pnpm check          # Full CI gate: format + vitest + tsc + vite builds + check-build.mjs
+pnpm package        # Builds & verifies referral-scout.zip with SHA-256 hash
 ```
 
 ---
 
-## Privacy, Safety & Data Control
+## Privacy & Safety Guarantees
 
-- **100% Local-First Storage:** Profiles, CVs, job listings, Answer Bank facts, contacts, and logs reside in local IndexedDB / `chrome.storage.local` on your device.
-- **No Credential Storage:** Referral Scout never collects passwords, cookies, or Gmail OAuth refresh tokens; it operates inside your own active browser sessions.
-- **Opt-In Usage Counting Only:** Disabled by default. When explicitly enabled in Settings, sends only a random install ID, display name, and LinkedIn handle to `https://referral-scout.vercel.app/api/ping`—never CVs, jobs, emails, contacts, or messages.
-- **Instant User Controls:** Pause/drain queues, export JSON backups (API keys excluded), or wipe all local state cleanly via **Settings → Delete everything**.
+- **Zero External Account Required:** CVs, profile data, jobs, contacts, and application logs stay locally in your browser.
+- **No Credential Capture:** Operates inside your own signed-in tabs; passwords and session cookies are never collected or stored.
+- **Opt-In Usage Counting Off by Default:** Never enabled automatically; even when opted in manually in Settings, transmits only an anonymous install UUID, display name, and LinkedIn handle (never CVs, emails, jobs, or messages).
 
 See [PRIVACY POLICY](docs/privacy.md), [SECURITY.md](SECURITY.md), [CONTRIBUTING.md](CONTRIBUTING.md), and [CHANGELOG.md](CHANGELOG.md).
 
