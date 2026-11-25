@@ -866,3 +866,93 @@ it('Answer Bank renders 3-tier layout, Student Smart-Fill preset, 1-click pill p
     expect(ctx.run).toHaveBeenCalledWith({ kind: 'workspace', action: 'clearLearnedAnswer', label: 'how did you hear about us' }),
   );
 });
+
+it('overview Command Center & jobs company grouping launch Side Panel on LinkedIn in 1 click', async () => {
+  const ctx = makeCtx();
+  ctx.workspace!.jobs = [
+    {
+      id: 'job:1',
+      url: 'https://www.linkedin.com/jobs/view/101/',
+      company: 'Stripe',
+      title: 'Product Intern',
+      location: 'Remote',
+      source: 'LinkedIn Jobs',
+      applyType: 'easy-apply',
+      fit: 92,
+      fitAssessed: true,
+      tier: 'strong',
+      eligibility: 'eligible',
+      freshness: 'fresh',
+      evidence: [],
+      checks: [],
+      rejectionReasons: [],
+      preferenceNotes: [],
+      judgement: 'shortlisted',
+      rank: 92,
+    },
+    {
+      id: 'job:2',
+      url: 'https://www.linkedin.com/jobs/view/102/',
+      company: 'Figma',
+      title: 'Design Intern',
+      location: 'Bengaluru',
+      source: 'LinkedIn Jobs',
+      applyType: 'easy-apply',
+      fit: 78,
+      fitAssessed: true,
+      tier: 'possible',
+      eligibility: 'eligible',
+      freshness: 'fresh',
+      evidence: [],
+      checks: [],
+      rejectionReasons: [],
+      preferenceNotes: [],
+      judgement: 'none',
+      rank: 78,
+    },
+  ];
+  ctx.view.queue = [
+    {
+      id: 'app:1',
+      jobId: 'job:1',
+      url: 'https://www.linkedin.com/jobs/view/101/',
+      company: 'Stripe',
+      title: 'Product Intern',
+      ats: '',
+      source: 'LinkedIn Jobs',
+      route: 'easy-apply',
+      fit: 92,
+      state: 'queued',
+      stateLabel: 'Queued',
+      note: '',
+      percent: 10,
+      progressLabel: 'Queued',
+      updatedAt: Date.now(),
+      canRetry: true,
+      blocked: 0,
+    },
+  ];
+
+  const header = overviewHeader(ctx);
+  expect(header.actions.some(a => a.textContent === 'Side Panel on LinkedIn')).toBe(true);
+
+  document.body.replaceChildren(overview(ctx));
+  expect(document.body.textContent).toContain('Shortlisted & Target Companies');
+  expect(document.body.textContent).toContain('#1 · 92/100');
+  const launchBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Side Panel on LinkedIn →')!;
+  launchBtn.click();
+  await vi.waitFor(() => expect(ctx.openPanel).toHaveBeenCalledWith('https://www.linkedin.com/jobs/'));
+
+  document.body.replaceChildren(jobs(ctx));
+  const groups = document.querySelectorAll('.company-group');
+  expect(groups.length).toBe(2);
+  expect(document.querySelector('.company-group-head .company-monogram')?.textContent).toBe('S');
+
+  const panelBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Side Panel →')!;
+  panelBtn.click();
+  await vi.waitFor(() => expect(ctx.openPanel).toHaveBeenCalledWith('https://www.linkedin.com/jobs/view/101/'));
+
+  const pinOverflowBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Boost priority (Pin)')!;
+  pinOverflowBtn.click();
+  await vi.waitFor(() => expect(ctx.run).toHaveBeenCalledWith({ kind: 'campaign', action: 'pinCompany', company: 'Stripe', pinned: true }));
+});

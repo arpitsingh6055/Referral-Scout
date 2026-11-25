@@ -80,7 +80,7 @@ export interface Ctx {
   openExternal: (url: string) => void;
   inform: (message: string) => void;
   go: (route: Route) => void;
-  openPanel: () => void;
+  openPanel: (url?: string) => void;
   redraw: () => void;
   refresh: () => Promise<void>;
   fail: (message: string) => void;
@@ -421,7 +421,7 @@ function render(force = false): void {
             );
           }
         } else if (request.action === 'findJobs') {
-          note = 'Opened LinkedIn search in the background. Qualified matches appear under Jobs as they finish.';
+          note = 'Searching LinkedIn jobs in background…';
           void publishProgressTask({
             id: 'job_search',
             status: 'running',
@@ -450,8 +450,8 @@ function render(force = false): void {
         shop = b.value;
         if (request.action === 'import') {
           note = b.failed
-            ? `${result.profile!.name || 'Your LinkedIn'} profile was verified and saved as source evidence, but the dashboard could not refresh. Reopen Candidate profile to process it with ChatGPT.`
-            : `${result.profile!.name || 'Your LinkedIn'} profile was verified and saved as source evidence. Add your CV, then ask ChatGPT to reconcile both before creating candidate-profile records.`;
+            ? `${result.profile!.name || 'LinkedIn'} saved · Reopen Profile to run AI review.`
+            : `${result.profile!.name || 'LinkedIn'} saved · Add CV next.`;
         }
         error = '';
       } catch (e) {
@@ -482,7 +482,19 @@ function render(force = false): void {
       floatingToasts.show('success', message);
       render(true);
     },
-    openPanel: () => void chrome.runtime.sendMessage({ kind: 'surface', action: 'open-panel' }).catch(() => undefined),
+    openPanel: (url?: string) => {
+      void chrome.runtime
+        .sendMessage(url ? { kind: 'surface', action: 'open-linkedin-panel', url } : { kind: 'surface', action: 'open-panel' })
+        .then(res => {
+          const reply = res as { opened?: boolean } | undefined;
+          if (reply && reply.opened === false) {
+            floatingToasts.show('info', 'LinkedIn opened — click the Referral Scout icon if Side Panel stays closed.');
+          }
+        })
+        .catch(() => {
+          if (url) ctx.openExternal(url);
+        });
+    },
     go: route => {
       mobileDrawerOpen = false;
       if (route === current) {

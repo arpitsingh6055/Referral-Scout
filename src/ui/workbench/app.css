@@ -2734,3 +2734,95 @@ details .inline input[type='checkbox'] {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- Company-first grouping, monograms & overflow actions ---------- */
+.company-cmd-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.company-cmd-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.company-monogram {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--accent-tint);
+  color: var(--accent-primary);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 26%, var(--border-subtle));
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: var(--text-sm);
+  flex: none;
+}
+
+.company-group {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  margin-bottom: var(--sp-3);
+  overflow: visible;
+}
+
+.company-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.company-group-left {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.company-group-rows > .row-queue:last-child {
+  border-bottom: 0;
+}
+
+.overflow-menu {
+  position: relative;
+}
+
+.overflow-menu > summary {
+  list-style: none;
+}
+
+.overflow-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  min-width: 185px;
+  padding: 6px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-float);
+  display: grid;
+  gap: 4px;
+}
+
+@media (max-width: 640px) {
+  .company-cmd-row {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+  .company-cmd-row > .inline:last-child {
+    grid-column: 1 / -1;
+  }
+}

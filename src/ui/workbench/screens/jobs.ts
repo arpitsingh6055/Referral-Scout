@@ -10,7 +10,7 @@
  */
 
 import { canonicalCompany } from '../../../shared/domain/job';
-import { ago, button, card, div, emptyState, icon, metric, pill, plural, searchBar, text } from '../dom';
+import { ago, button, card, div, el, emptyState, icon, metric, pill, plural, searchBar, text } from '../dom';
 import type { Ctx } from '../shell';
 import type { JobRow } from '../../../background/workspace';
 
@@ -208,10 +208,35 @@ function row(job: JobRow, ctx: Ctx, queuedRefs: Set<string>, pinnedSet: Set<stri
   ]);
 }
 
+function companyOverflowMenu(companyName: string, pinned: boolean, panelUrl: string, ctx: Ctx): HTMLElement {
+  const summary = el('summary', { class: 'btn btn-sm btn-ghost', ariaLabel: `More actions for ${companyName}` }, ['•••']);
+  const menu = el('details', { class: 'overflow-menu' }, [
+    summary,
+    div('overflow-popover', [
+      button(pinned ? 'Unpin company' : 'Boost priority (Pin)', 'btn btn-sm btn-ghost', () => {
+        menu.open = false;
+        void ctx.run({ kind: 'campaign', action: 'pinCompany', company: companyName, pinned: !pinned });
+      }),
+      button('Open on LinkedIn + Panel', 'btn btn-sm btn-ghost', () => {
+        menu.open = false;
+        ctx.openPanel(panelUrl);
+      }),
+    ]),
+  ]);
+  return menu;
+}
+
 export function jobs(ctx: Ctx): HTMLElement {
   const all = ctx.workspace?.jobs ?? [];
+  const contacts = ctx.workspace?.contacts ?? [];
   const queuedUrls = new Set(ctx.view.queue.flatMap(q => [q.jobId, q.url].filter((v): v is string => !!v)));
   const pinnedSet = new Set(ctx.view.campaign?.referral.pinnedCompanies ?? []);
+  const contactsByCompany = new Map<string, number>();
+  for (const c of contacts) {
+    if (c.suppressed) continue;
+    const key = canonicalCompany(c.company ?? '');
+    if (key) contactsByCompany.set(key, (contactsByCompany.get(key) ?? 0) + 1);
+  }
   if (!all.length) {
     const page = div('stack');
     const search = ctx.workspace?.jobSearch;
@@ -321,6 +346,26 @@ export function jobs(ctx: Ctx): HTMLElement {
     tabs.append(b);
   }
 
+  const companyOrder = new Map<string, number>();
+  const totalsByCompany = new Map<string, { topFit: number; shortlisted: number; roles: number }>();
+  for (const j of all) {
+    const key = canonicalCompany(j.company) || j.company.toLowerCase();
+    const prev = totalsByCompany.get(key) ?? { topFit: 0, shortlisted: 0, roles: 0 };
+    prev.roles += 1;
+    prev.topFit = Math.max(prev.topFit, j.fit);
+    if (j.judgement === 'shortlisted') prev.shortlisted += 1;
+    totalsByCompany.set(key, prev);
+  }
+  [...totalsByCompany.entries()]
+    .sort(
+      ([ka, a], [kb, b]) =>
+        Number(pinnedSet.has(kb)) - Number(pinnedSet.has(ka)) ||
+        Number(b.shortlisted > 0) - Number(a.shortlisted > 0) ||
+        b.topFit - a.topFit ||
+        b.roles - a.roles,
+    )
+    .forEach(([key], idx) => companyOrder.set(key, idx + 1));
+
   const rowsHost = div('rows');
   const drawRows = (): void => {
     const q = query.trim().toLowerCase();
@@ -332,9 +377,66 @@ export function jobs(ctx: Ctx): HTMLElement {
         (a, b) =>
           Number(pinnedSet.has(canonicalCompany(b.company))) - Number(pinnedSet.has(canonicalCompany(a.company))) || b.rank - a.rank,
       );
-    rowsHost.replaceChildren(
-      ...(shown.length ? shown.map(j => row(j, ctx, queuedUrls, pinnedSet)) : [text('p', 'cell-muted', 'No matching jobs in this view.')]),
-    );
+    if (!shown.length) {
+      rowsHost.replaceChildren(text('p', 'cell-muted', 'No matching jobs in this view.'));
+      return;
+    }
+
+    const groups = new Map<string, { key: string; name: string; items: JobRow[]; topFit: number }>();
+    for (const j of shown) {
+      const key = canonicalCompany(j.company) || j.company.toLowerCase();
+      const prev = groups.get(key) ?? { key, name: j.company, items: [], topFit: 0 };
+      prev.items.push(j);
+      prev.topFit = Math.max(prev.topFit, j.fit);
+      groups.set(key, prev);
+    }
+
+    const cards = [...groups.values()]
+      .sort((a, b) => (companyOrder.get(a.key) ?? 999) - (companyOrder.get(b.key) ?? 999))
+      .map(group => {
+        const pinned = pinnedSet.has(group.key);
+        const rankNum = companyOrder.get(group.key) ?? 1;
+        const refs = contactsByCompany.get(group.key) ?? 0;
+        const shortlistedCount = group.items.filter(j => j.judgement === 'shortlisted').length;
+        const unqueuedShortlisted = group.items.filter(
+          j => j.judgement === 'shortlisted' && !queuedUrls.has(j.id) && !queuedUrls.has(j.url),
+        ).length;
+        const monogram = group.name.trim().charAt(0).toUpperCase() || 'C';
+        const panelUrl = group.items[0]?.url || 'https://www.linkedin.com/jobs/';
+        const rationale = `Rank #${rankNum}: ${pinned ? 'Pinned priority, ' : ''}${shortlistedCount ? `${shortlistedCount} shortlisted, ` : ''}best fit ${group.topFit}/100 across ${plural(group.items.length, 'role')}`;
+        const rankBadge = pill(`#${rankNum} · ${group.topFit}/100`, group.topFit >= 80 ? 'green' : 'violet');
+        rankBadge.title = rationale;
+
+        const primaryCta =
+          unqueuedShortlisted > 0
+            ? button('Queue shortlisted', 'btn btn-sm btn-primary', () => ctx.run({ kind: 'workspace', action: 'enqueueShortlisted' }))
+            : refs > 0
+              ? button('Referrers →', 'btn btn-sm btn-primary', () => ctx.go('referrals'))
+              : button('Side Panel →', 'btn btn-sm btn-primary', () => ctx.openPanel(panelUrl));
+
+        return div('company-group', [
+          div('company-group-head', [
+            div('company-group-left', [
+              div('company-monogram', [monogram]),
+              div('row-title', [
+                div('inline', [text('span', 'cell-strong', group.name), rankBadge, pinned ? pill('Pinned', 'violet') : null]),
+                text(
+                  'div',
+                  'cell-muted',
+                  `${plural(group.items.length, 'role')}${shortlistedCount ? ` · ${shortlistedCount} shortlisted` : ''} · ${refs ? plural(refs, 'referrer') : 'No referrers yet'}`,
+                ),
+              ]),
+            ]),
+            div('inline', [primaryCta, companyOverflowMenu(group.name, pinned, panelUrl, ctx)]),
+          ]),
+          div(
+            'company-group-rows',
+            group.items.map(j => row(j, ctx, queuedUrls, pinnedSet)),
+          ),
+        ]);
+      });
+
+    rowsHost.replaceChildren(...cards);
   };
   drawRows();
   const selected = openJob ? all.find(j => j.id === openJob) : undefined;
