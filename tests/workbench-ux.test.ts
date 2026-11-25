@@ -8,6 +8,8 @@ import { needsYou } from '../src/ui/workbench/screens/needs-you';
 import { answers } from '../src/ui/workbench/screens/answers';
 import { profile } from '../src/ui/workbench/screens/profile';
 import { confirmModal, field, pageSkeleton, setFieldError } from '../src/ui/workbench/dom';
+import { computeHudState, createFloatingHud } from '../src/ui/workbench/components/floating-hud';
+import { guidedReviewWorkspace, resetReviewSession } from '../src/ui/workbench/components/guided-review';
 
 function makeCtx(overrides: Partial<Ctx> = {}): Ctx {
   const baseProfile = emptyProfile();
@@ -360,4 +362,136 @@ it('design system primitives support skeletons, Esc modal dismissal, inline fiel
   const rowsText = document.querySelector('.rows')?.textContent ?? '';
   expect(rowsText).toContain('Design Fellow');
   expect(rowsText).not.toContain('PM Intern');
+});
+
+it('FloatingProgressHUD tracks active processing, setup completeness, ready state, and collapse toggle', async () => {
+  const ctx = makeCtx();
+  const processing = computeHudState({
+    route: 'profile',
+    view: ctx.view,
+    workspace: ctx.workspace,
+    busyAction: 'workspace:processProfileWithChatGPT',
+    busyMessage: 'ChatGPT is drafting your structured profile…',
+    busyStartedAt: 1000,
+    now: 5000,
+  })!;
+  expect(processing.mode).toBe('processing');
+  expect(processing.percent).toBeGreaterThanOrEqual(80);
+  expect(processing.etaText).toMatch(/^~\d+s left$/);
+
+  const partial = computeHudState({
+    route: 'welcome',
+    view: ctx.view,
+    workspace: ctx.workspace,
+    busyAction: '',
+    busyMessage: '',
+  })!;
+  expect(partial.mode).toBe('completion');
+  expect(partial.title).toContain('% Complete');
+
+  ctx.workspace!.connections.linkedin = true;
+  ctx.workspace!.cv.hasText = true;
+  ctx.workspace!.cv.imported = true;
+  ctx.workspace!.completeness = { complete: 5, total: 5, missing: [] };
+  const ready = computeHudState({
+    route: 'profile',
+    view: ctx.view,
+    workspace: ctx.workspace,
+    busyAction: '',
+    busyMessage: '',
+  })!;
+  expect(ready.mode).toBe('ready');
+  expect(ready.percent).toBe(100);
+
+  const host = document.createElement('div');
+  const hud = createFloatingHud(host);
+  const onJump = vi.fn();
+  hud.update(ready, onJump);
+  expect(host.textContent).toContain('100%');
+  host.querySelector<HTMLButtonElement>('.hud-minimize')!.click();
+  await vi.waitFor(() => expect(host.querySelector('.hud-chip-expand')?.getAttribute('aria-expanded')).toBe('false'));
+  host.querySelector<HTMLButtonElement>('.hud-chip-expand')!.click();
+  const cta = await vi.waitFor(() => {
+    const b = [...host.querySelectorAll('button')].find(btn => btn.textContent?.includes('Open side panel'));
+    if (!b) throw new Error('waiting for expanded HUD CTA');
+    return b;
+  });
+  cta.click();
+  await vi.waitFor(() => expect(onJump).toHaveBeenCalledWith(ready));
+});
+
+it('GuidedReviewWorkspace walks through live bridge, Before/After diffs, and 1-click approve flow', async () => {
+  resetReviewSession();
+  const ctx = makeCtx();
+  ctx.workspace!.connections.linkedin = true;
+  ctx.workspace!.cv.hasText = true;
+  ctx.workspace!.cv.imported = false;
+  ctx.workspace!.cvName = 'Arpit_CV.pdf';
+
+  const pre = guidedReviewWorkspace(ctx)!;
+  expect(pre.textContent).toContain('Start Guided AI Review');
+
+  ctx.busyAction = 'workspace:processProfileWithChatGPT';
+  const bridge = guidedReviewWorkspace(ctx, { busyMessage: 'ChatGPT is drafting your structured profile…' })!;
+  expect(bridge.textContent).toContain('Preparing your guided review plan');
+  expect(bridge.querySelectorAll('.bridge-step').length).toBe(3);
+
+  ctx.busyAction = '';
+  ctx.workspace!.aiProfileDraft = {
+    schemaVersion: 3,
+    identity: { fullName: 'Arpit Singh', email: 'a@b.com', phone: '', city: 'Delhi', state: '', country: 'India', profileUrl: '' },
+    education: [
+      {
+        level: 'Masters',
+        institution: 'IMT',
+        qualification: 'PGDM',
+        field: 'Marketing',
+        startDate: '2026-06',
+        endDate: '2028-04',
+        grade: '8.4',
+        gradeScale: '10',
+      },
+    ],
+    employment: [
+      {
+        employer: 'TBX',
+        title: 'Product Intern',
+        location: 'Gurugram',
+        startDate: '2025-05',
+        endDate: '2025-08',
+        current: false,
+        responsibilities: ['Led onboarding'],
+        achievements: ['Grew activation 12%'],
+        technologies: ['SQL'],
+      },
+    ],
+    projects: [],
+    skills: ['SQL', 'Figma'],
+    narrative: { strengths: 'Analytics', careerGoal: 'PM' },
+    conflicts: [{ field: 'Location', cvValue: 'Delhi, India', linkedinValue: 'Mumbai', resolution: 'CV preferred' }],
+    missingInformation: [],
+  };
+
+  document.body.replaceChildren(guidedReviewWorkspace(ctx)!);
+  expect(document.body.querySelector('del.diff-strike')?.textContent).toBe('Mumbai');
+  expect(document.body.querySelector('ins.diff-add')?.textContent).toBe('Delhi, India');
+
+  const acceptConflict = [...document.querySelectorAll('button')].find(b => b.textContent === 'Accept CV Change')!;
+  acceptConflict.click();
+  await vi.waitFor(() => expect(ctx.redraw).toHaveBeenCalled());
+
+  const nextStepBtn = [...document.querySelectorAll('button')].find(b => b.textContent?.includes('Confirm & Review Improvements'))!;
+  nextStepBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+
+  document.body.replaceChildren(guidedReviewWorkspace(ctx)!);
+  expect(document.body.textContent).toContain('Step 2 of 3: Accept & Apply Improvements');
+  const applyBtn = [...document.querySelectorAll('button')].find(b => b.textContent?.includes('Accept & Apply Changes'))!;
+  applyBtn.click();
+  await vi.waitFor(() => expect(ctx.run).toHaveBeenCalledWith({ kind: 'workspace', action: 'approveAiProfileDraft' }));
+
+  delete ctx.workspace!.aiProfileDraft;
+  ctx.workspace!.cv.imported = true;
+  document.body.replaceChildren(guidedReviewWorkspace(ctx)!);
+  expect(document.body.textContent).toContain('Step 3 of 3: Your Profile is Organized');
 });
