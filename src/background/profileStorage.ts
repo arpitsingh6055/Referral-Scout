@@ -12,7 +12,7 @@
  */
 
 import { allFacts, changeProfile, getProfile, saveFacts } from '../shared/persistence/campaign-store';
-import { makeFact } from '../shared/domain/facts';
+import { factsFromProfileSnapshot } from '../shared/domain/facts';
 import { formatLocation, mergeCandidateIdentity, normalizeChatGptResponse } from '../shared/normalizeChatGptProfile';
 import type { CandidateProfile, EducationRecord, EmploymentRecord, ProjectRecord } from '../shared/domain/profile';
 import { read, write } from '../storage/state';
@@ -199,26 +199,9 @@ export async function saveNormalizedProfileApproval(rawDraft: unknown, options: 
     throw new Error('Email could not be verified after saving to profile storage. Please try again.');
   }
 
-  // 3. Populate missing / non-user Answer Bank facts (`full_name`, `email`, `phone`, `city`, `state`, `country`, `linkedin_url`).
+  // 3. Hydrate all already-known profile fields (identity, education, experience, preferences) into Answer Bank facts.
   const existingFacts = await allFacts().catch(() => []);
-  const byFactId = new Map(existingFacts.map(f => [f.id, f]));
-  const factPairs: [string, string | undefined][] = [
-    ['full_name', persistedProfile.identity.fullName],
-    ['email', persistedProfile.identity.email],
-    ['phone', persistedProfile.identity.phone],
-    ['city', persistedProfile.identity.city],
-    ['state', persistedProfile.identity.state],
-    ['country', persistedProfile.identity.country],
-    ['linkedin_url', persistedProfile.identity.profileUrl],
-  ];
-  const factsToSave = factPairs.flatMap(([key, value]) => {
-    const clean = (value ?? '').trim();
-    if (!clean) return [];
-    const currentFact = byFactId.get(`fact:${key}:global`);
-    if (currentFact && currentFact.source === 'user' && currentFact.value.trim()) return [];
-    if (currentFact && currentFact.value === clean) return [];
-    return [makeFact({ canonicalKey: key, value: clean, source: 'model', provenance: 'ChatGPT CV & LinkedIn review', now })];
-  });
+  const factsToSave = factsFromProfileSnapshot(persistedProfile, existingFacts, { now });
   if (factsToSave.length) {
     await saveFacts(factsToSave);
   }

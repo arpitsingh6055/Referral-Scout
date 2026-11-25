@@ -7,6 +7,7 @@
 
 import { z } from 'zod';
 import {
+  activeCampaign,
   allCompanies,
   allContacts,
   allFacts,
@@ -20,7 +21,21 @@ import {
   suppressContact,
   type OutcomeEvent,
 } from '../shared/persistence/campaign-store';
-import { CATALOGUE, completeness, makeFact, sections, statusOf, type CandidateFact, type FactSection } from '../shared/domain/facts';
+import {
+  buildStudentSmartDefaults,
+  CATALOGUE,
+  completeness,
+  detectCandidateMode,
+  essentialReadiness,
+  LEGACY_DETAIL_KEYS,
+  makeFact,
+  matchLabel,
+  sections,
+  statusOf,
+  type CandidateFact,
+  type CandidatePersona,
+  type FactSection,
+} from '../shared/domain/facts';
 import {
   conflicts,
   documentFor,
@@ -39,7 +54,9 @@ import type { Contact } from '../shared/domain/outreach';
 import { gmailConnected } from './gmail';
 import { defaultSurface, setDefaultSurface, type Surface } from './surfaces';
 import { getNetwork } from './network';
-import { cvFile } from './apply';
+import { applyProfile, cvFile, PROFILE_KEY } from './apply';
+import { emptyApplyProfile } from '../shared/apply';
+import { write } from '../storage/state';
 import type { AiProfileDraft } from '../shared/profile-draft';
 import { askChatGpt } from './network-ai';
 import { updateNetwork } from './network';
@@ -139,6 +156,9 @@ export interface WorkspaceView {
   facts: FactRow[];
   factSections: ReturnType<typeof sections>;
   completeness: ReturnType<typeof completeness>;
+  persona?: { mode: CandidatePersona; reason: string; gradEnd?: string };
+  essentialReadiness?: ReturnType<typeof essentialReadiness>;
+  learnedAnswers?: { label: string; value: string }[];
   jobs: JobRow[];
   jobSearch?: {
     status: 'finding' | 'choosing' | 'working';
@@ -174,7 +194,7 @@ export async function workspaceView(): Promise<WorkspaceView> {
   // Bring across whatever the side panel's search and referral engine have found since last time, so these
   // screens are never empty while the person can plainly see results in the panel.
   await syncFromNetwork().catch(() => undefined);
-  const [me, facts, jobs, contacts, network, cv, gmail, surface] = await Promise.all([
+  const [me, facts, jobs, contacts, network, cv, gmail, surface, camp, appProfile] = await Promise.all([
     getProfile(),
     allFacts(),
     allJobs(),
@@ -183,9 +203,17 @@ export async function workspaceView(): Promise<WorkspaceView> {
     cvFile().catch(() => undefined),
     gmailConnected().catch(() => false),
     defaultSurface(),
+    activeCampaign().catch(() => undefined),
+    applyProfile().catch(() => emptyApplyProfile()),
   ]);
   const byKey = new Map(facts.map(f => [f.canonicalKey, f]));
   const now = Date.now();
+  const learnedAnswers = Object.entries(appProfile.answers ?? {})
+    .filter(([label, value]) => value.trim() && !matchLabel(label))
+    .map(([label, value]) => ({ label, value }))
+    .slice(-40);
+  const persona = detectCandidateMode(me, camp?.employmentType, now);
+  const readiness = essentialReadiness(facts, now);
 
   const [applications, events] = await Promise.all([all('applications'), all('events')]);
 
@@ -224,6 +252,9 @@ export async function workspaceView(): Promise<WorkspaceView> {
     }),
     factSections: sections(facts, now),
     completeness: completeness(facts, now),
+    persona,
+    essentialReadiness: readiness,
+    learnedAnswers,
     ...(network?.jobSearch
       ? {
           jobSearch: {
@@ -519,7 +550,9 @@ export const workspaceRequest = z.discriminatedUnion('action', [
     id: z.string().max(60),
   }),
   z.object({ kind: z.literal('workspace'), action: z.literal('saveFact'), key: z.string().max(60), value: z.string().max(4000) }),
+  z.object({ kind: z.literal('workspace'), action: z.literal('applyStudentDefaults') }),
   z.object({ kind: z.literal('workspace'), action: z.literal('clearFact'), key: z.string().max(60) }),
+  z.object({ kind: z.literal('workspace'), action: z.literal('clearLearnedAnswer'), label: z.string().max(200) }),
   z.object({
     kind: z.literal('workspace'),
     action: z.literal('judgeJob'),
@@ -669,7 +702,15 @@ async function handle(req: WorkspaceRequest): Promise<WorkspaceResult | { json: 
       await requalify();
       break;
     case 'saveFact': {
-      const fact = makeFact({ canonicalKey: req.key, value: req.value, source: 'user' });
+      const camp = await activeCampaign().catch(() => undefined);
+      const profile = await getProfile();
+      const country = profile.identity.country?.trim() || camp?.location?.split(',').pop()?.trim() || 'India';
+      const fact = makeFact({
+        canonicalKey: req.key,
+        value: req.value,
+        source: 'user',
+        ...(req.key === 'work_authorization' || req.key === 'sponsorship' ? { scopeValue: country } : {}),
+      });
       await saveFacts([fact]);
       const identityKeyMap: Record<string, keyof CandidateProfile['identity']> = {
         full_name: 'fullName',
@@ -681,11 +722,9 @@ async function handle(req: WorkspaceRequest): Promise<WorkspaceResult | { json: 
         linkedin_url: 'profileUrl',
       };
       const idField = identityKeyMap[req.key];
-      if (idField || req.key === 'portfolio_url' || req.key === 'expected_ctc') {
+      if (idField || req.key === 'portfolio_url' || req.key === 'expected_ctc' || req.key === 'relocate') {
         const updated = await changeProfile(p => {
-          if (idField) {
-            return { ...p, identity: { ...p.identity, [idField]: req.value.trim() } };
-          }
+          if (idField) return { ...p, identity: { ...p.identity, [idField]: req.value.trim() } };
           if (req.key === 'portfolio_url') {
             const links = req.value
               .split(',')
@@ -693,16 +732,79 @@ async function handle(req: WorkspaceRequest): Promise<WorkspaceResult | { json: 
               .filter(Boolean);
             return { ...p, identity: { ...p.identity, portfolioLinks: [...new Set([...p.identity.portfolioLinks, ...links])] } };
           }
+          if (req.key === 'relocate') {
+            const yes = /^(yes|true|open)/i.test(req.value.trim());
+            return { ...p, preferences: { ...p.preferences, willingToRelocate: yes } };
+          }
           return { ...p, preferences: { ...p.preferences, expectedCompensation: req.value.trim() } };
         });
         if (updated) void syncProfileSnapshotToLocalStorage(updated).catch(() => undefined);
       }
+      const legacyEntry = Object.entries(LEGACY_DETAIL_KEYS).find(([, canonical]) => canonical === req.key);
+      if (legacyEntry) {
+        const currentApply = await applyProfile().catch(() => emptyApplyProfile());
+        await write(PROFILE_KEY, {
+          ...currentApply,
+          details: { ...currentApply.details, [legacyEntry[0]]: req.value.trim() },
+        }).catch(() => undefined);
+      }
       message = 'Saved to your profile and Answer Bank.';
       break;
     }
-    case 'clearFact':
-      await removeFact(`fact:${req.key}:global`);
+    case 'applyStudentDefaults': {
+      const [me, existing, camp] = await Promise.all([getProfile(), allFacts(), activeCampaign().catch(() => undefined)]);
+      const existingByKey = new Map(existing.map(f => [f.canonicalKey, f]));
+      const defaults = buildStudentSmartDefaults(me, camp?.location ? { campaignLocation: camp.location } : {});
+      const toWrite: CandidateFact[] = [];
+      const legacyUpdates: Record<string, string> = {};
+      for (const item of defaults) {
+        const current = existingByKey.get(item.canonicalKey);
+        if (current && current.source === 'user' && current.value.trim()) continue;
+        toWrite.push(
+          makeFact({
+            canonicalKey: item.canonicalKey,
+            value: item.value,
+            source: 'user',
+            provenance: 'Student / Fresher Smart-Default',
+            ...(item.scopeValue ? { scopeValue: item.scopeValue } : {}),
+          }),
+        );
+        const legacyEntry = Object.entries(LEGACY_DETAIL_KEYS).find(([, canonical]) => canonical === item.canonicalKey);
+        if (legacyEntry) legacyUpdates[legacyEntry[0]] = item.value;
+      }
+      if (toWrite.length) await saveFacts(toWrite);
+      if (Object.keys(legacyUpdates).length) {
+        const currentApply = await applyProfile().catch(() => emptyApplyProfile());
+        await write(PROFILE_KEY, {
+          ...currentApply,
+          details: { ...currentApply.details, ...legacyUpdates },
+        }).catch(() => undefined);
+      }
+      message = toWrite.length
+        ? `Applied ${toWrite.length} Student / Fresher defaults.`
+        : 'All Student / Fresher defaults are already saved.';
       break;
+    }
+    case 'clearFact': {
+      await removeFact(`fact:${req.key}:global`);
+      if (req.key === 'work_authorization' || req.key === 'sponsorship') {
+        const all = await allFacts();
+        for (const f of all) {
+          if (f.canonicalKey === req.key) await removeFact(f.id);
+        }
+      }
+      break;
+    }
+    case 'clearLearnedAnswer': {
+      const currentApply = await applyProfile().catch(() => emptyApplyProfile());
+      if (currentApply.answers?.[req.label] !== undefined) {
+        const nextAnswers = { ...currentApply.answers };
+        delete nextAnswers[req.label];
+        await write(PROFILE_KEY, { ...currentApply, answers: nextAnswers }).catch(() => undefined);
+      }
+      message = 'Removed learned answer.';
+      break;
+    }
     case 'judgeJob':
       await changeJob(req.id, j =>
         j ? { ...j, userJudgement: req.judgement, ...(req.reason ? { userReason: req.reason } : {}), updatedAt: Date.now() } : j,

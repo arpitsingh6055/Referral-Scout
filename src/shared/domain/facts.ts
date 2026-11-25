@@ -11,6 +11,8 @@
  * similarity. A label that matches nothing stays an unknown question and is asked; guessing is the expensive error.
  */
 
+import { latestEducation, currentEmployment, yearsOfExperience, type CandidateProfile } from './profile';
+
 export type FactType = 'text' | 'longtext' | 'number' | 'money' | 'date' | 'duration' | 'phone' | 'email' | 'url' | 'choice' | 'address';
 export type FactSource = 'user' | 'cv' | 'profile' | 'model';
 /** Where a saved answer may be reused. Anything narrower than `global` is re-asked outside its scope. */
@@ -727,4 +729,209 @@ export function migrateProfile(
     keptAnswers[label] = value;
   }
   return { facts, keptAnswers };
+}
+
+/* ---------- smart inference, student/intern defaults & tiered readiness ---------- */
+export type CandidatePersona = 'student-intern' | 'experienced';
+
+/** Tier-1 universal essentials every applicant actually needs ready before applying cleanly. */
+export const ESSENTIAL_FACT_KEYS = ['full_name', 'email', 'work_authorization', 'notice_period', 'relocate'] as const;
+
+const parseMonthOrYear = (s: string | undefined): number | undefined => {
+  if (!s) return undefined;
+  const clean = s.trim();
+  const ts = Date.parse(/^\d{4}$/.test(clean) ? `${clean}-06-01` : /^\d{4}-\d{2}$/.test(clean) ? `${clean}-01` : clean);
+  return Number.isFinite(ts) ? ts : undefined;
+};
+
+/** Detects whether a user is a student / internship seeker vs an experienced hire from profile + campaign. */
+export function detectCandidateMode(
+  profile: Pick<CandidateProfile, 'education' | 'employment'>,
+  campaignEmploymentType?: string,
+  now = Date.now(),
+): { mode: CandidatePersona; reason: string; gradEnd?: string } {
+  const latestEdu = latestEducation(profile.education);
+  const gradTs = parseMonthOrYear(latestEdu?.endDate);
+  const stillStudying = gradTs !== undefined && gradTs > now - 30 * 86_400_000;
+  const years = yearsOfExperience(profile.employment, now) ?? 0;
+
+  if (campaignEmploymentType === 'internship') {
+    return {
+      mode: 'student-intern',
+      reason: latestEdu?.endDate
+        ? `Internship search · graduating ${latestEdu.endDate}`
+        : 'Internship search — student/fresher defaults apply',
+      ...(latestEdu?.endDate ? { gradEnd: latestEdu.endDate } : {}),
+    };
+  }
+  if (stillStudying || years <= 1.2) {
+    return {
+      mode: 'student-intern',
+      reason: stillStudying
+        ? `Currently studying${latestEdu?.qualification ? ` (${latestEdu.qualification})` : ''} · ${latestEdu?.endDate}`
+        : 'Early-career profile (< 1.2 years full-time experience)',
+      ...(latestEdu?.endDate ? { gradEnd: latestEdu.endDate } : {}),
+    };
+  }
+  return { mode: 'experienced', reason: `${years} years of experience recorded` };
+}
+
+export interface SmartDefaultItem {
+  canonicalKey: string;
+  label: string;
+  value: string;
+  scopeValue?: string;
+}
+
+/** Generates safe, honest Student / Fresher Answer Bank presets inferred from CandidateProfile + campaign location. */
+export function buildStudentSmartDefaults(
+  profile: CandidateProfile,
+  options: { country?: string; campaignLocation?: string; now?: number } = {},
+): SmartDefaultItem[] {
+  const now = options.now ?? Date.now();
+  const country =
+    options.country?.trim() ||
+    profile.eligibility.authorisedIn[0]?.trim() ||
+    profile.identity.country?.trim() ||
+    options.campaignLocation?.split(',').pop()?.trim() ||
+    'India';
+  const years = yearsOfExperience(profile.employment, now) ?? 0;
+  const expText = years === 0 ? '0 years (Fresher)' : `${years} year${years === 1 ? '' : 's'}`;
+  const relocateVal = profile.preferences.willingToRelocate === false ? 'No' : 'Yes';
+
+  return [
+    { canonicalKey: 'notice_period', label: 'Notice period', value: 'Immediate' },
+    { canonicalKey: 'start_date', label: 'Earliest start date', value: 'Immediately' },
+    { canonicalKey: 'current_ctc', label: 'Current CTC / salary', value: 'N/A (Student)' },
+    { canonicalKey: 'total_experience', label: 'Total years of experience', value: expText },
+    { canonicalKey: 'work_authorization', label: 'Work authorisation', value: `Authorized to work in ${country}`, scopeValue: country },
+    { canonicalKey: 'sponsorship', label: 'Sponsorship required', value: 'No', scopeValue: country },
+    { canonicalKey: 'relocate', label: 'Willing to relocate', value: relocateVal },
+  ];
+}
+
+/** Non-punitive readiness score over the Tier-1 Essentials only (never penalizes missing corporate fields). */
+export function essentialReadiness(
+  facts: readonly CandidateFact[],
+  now = Date.now(),
+): { complete: number; total: number; missing: string[] } {
+  const byKey = new Map<string, CandidateFact>();
+  for (const f of facts) {
+    if (!byKey.has(f.canonicalKey) || f.value.trim()) byKey.set(f.canonicalKey, f);
+  }
+  const missing: string[] = [];
+  let complete = 0;
+  for (const key of ESSENTIAL_FACT_KEYS) {
+    const f = byKey.get(key);
+    const hasUsable = !!f?.value.trim() && !isStale(f, now) && f.confidence >= 0.8;
+    if (hasUsable) complete++;
+    else missing.push(key);
+  }
+  return { complete, total: ESSENTIAL_FACT_KEYS.length, missing };
+}
+
+/**
+ * Extracts already-known CandidateProfile facts (identity, latest education, current role/experience, preferences)
+ * into Answer Bank facts without overwriting any user-entered facts.
+ */
+export function factsFromProfileSnapshot(
+  profile: CandidateProfile,
+  existingFacts: readonly CandidateFact[],
+  options: { now?: number; identityConfirmed?: boolean } = {},
+): CandidateFact[] {
+  const now = options.now ?? Date.now();
+  const byId = new Map(existingFacts.map(f => [f.id, f]));
+  const edu = latestEducation(profile.education);
+  const emp = currentEmployment(profile.employment);
+  const years = yearsOfExperience(profile.employment, now);
+  const country = profile.identity.country?.trim() || profile.eligibility.authorisedIn[0]?.trim();
+
+  const pairs: { key: string; value: string | undefined; scopeValue?: string; source?: FactSource; provenance: string }[] = [
+    {
+      key: 'full_name',
+      value: profile.identity.fullName,
+      source: options.identityConfirmed ? 'user' : 'model',
+      provenance: 'From your Candidate Profile',
+    },
+    {
+      key: 'email',
+      value: profile.identity.email,
+      source: options.identityConfirmed ? 'user' : 'model',
+      provenance: 'From your Candidate Profile',
+    },
+    {
+      key: 'phone',
+      value: profile.identity.phone,
+      source: options.identityConfirmed ? 'user' : 'model',
+      provenance: 'From your Candidate Profile',
+    },
+    { key: 'city', value: profile.identity.city, source: 'profile', provenance: 'From your Candidate Profile' },
+    { key: 'state', value: profile.identity.state, source: 'profile', provenance: 'From your Candidate Profile' },
+    { key: 'country', value: profile.identity.country, source: 'profile', provenance: 'From your Candidate Profile' },
+    { key: 'linkedin_url', value: profile.identity.profileUrl, source: 'profile', provenance: 'Your LinkedIn profile' },
+    { key: 'portfolio_url', value: profile.identity.portfolioLinks[0], source: 'profile', provenance: 'From your Candidate Profile' },
+    {
+      key: 'highest_qualification',
+      value: edu ? [edu.qualification || edu.level, edu.field].filter(Boolean).join(' in ') : undefined,
+      source: 'cv',
+      provenance: 'From your Education record',
+    },
+    { key: 'graduation_institute', value: edu?.institution, source: 'cv', provenance: 'From your Education record' },
+    { key: 'graduation_field', value: edu?.field, source: 'cv', provenance: 'From your Education record' },
+    { key: 'graduation_year', value: edu?.endDate?.slice(0, 4), source: 'cv', provenance: 'From your Education record' },
+    {
+      key: 'graduation_grade',
+      value: edu?.grade ? `${edu.grade}${edu.gradeScale ? ` / ${edu.gradeScale}` : ''}` : undefined,
+      source: 'cv',
+      provenance: 'From your Education record',
+    },
+    { key: 'current_employer', value: emp?.current ? emp.employer : undefined, source: 'cv', provenance: 'From your Experience record' },
+    { key: 'current_title', value: emp?.current ? emp.title : undefined, source: 'cv', provenance: 'From your Experience record' },
+    {
+      key: 'total_experience',
+      value: years !== undefined ? `${years} year${years === 1 ? '' : 's'}` : undefined,
+      source: 'profile',
+      provenance: 'Calculated from Work Experience dates',
+    },
+    { key: 'preferred_location', value: profile.preferences.locations[0], source: 'profile', provenance: 'From your Preferences' },
+    { key: 'employment_type', value: profile.preferences.employmentTypes[0], source: 'profile', provenance: 'From your Preferences' },
+    {
+      key: 'expected_ctc',
+      value: profile.preferences.expectedCompensation,
+      source: 'profile',
+      provenance: 'From your Preferences',
+    },
+    ...(country && profile.eligibility.authorisedIn.some(c => c.toLowerCase() === country.toLowerCase())
+      ? [
+          {
+            key: 'work_authorization',
+            value: `Authorized to work in ${country}`,
+            scopeValue: country,
+            source: 'profile' as const,
+            provenance: 'From your Eligibility settings',
+          },
+        ]
+      : []),
+  ];
+
+  const toSave: CandidateFact[] = [];
+  for (const item of pairs) {
+    const clean = (item.value ?? '').trim();
+    if (!clean) continue;
+    const factId = `fact:${item.key}:${item.scopeValue ?? 'global'}`;
+    const existing = byId.get(factId);
+    if (existing && existing.source === 'user' && existing.value.trim()) continue;
+    if (existing && existing.value === clean && existing.source === (item.source ?? 'profile')) continue;
+    toSave.push(
+      makeFact({
+        canonicalKey: item.key,
+        value: clean,
+        source: item.source ?? 'profile',
+        provenance: item.provenance,
+        now,
+        ...(item.scopeValue ? { scopeValue: item.scopeValue } : {}),
+      }),
+    );
+  }
+  return toSave;
 }
