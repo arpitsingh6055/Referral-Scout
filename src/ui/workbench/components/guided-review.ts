@@ -11,7 +11,8 @@ import { button, card, div, el, icon, input, pill, text } from '../dom';
 import type { Ctx } from '../shell';
 import type { WorkspaceView } from '../api';
 import type { AiProfileDraft } from '../../../shared/profile-draft';
-import { formatLocation } from '../../../shared/normalizeChatGptProfile';
+import type { EducationRecord, EmploymentRecord, ProjectRecord, StructuredMissingPrompt } from '../../../shared/domain/profile';
+import { formatLocation, sanitizeMissingInformation } from '../../../shared/normalizeChatGptProfile';
 import { getCachedProgressTasks } from '../../../shared/progress-store';
 import type { ReviewProgressSnapshot } from './floating-hud';
 
@@ -21,8 +22,11 @@ interface ReviewSession {
   skippedConflicts: Set<number>;
   skippedRoles: Set<number>;
   skippedEdu: Set<number>;
-  missingPrompts: string[];
+  missingPrompts: StructuredMissingPrompt[];
+  mergeNotes: string[];
   dismissedPrompts: Set<string>;
+  expandedSections: Set<string>;
+  inlineEditKey: string | null;
   justApproved: boolean;
   lastDraftStamp: string;
 }
@@ -34,7 +38,10 @@ const session: ReviewSession = {
   skippedRoles: new Set(),
   skippedEdu: new Set(),
   missingPrompts: [],
+  mergeNotes: [],
   dismissedPrompts: new Set(),
+  expandedSections: new Set(['employment', 'skills']),
+  inlineEditKey: null,
   justApproved: false,
   lastDraftStamp: '',
 };
@@ -50,7 +57,10 @@ export function resetReviewSession(): void {
   session.skippedRoles.clear();
   session.skippedEdu.clear();
   session.missingPrompts = [];
+  session.mergeNotes = [];
   session.dismissedPrompts.clear();
+  session.expandedSections = new Set(['employment', 'skills']);
+  session.inlineEditKey = null;
   session.justApproved = false;
   session.lastDraftStamp = '';
 }
@@ -73,6 +83,23 @@ export function getReviewProgressSnapshot(w: WorkspaceView | null): ReviewProgre
   return null;
 }
 
+function draftGapInfo(draft: AiProfileDraft): {
+  structuredMissing: StructuredMissingPrompt[];
+  mergeNotes: string[];
+} {
+  const rich = draft as WorkspaceView['aiProfileDraft'];
+  if (rich && Array.isArray(rich.structuredMissing) && Array.isArray(rich.mergeNotes)) {
+    return { structuredMissing: rich.structuredMissing, mergeNotes: rich.mergeNotes };
+  }
+  const clean = sanitizeMissingInformation(draft.missingInformation, {
+    identity: draft.identity,
+    employment: draft.employment,
+    education: draft.education,
+    projects: draft.projects,
+  });
+  return { structuredMissing: clean.structuredMissing, mergeNotes: clean.mergeNotes };
+}
+
 function syncDraftSession(draft: AiProfileDraft | undefined): void {
   if (!draft) return;
   const stamp = `${draft.identity.fullName}:${draft.education.length}:${draft.employment.length}:${draft.conflicts.length}:${draft.skills.length}`;
@@ -84,7 +111,9 @@ function syncDraftSession(draft: AiProfileDraft | undefined): void {
     session.skippedConflicts.clear();
     session.skippedRoles.clear();
     session.skippedEdu.clear();
-    session.missingPrompts = [...draft.missingInformation];
+    const info = draftGapInfo(draft);
+    session.missingPrompts = info.structuredMissing;
+    session.mergeNotes = info.mergeNotes;
     session.dismissedPrompts.clear();
     session.justApproved = false;
   }
@@ -156,9 +185,10 @@ function snapshotCard(
     profileUrl?: string;
     rolesCount: number;
     eduCount: number;
+    projectsCount?: number;
     skillsCount: number;
   },
-  saved: boolean,
+  mode: 'preview' | 'draft' | 'finalized',
 ): HTMLElement {
   const fields: [string, string][] = [
     ['Full name', data.fullName || 'Not extracted'],
@@ -166,12 +196,20 @@ function snapshotCard(
     ['Phone', data.phone || 'Not extracted'],
     ['Location', data.location || 'Not extracted'],
     ['LinkedIn URL', data.profileUrl || 'Not extracted'],
-    ['Structured profile', `${data.rolesCount} roles · ${data.eduCount} degrees · ${data.skillsCount} skills`],
+    [
+      'Sections ready to inspect',
+      `${data.rolesCount} experience · ${data.eduCount} education · ${data.projectsCount ?? 0} projects · ${data.skillsCount} skills`,
+    ],
   ];
+  const saved = mode !== 'preview';
   return div(`snapshot-card${saved ? ' is-saved' : ''}`, [
     div('diff-card-head', [
-      text('span', 'diff-field', saved ? 'Identity & Career Snapshot' : 'Identity & Contact Preview (Will Save on Apply)'),
-      pill(saved ? 'Saved to Profile ✓' : 'Ready to save', saved ? 'green' : 'violet'),
+      text('span', 'diff-field', saved ? 'Identity & Contact Snapshot' : 'Identity & Contact Preview (Saves as Draft)'),
+      mode === 'finalized'
+        ? pill('Finalized & Verified ✓', 'green')
+        : mode === 'draft'
+          ? pill('Saved to Profile ✓', 'green')
+          : pill('Ready to save draft', 'violet'),
     ]),
     div(
       'snapshot-grid',
@@ -185,65 +223,397 @@ function snapshotCard(
   ]);
 }
 
-function quickFillFactKey(prompt: string): string | null {
-  if (/\b(e-?mail)\b/i.test(prompt)) return 'email';
-  if (/\b(phone|mobile|whatsapp)\b/i.test(prompt)) return 'phone';
-  if (/\b(city|location|based)\b/i.test(prompt)) return 'city';
-  if (/\b(salary|ctc|compensation|stipend)\b/i.test(prompt)) return 'expected_ctc';
-  if (/\b(notice|availability|start)\b/i.test(prompt)) return 'notice_period';
-  if (/\b(authori[sz]|visa|sponsorship)\b/i.test(prompt)) return 'work_authorization';
-  if (/\b(portfolio|github|website)\b/i.test(prompt)) return 'portfolio_url';
-  return null;
+function renderRoleQuickEdit(role: Partial<EmploymentRecord>, ctx: Ctx): HTMLElement {
+  const employer = input(role.employer ?? '', { placeholder: 'Employer' });
+  const title = input(role.title ?? '', { placeholder: 'Role title' });
+  const startDate = input(role.startDate ?? '', { placeholder: 'YYYY-MM' });
+  const endDate = input(role.endDate ?? '', { placeholder: 'YYYY-MM or Present' });
+  const achievements = input((role.achievements ?? []).join(' · '), { placeholder: 'Key measurable outcomes (separated by ·)' });
+
+  return div('review-inline-editor', [
+    div('form-grid', [employer, title, startDate, endDate]),
+    achievements,
+    div('inline', [
+      button('Save role', 'btn btn-sm btn-primary', async () => {
+        if (!employer.value.trim() || !title.value.trim()) {
+          ctx.fail('Enter both employer and role title.');
+          return;
+        }
+        await ctx.run({
+          kind: 'workspace',
+          action: 'employment',
+          record: {
+            ...(role.id ? { id: role.id } : {}),
+            employer: employer.value.trim(),
+            title: title.value.trim(),
+            ...(role.location ? { location: role.location } : {}),
+            startDate: startDate.value.trim(),
+            endDate: endDate.value.trim(),
+            current: role.current ?? /present/i.test(endDate.value),
+            achievements: achievements.value
+              .split('·')
+              .map(v => v.trim())
+              .filter(Boolean),
+            technologies: role.technologies ?? [],
+            responsibilities: role.responsibilities ?? [],
+          },
+        });
+        session.inlineEditKey = null;
+        ctx.redraw();
+      }),
+      button('Cancel', 'btn btn-sm btn-ghost', () => {
+        session.inlineEditKey = null;
+        ctx.redraw();
+      }),
+    ]),
+  ]);
 }
 
-function renderQuickFillPrompts(prompts: string[], ctx: Ctx): HTMLElement | null {
-  const active = prompts.filter(p => !session.dismissedPrompts.has(p)).slice(0, 3);
-  if (!active.length) return null;
-  const box = div('quick-fill-box', [
-    div(
+function renderEduQuickEdit(edu: Partial<EducationRecord>, ctx: Ctx): HTMLElement {
+  const institution = input(edu.institution ?? '', { placeholder: 'Institution' });
+  const qualification = input(edu.qualification ?? edu.level ?? '', { placeholder: 'Degree / Qualification' });
+  const endDate = input(edu.endDate ?? '', { placeholder: 'End YYYY-MM' });
+  const grade = input(edu.grade ?? '', { placeholder: 'Grade / CGPA' });
+
+  return div('review-inline-editor', [
+    div('form-grid', [institution, qualification, endDate, grade]),
+    div('inline', [
+      button('Save degree', 'btn btn-sm btn-primary', async () => {
+        if (!institution.value.trim() || !qualification.value.trim()) {
+          ctx.fail('Enter both institution and qualification.');
+          return;
+        }
+        await ctx.run({
+          kind: 'workspace',
+          action: 'education',
+          record: {
+            ...(edu.id ? { id: edu.id } : {}),
+            level: edu.level || qualification.value.trim(),
+            institution: institution.value.trim(),
+            qualification: qualification.value.trim(),
+            ...(edu.field ? { field: edu.field } : {}),
+            ...(edu.startDate ? { startDate: edu.startDate } : {}),
+            endDate: endDate.value.trim(),
+            grade: grade.value.trim(),
+            ...(edu.gradeScale ? { gradeScale: edu.gradeScale } : {}),
+          },
+        });
+        session.inlineEditKey = null;
+        ctx.redraw();
+      }),
+      button('Cancel', 'btn btn-sm btn-ghost', () => {
+        session.inlineEditKey = null;
+        ctx.redraw();
+      }),
+    ]),
+  ]);
+}
+
+function renderProjQuickEdit(proj: Partial<ProjectRecord>, ctx: Ctx): HTMLElement {
+  const name = input(proj.name ?? '', { placeholder: 'Project title' });
+  const summary = input(proj.summary ?? '', { placeholder: 'Outcome or technical stack' });
+  return div('review-inline-editor', [
+    div('form-grid', [name, summary]),
+    div('inline', [
+      button('Save project', 'btn btn-sm btn-primary', async () => {
+        if (!name.value.trim()) {
+          ctx.fail('Enter a project name.');
+          return;
+        }
+        await ctx.run({
+          kind: 'workspace',
+          action: 'project',
+          record: {
+            ...(proj.id ? { id: proj.id } : {}),
+            name: name.value.trim(),
+            summary: summary.value.trim(),
+            skills: proj.skills ?? [],
+            outcomes: proj.outcomes ?? [],
+            links: proj.links ?? [],
+          },
+        });
+        session.inlineEditKey = null;
+        ctx.redraw();
+      }),
+      button('Cancel', 'btn btn-sm btn-ghost', () => {
+        session.inlineEditKey = null;
+        ctx.redraw();
+      }),
+    ]),
+  ]);
+}
+
+function accordionSection(
+  key: 'employment' | 'education' | 'projects' | 'skills',
+  summaryLabel: string,
+  bodyNodes: (HTMLElement | null)[],
+): HTMLElement {
+  const detailsEl = el(
+    'details',
+    {
+      class: 'review-details review-section-accordion',
+      'data-review-accordion': key,
+      ...(session.expandedSections.has(key) ? { open: true } : {}),
+    },
+    [el('summary', {}, [summaryLabel]), div('stack-xs review-section-body', bodyNodes)],
+  );
+  detailsEl.addEventListener('toggle', () => {
+    if (detailsEl.open) session.expandedSections.add(key);
+    else session.expandedSections.delete(key);
+  });
+  return detailsEl;
+}
+
+function renderExpandableProfileSections(w: WorkspaceView, ctx: Ctx): HTMLElement {
+  const p = w.profile;
+
+  /* 1. Work Experience */
+  const empBody: (HTMLElement | null)[] = p.employment.length
+    ? p.employment.map(role =>
+        session.inlineEditKey === `emp:${role.id}`
+          ? renderRoleQuickEdit(role, ctx)
+          : div('review-item-row', [
+              div('review-item-copy', [
+                text('div', 'cell-strong', `${role.title} — ${role.employer}`),
+                text(
+                  'div',
+                  'cell-muted',
+                  [
+                    [role.startDate || 'Date ?', role.current ? 'Present' : role.endDate || 'Date ?'].join(' – '),
+                    role.achievements[0] || role.responsibilities[0] || '',
+                  ]
+                    .filter(Boolean)
+                    .join(' · '),
+                ),
+              ]),
+              div('inline', [
+                button('Edit', 'btn btn-sm btn-ghost', () => {
+                  session.expandedSections.add('employment');
+                  session.inlineEditKey = `emp:${role.id}`;
+                  ctx.redraw();
+                }),
+                button('Remove', 'btn btn-sm btn-ghost', () =>
+                  ctx.run({ kind: 'workspace', action: 'removeRecord', list: 'employment', id: role.id }),
+                ),
+              ]),
+            ]),
+      )
+    : [text('p', 'cell-muted', 'No roles extracted yet.')];
+  if (session.inlineEditKey === 'emp:new') empBody.push(renderRoleQuickEdit({}, ctx));
+  empBody.push(
+    div('inline', [
+      button('+ Add Role', 'btn btn-sm', () => {
+        session.expandedSections.add('employment');
+        session.inlineEditKey = 'emp:new';
+        ctx.redraw();
+      }),
+    ]),
+  );
+
+  /* 2. Education */
+  const eduBody: (HTMLElement | null)[] = p.education.length
+    ? p.education.map(edu =>
+        session.inlineEditKey === `edu:${edu.id}`
+          ? renderEduQuickEdit(edu, ctx)
+          : div('review-item-row', [
+              div('review-item-copy', [
+                text('div', 'cell-strong', `${edu.qualification || edu.level} — ${edu.institution}`),
+                text(
+                  'div',
+                  'cell-muted',
+                  [[edu.startDate, edu.endDate].filter(Boolean).join(' – '), edu.grade ? `Grade: ${edu.grade}` : '']
+                    .filter(Boolean)
+                    .join(' · ') || 'Dates & grade optional',
+                ),
+              ]),
+              div('inline', [
+                button('Edit', 'btn btn-sm btn-ghost', () => {
+                  session.expandedSections.add('education');
+                  session.inlineEditKey = `edu:${edu.id}`;
+                  ctx.redraw();
+                }),
+                button('Remove', 'btn btn-sm btn-ghost', () =>
+                  ctx.run({ kind: 'workspace', action: 'removeRecord', list: 'education', id: edu.id }),
+                ),
+              ]),
+            ]),
+      )
+    : [text('p', 'cell-muted', 'No education records extracted yet.')];
+  if (session.inlineEditKey === 'edu:new') eduBody.push(renderEduQuickEdit({}, ctx));
+  eduBody.push(
+    div('inline', [
+      button('+ Add Degree', 'btn btn-sm', () => {
+        session.expandedSections.add('education');
+        session.inlineEditKey = 'edu:new';
+        ctx.redraw();
+      }),
+    ]),
+  );
+
+  /* 3. Projects */
+  const projBody: (HTMLElement | null)[] = p.projects.length
+    ? p.projects.map(proj =>
+        session.inlineEditKey === `proj:${proj.id}`
+          ? renderProjQuickEdit(proj, ctx)
+          : div('review-item-row', [
+              div('review-item-copy', [
+                text('div', 'cell-strong', proj.name),
+                proj.summary ? text('div', 'cell-muted', proj.summary) : null,
+              ]),
+              div('inline', [
+                button('Edit', 'btn btn-sm btn-ghost', () => {
+                  session.expandedSections.add('projects');
+                  session.inlineEditKey = `proj:${proj.id}`;
+                  ctx.redraw();
+                }),
+                button('Remove', 'btn btn-sm btn-ghost', () =>
+                  ctx.run({ kind: 'workspace', action: 'removeRecord', list: 'projects', id: proj.id }),
+                ),
+              ]),
+            ]),
+      )
+    : [text('p', 'cell-muted', 'No projects extracted.')];
+  if (session.inlineEditKey === 'proj:new') projBody.push(renderProjQuickEdit({}, ctx));
+  projBody.push(
+    div('inline', [
+      button('+ Add Project', 'btn btn-sm', () => {
+        session.expandedSections.add('projects');
+        session.inlineEditKey = 'proj:new';
+        ctx.redraw();
+      }),
+    ]),
+  );
+
+  /* 4. Skills (removable chips + inline add) */
+  const newSkillInput = input('', { placeholder: 'Add a skill (e.g. Python, SQL)…', 'aria-label': 'Add extracted skill' });
+  const addSkill = async (): Promise<void> => {
+    const clean = newSkillInput.value.trim();
+    if (!clean) return;
+    const nextSkills = [...new Set([...p.skills.map(s => s.skill), clean])];
+    await ctx.run({ kind: 'workspace', action: 'skills', skills: nextSkills });
+    newSkillInput.value = '';
+  };
+  const skillChips = div(
+    'chips',
+    p.skills.map(s =>
+      el('span', { class: 'skill-chip' }, [
+        s.skill,
+        el(
+          'button',
+          {
+            type: 'button',
+            class: 'skill-chip-remove',
+            'aria-label': `Remove ${s.skill}`,
+            title: `Remove ${s.skill}`,
+          },
+          ['×'],
+        ),
+      ]),
+    ),
+  );
+  // Wire remove buttons reliably.
+  p.skills.forEach((s, i) => {
+    const btn = skillChips.children[i]?.querySelector('button');
+    btn?.addEventListener('click', () => {
+      void ctx.run({ kind: 'workspace', action: 'removeRecord', list: 'skills', id: s.id });
+    });
+  });
+
+  const skillsBody: HTMLElement[] = [
+    p.skills.length ? skillChips : text('p', 'cell-muted', 'No skills extracted yet.'),
+    div('inline', [newSkillInput, button('+ Add Skill', 'btn btn-sm', addSkill)]),
+  ];
+
+  return div('stack-xs', [
+    accordionSection('employment', `Experience Roles (${p.employment.length}) — inspect or edit`, empBody),
+    accordionSection('education', `Education (${p.education.length} degrees) — inspect or edit`, eduBody),
+    accordionSection('projects', `Projects (${p.projects.length}) — inspect or edit`, projBody),
+    accordionSection('skills', `Skills (${p.skills.length}) — add or remove`, skillsBody),
+  ]);
+}
+
+function renderCleanPromptsAndMergeNotes(
+  prompts: readonly StructuredMissingPrompt[],
+  mergeNotes: readonly string[],
+  ctx: Ctx,
+): HTMLElement | null {
+  const active = prompts.filter(p => !session.dismissedPrompts.has(p.id)).slice(0, 4);
+  if (!active.length && !mergeNotes.length) return null;
+
+  const box = div('stack-xs', [
+    mergeNotes.length
+      ? div('note note-green', [
+          icon('check', 15),
+          text('span', '', `Merged CV + LinkedIn cleanly ✓ · ${mergeNotes.slice(0, 2).join(' · ')}`),
+        ])
+      : null,
+  ]);
+
+  if (active.length) {
+    const promptRows = div(
       'quick-fill-list',
-      active.map(prompt => {
-        const factKey = quickFillFactKey(prompt);
-        const inp = input('', { placeholder: `Enter answer for “${prompt}”…`, 'aria-label': prompt });
+      active.map(item => {
+        const inp = input('', { placeholder: item.inputPlaceholder, 'aria-label': item.shortLabel });
+        const dismiss = async (): Promise<void> => {
+          session.dismissedPrompts.add(item.id);
+          await ctx.run({ kind: 'workspace', action: 'dismissReviewPrompt', promptId: item.id });
+        };
         return div('quick-fill-row', [
-          div('', [
-            text('div', 'rule-name', prompt),
-            text('span', 'field-help', factKey ? 'Optional — saves directly to your profile' : 'Optional detail in Profile'),
-          ]),
-          factKey
+          div('', [text('div', 'rule-name', item.shortLabel), text('span', 'field-help', item.helperQuestion)]),
+          item.suggestedAction === 'inline-fact' && item.factKey
             ? div('inline', [
                 inp,
                 button('Save', 'btn btn-sm btn-primary', async () => {
                   const val = inp.value.trim();
                   if (!val) return;
-                  await ctx.run({ kind: 'workspace', action: 'saveFact', key: factKey, value: val });
-                  session.dismissedPrompts.add(prompt);
-                  ctx.redraw();
+                  await ctx.run({ kind: 'workspace', action: 'saveFact', key: item.factKey!, value: val });
+                  await dismiss();
                 }),
-                button('Skip', 'btn btn-sm btn-ghost', () => {
-                  session.dismissedPrompts.add(prompt);
-                  ctx.redraw();
-                }),
+                button('Skip', 'btn btn-sm btn-ghost', dismiss),
               ])
             : div('inline', [
-                button('Add in Profile →', 'btn btn-sm', () => {
-                  session.dismissedPrompts.add(prompt);
-                  ctx.go('profile');
+                button(`Open ${item.targetSection} →`, 'btn btn-sm', () => {
+                  if (item.targetSection === 'employment' || item.targetSection === 'education' || item.targetSection === 'projects') {
+                    session.expandedSections.add(item.targetSection);
+                    const first =
+                      item.targetSection === 'employment'
+                        ? ctx.workspace?.profile.employment.find(
+                            r => !item.targetHint || r.employer.toLowerCase().includes(item.targetHint.toLowerCase()),
+                          )
+                        : item.targetSection === 'education'
+                          ? ctx.workspace?.profile.education.find(
+                              e => !item.targetHint || e.institution.toLowerCase().includes(item.targetHint.toLowerCase()),
+                            )
+                          : ctx.workspace?.profile.projects.find(
+                              p => !item.targetHint || p.name.toLowerCase().includes(item.targetHint.toLowerCase()),
+                            );
+                    if (first) {
+                      session.inlineEditKey =
+                        item.targetSection === 'employment'
+                          ? `emp:${first.id}`
+                          : item.targetSection === 'education'
+                            ? `edu:${first.id}`
+                            : `proj:${first.id}`;
+                    }
+                    ctx.redraw();
+                  } else {
+                    void dismiss();
+                  }
                 }),
-                button('Skip', 'btn btn-sm btn-ghost', () => {
-                  session.dismissedPrompts.add(prompt);
-                  ctx.redraw();
-                }),
+                button('Skip', 'btn btn-sm btn-ghost', dismiss),
               ]),
         ]);
       }),
-    ),
-  ]);
-  const disclosure = el('details', { class: 'review-details' }, [
-    el('summary', {}, [`Optional details missing (${active.length}) — fill now or skip anytime`]),
-    box,
-  ]);
-  return disclosure;
+    );
+    box.append(
+      el('details', { class: 'review-details', open: true }, [
+        el('summary', {}, [`Optional clarifications (${active.length}) — fill now or skip anytime`]),
+        div('quick-fill-box', [promptRows]),
+      ]),
+    );
+  }
+
+  return box;
 }
 
 function stepHeader(activeStep: 1 | 2 | 3): HTMLElement {
@@ -401,8 +771,14 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
     return wrapper;
   }
 
-  /* Step 3: Celebratory completion right after applying draft (or already imported without pending draft) */
+  /* Step 3: Resumable Draft Review OR Finalized Profile Ceremony */
   if (!draft) {
+    const reviewStatus = w.reviewMeta?.status ?? (session.justApproved ? 'draft' : 'finalized');
+    const isFinalized = reviewStatus === 'finalized' && !session.justApproved;
+    const isDraft = reviewStatus === 'draft' || session.justApproved;
+    const activePrompts = (w.reviewMeta?.pendingPrompts ?? session.missingPrompts).filter(p => !session.dismissedPrompts.has(p.id));
+    const mergeNotes = w.reviewMeta?.mergeNotes ?? session.mergeNotes;
+
     const primaryCta = options.onApprovedNext
       ? button('Next: Set Target Role →', 'btn btn-primary btn-lg', options.onApprovedNext)
       : !ctx.view.campaign
@@ -413,12 +789,23 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
               ctx.runNetwork({ kind: 'network', action: 'findJobs' }),
             );
 
+    const cardTitle = session.justApproved
+      ? 'Step 3 of 3: Saved to Your Profile ✓'
+      : isDraft
+        ? 'Profile Draft — Review & Finalize'
+        : 'Finalized & Ready ✓';
+
+    const cardSub = isDraft
+      ? 'Saved as Draft. Inspect or edit your roles, degrees & skills below, then click Finalize Profile ✓ to confirm.'
+      : 'Your CV and LinkedIn profile are verified and synced across matching and autofill.';
+
     wrapper.append(
-      card('Step 3 of 3: Saved to Your Profile ✓', {
-        sub: session.justApproved
-          ? 'Your Name, Email, Contact Details, Experience, Education and Skills are saved and ready for job matching.'
-          : 'Your CV and LinkedIn profile are in sync. Upload a new CV or re-run whenever anything changes.',
-        link: pill('Saved to Profile ✓', 'green'),
+      card(cardTitle, {
+        sub: cardSub,
+        link: pill(
+          session.justApproved ? 'Saved to Profile ✓' : isDraft ? 'Draft — Needs Final Sign-Off' : 'Finalized & Ready ✓',
+          isDraft && !session.justApproved ? 'amber' : 'green',
+        ),
         body: [
           snapshotCard(
             {
@@ -429,13 +816,25 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
               ...(w.profile.identity.profileUrl ? { profileUrl: w.profile.identity.profileUrl } : {}),
               rolesCount: w.profile.employment.length,
               eduCount: w.profile.education.length,
+              projectsCount: w.profile.projects.length,
               skillsCount: w.profile.skills.length,
             },
-            true,
+            isFinalized ? 'finalized' : 'draft',
           ),
-          renderQuickFillPrompts(session.missingPrompts, ctx),
+          isDraft ? renderExpandableProfileSections(w, ctx) : null,
+          renderCleanPromptsAndMergeNotes(activePrompts, mergeNotes, ctx),
           div('inline', [
-            primaryCta,
+            isDraft
+              ? button('Finalize Profile ✓', 'btn btn-primary btn-lg', async () => {
+                  await ctx.run({ kind: 'workspace', action: 'finalizeProfile' });
+                  session.justApproved = false;
+                  emitReviewChanged();
+                })
+              : primaryCta,
+            isDraft
+              ? button('Save Draft', 'btn', () => ctx.inform('Draft saved — resume review anytime from Profile or the bottom bar.'))
+              : button('Re-open AI Review / Edit', 'btn', () => ctx.run({ kind: 'workspace', action: 'reopenProfileReview' })),
+            isDraft && options.onApprovedNext ? button('Next: Set Target Role →', 'btn', options.onApprovedNext) : null,
             options.cvInputId ? el('label', { class: 'btn', for: options.cvInputId }, ['Replace CV']) : null,
             button(
               'Re-run AI Review',
@@ -454,7 +853,9 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
   }
 
   const approveDraftNow = async (): Promise<void> => {
-    session.missingPrompts = [...draft.missingInformation];
+    const info = draftGapInfo(draft);
+    session.missingPrompts = info.structuredMissing;
+    session.mergeNotes = info.mergeNotes;
     const skippedEmp = [...session.skippedRoles];
     const skippedEdu = [...session.skippedEdu];
     await ctx.run({
@@ -590,7 +991,7 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
     ]),
   ];
 
-  draft.employment.slice(0, 4).forEach((role, idx) => {
+  draft.employment.forEach((role, idx) => {
     const skipped = session.skippedRoles.has(idx);
     detailCards.push(
       div(`diff-card${skipped ? ' is-skipped' : ' is-accepted'}`, [
@@ -617,14 +1018,14 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
         role.technologies.length
           ? div(
               'chips',
-              role.technologies.slice(0, 6).map(t => pill(t, 'grey')),
+              role.technologies.map(t => pill(t, 'grey')),
             )
           : null,
       ]),
     );
   });
 
-  draft.education.slice(0, 3).forEach((edu, idx) => {
+  draft.education.forEach((edu, idx) => {
     const skipped = session.skippedEdu.has(idx);
     detailCards.push(
       div(`diff-card${skipped ? ' is-skipped' : ''}`, [
@@ -645,13 +1046,22 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
     );
   });
 
+  draft.projects.forEach(proj => {
+    detailCards.push(
+      div('diff-card is-accepted', [
+        div('diff-card-head', [text('span', 'diff-field', proj.name), pill('Project', 'violet')]),
+        proj.summary ? text('p', 'field-help', proj.summary) : null,
+      ]),
+    );
+  });
+
   if (draft.skills.length) {
     detailCards.push(
       div('stack-xs', [
         text('div', 'field-label', `Skills extracted (${draft.skills.length})`),
         div(
           'chips',
-          draft.skills.slice(0, 16).map(s => pill(s, 'violet')),
+          draft.skills.map(s => pill(s, 'violet')),
         ),
       ]),
     );
@@ -667,9 +1077,10 @@ export function guidedReviewWorkspace(ctx: Ctx, options: GuidedReviewOptions = {
         profileUrl: draft.identity.profileUrl || p.identity.profileUrl || '',
         rolesCount: includedRolesCount,
         eduCount: includedEduCount,
+        projectsCount: newProjCount,
         skillsCount: newSkillsCount,
       },
-      false,
+      'preview',
     ),
     draft.narrative.strengths || draft.narrative.careerGoal
       ? div('note note-violet', [

@@ -162,6 +162,11 @@
   color: var(--rail-bg);
 }
 
+.nav-badge-ready {
+  background: var(--success);
+  color: #fff;
+}
+
 .rail-foot {
   background: var(--rail-surface);
   border: 1px solid var(--rail-border);
@@ -2665,6 +2670,68 @@ details .inline input[type='checkbox'] {
   margin-bottom: var(--sp-3);
   padding-bottom: var(--sp-2);
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.review-section-body {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.review-item-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.review-item-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.review-item-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.review-inline-editor {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 30%, var(--border-subtle));
+  background: var(--bg-subtle);
+}
+
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  background: var(--accent-tint);
+  color: var(--accent-primary);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 24%, transparent);
+}
+
+.skill-chip-remove {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.skill-chip-remove:hover {
+  opacity: 1;
 }
 
 /* ---------- tiered Answer Bank: student preset banner, pills & smart rows ---------- */

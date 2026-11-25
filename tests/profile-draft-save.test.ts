@@ -2,8 +2,15 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { clearDatabase, closeDatabase } from '../src/storage/database';
 import { allFacts, getProfile } from '../src/shared/persistence/campaign-store';
-import { normalizeChatGptResponse, mergeCandidateIdentity } from '../src/shared/normalizeChatGptProfile';
-import { PROFILE_SNAPSHOT_KEY, readProfileSnapshotFromLocalStorage, saveNormalizedProfileApproval } from '../src/background/profileStorage';
+import { normalizeChatGptResponse, mergeCandidateIdentity, sanitizeMissingInformation } from '../src/shared/normalizeChatGptProfile';
+import {
+  PROFILE_SNAPSHOT_KEY,
+  dismissReviewPrompt,
+  finalizeProfileReview,
+  readProfileSnapshotFromLocalStorage,
+  reopenProfileReview,
+  saveNormalizedProfileApproval,
+} from '../src/background/profileStorage';
 import { field, input, restoreForm, snapshotForm } from '../src/ui/workbench/dom';
 
 beforeEach(async () => {
@@ -167,4 +174,79 @@ it('restoreForm never overwrites freshly saved backend profile values with an em
   document.body.replaceChildren(field('Email', redrawEmail));
   restoreForm(document.body, snap);
   expect(redrawEmail.value).toBe('unsaved-typing@example.com');
+});
+
+it('filters resolved CV/LinkedIn merge diagnostics into mergeNotes and supports durable Draft -> Finalized -> Reopen lifecycle', async () => {
+  const localBacking: Record<string, unknown> = {};
+  vi.stubGlobal('chrome', {
+    storage: {
+      local: {
+        get: vi.fn(async (key: string) => ({ [key]: localBacking[key] })),
+        set: vi.fn(async (patch: Record<string, unknown>) => Object.assign(localBacking, patch)),
+        remove: vi.fn(async (key: string) => {
+          delete localBacking[key];
+        }),
+      },
+      onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
+    },
+  });
+
+  const cleaned = sanitizeMissingInformation(
+    [
+      'No email, phone number or other contact details were provided in the LinkedIn source; CV details have been retained.',
+      'The TBX Internship entry does not list exact start/end dates or quantitative achievements.',
+      'Expected salary or stipend',
+    ],
+    {
+      identity: { fullName: 'ARPIT SINGH', email: 'pgp26arpitsingh@imt.ac.in', phone: '+91 8968771062' },
+      employment: [{ employer: 'TBX', title: 'Product Intern' }],
+    },
+  );
+  expect(cleaned.mergeNotes).toEqual(['Email & contact details verified from your CV']);
+  expect(cleaned.missingInformation).not.toContain(
+    'No email, phone number or other contact details were provided in the LinkedIn source; CV details have been retained.',
+  );
+  expect(cleaned.structuredMissing).toHaveLength(2);
+  expect(cleaned.structuredMissing[0]).toMatchObject({
+    targetSection: 'employment',
+    suggestedAction: 'edit-section',
+    targetHint: 'TBX',
+  });
+  expect(cleaned.structuredMissing[0]!.shortLabel).toContain('TBX');
+  expect(cleaned.structuredMissing[1]).toMatchObject({
+    factKey: 'expected_ctc',
+    suggestedAction: 'inline-fact',
+  });
+
+  const draftRes = await saveNormalizedProfileApproval({
+    schemaVersion: 3,
+    identity: { fullName: 'ARPIT SINGH', email: 'pgp26arpitsingh@imt.ac.in' },
+    education: [{ level: 'Masters', institution: 'IMT', qualification: 'PGDM' }],
+    employment: [{ employer: 'TBX', title: 'Product Intern', responsibilities: [], achievements: [], technologies: [] }],
+    projects: [],
+    skills: ['SQL'],
+    narrative: { strengths: '', careerGoal: '' },
+    conflicts: [],
+    missingInformation: [
+      'No email, phone number or other contact details were provided in the LinkedIn source; CV details have been retained.',
+      'The TBX Internship entry does not list exact start/end dates.',
+    ],
+  });
+  expect(draftRes.profile.review?.status).toBe('draft');
+  expect(draftRes.profile.review?.mergeNotes).toContain('Email & contact details verified from your CV');
+  expect(draftRes.profile.review?.pendingPrompts).toHaveLength(1);
+  expect(draftRes.snapshot.reviewStatus).toBe('draft');
+
+  const promptId = draftRes.profile.review!.pendingPrompts[0]!.id;
+  const afterDismiss = await dismissReviewPrompt(promptId);
+  expect(afterDismiss.review?.pendingPrompts).toHaveLength(0);
+
+  const finalized = await finalizeProfileReview();
+  expect(finalized.review?.status).toBe('finalized');
+  expect(finalized.employment[0]?.provenance.verifiedAt).toBeTruthy();
+  expect((await readProfileSnapshotFromLocalStorage())?.reviewStatus).toBe('finalized');
+
+  const reopened = await reopenProfileReview();
+  expect(reopened.review?.status).toBe('draft');
+  expect(reopened.employment).toHaveLength(1);
 });

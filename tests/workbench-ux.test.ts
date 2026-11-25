@@ -1012,3 +1012,76 @@ it('FloatingProgressHUD shows silent background tab status and amber Inspect Tab
   expect(intervened?.ctaLabel).toBe('Inspect Tab →');
   expect(intervened?.inspectTabId).toBe(42);
 });
+
+it('resumable Draft review exposes expandable editable sections, filtered merge notes, Finalize CTA, and HUD Draft sync', async () => {
+  resetReviewSession();
+  const ctx = makeCtx();
+  ctx.workspace!.connections.linkedin = true;
+  ctx.workspace!.cv = { hasText: true, imported: true };
+  ctx.workspace!.profile.identity.fullName = 'Arpit Singh';
+  ctx.workspace!.profile.identity.email = 'arpit@imt.ac.in';
+  ctx.workspace!.profile.employment = [
+    {
+      id: 'emp-1',
+      employer: 'TBX',
+      title: 'Product Intern',
+      startDate: '2026-05',
+      endDate: '2026-07',
+      responsibilities: [],
+      achievements: ['Grew conversion 14%'],
+      technologies: ['SQL'],
+      provenance: { source: 'model', confidence: 0.6, capturedAt: Date.now() },
+    },
+  ];
+  ctx.workspace!.profile.skills = [
+    { id: 'sk-1', skill: 'SQL', evidenceRefs: [], provenance: { source: 'model', confidence: 0.6, capturedAt: Date.now() } },
+  ];
+  ctx.workspace!.reviewMeta = {
+    status: 'draft',
+    draftSavedAt: Date.now(),
+    mergeNotes: ['Email & contact details verified from your CV'],
+    pendingPrompts: [
+      {
+        id: 'gap:1',
+        rawText: 'The TBX Internship entry does not list metrics.',
+        shortLabel: 'TBX · Metrics',
+        helperQuestion: 'Add outcomes for TBX (optional)',
+        inputPlaceholder: 'e.g., Built APIs (+20% speed)',
+        targetSection: 'employment',
+        targetHint: 'TBX',
+        suggestedAction: 'edit-section',
+      },
+    ],
+  };
+
+  // HUD highlights Draft status across every screen until finalized.
+  const draftHud = computeHudState({
+    route: 'jobs',
+    view: ctx.view,
+    workspace: ctx.workspace,
+    busyAction: '',
+    busyMessage: '',
+  });
+  expect(draftHud?.title).toBe('Profile Draft • Review & Finalize');
+  expect(draftHud?.ctaLabel).toBe('Continue Review →');
+
+  // Resumable Draft workspace shows inline sections & Finalize Profile CTA without re-running ChatGPT.
+  document.body.replaceChildren(guidedReviewWorkspace(ctx)!);
+  expect(document.body.textContent).toContain('Draft — Needs Final Sign-Off');
+  expect(document.body.textContent).toContain('Merged CV + LinkedIn cleanly ✓');
+  expect(document.body.textContent).toContain('Product Intern — TBX');
+  expect(document.querySelector('[data-review-accordion="employment"]')).toBeTruthy();
+
+  const finalizeBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Finalize Profile ✓')!;
+  finalizeBtn.click();
+  await vi.waitFor(() => expect(ctx.run).toHaveBeenCalledWith({ kind: 'workspace', action: 'finalizeProfile' }));
+
+  // Finalized state offers non-destructive Re-open AI Review / Edit button.
+  ctx.workspace!.reviewMeta.status = 'finalized';
+  ctx.workspace!.reviewMeta.pendingPrompts = [];
+  document.body.replaceChildren(guidedReviewWorkspace(ctx)!);
+  expect(document.body.textContent).toContain('Finalized & Ready ✓');
+  const reopenBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Re-open AI Review / Edit')!;
+  reopenBtn.click();
+  await vi.waitFor(() => expect(ctx.run).toHaveBeenCalledWith({ kind: 'workspace', action: 'reopenProfileReview' }));
+});
