@@ -3,7 +3,8 @@ import { read as readState, write as writeState } from '../storage/state';
 import { z } from 'zod';
 import { all, put, remove } from '../storage/database';
 import { read } from '../storage/state';
-import { closeWorkTab, openWorkTab } from './network-browser';
+import { closeWorkTab, openManagedTab, releaseBackgroundGuard, type ManagedTabHandle } from './network-browser';
+import { publishProgressTask } from '../shared/progress-store';
 import type { NetworkState, NetworkContact } from '../shared/network';
 import { renderNote, introduction, defaultSettings } from '../shared/network';
 import { validatedDossier } from '../shared/dossier';
@@ -185,6 +186,8 @@ export async function recoverDossier(owner: string): Promise<string> {
     'No finished ChatGPT reply was found in an open ChatGPT tab. Keep the ChatGPT conversation open, or paste its JSON reply into the recovery box.',
   );
 }
+const aiHandles = new Map<string, ManagedTabHandle>();
+
 async function dispatch(job: AiJob, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted();
   if (job.parentId && job.tab === undefined) {
@@ -194,7 +197,14 @@ async function dispatch(job: AiJob, signal: AbortSignal): Promise<void> {
     await save(job, 'tab_opened');
   }
   if (job.tab === undefined) {
-    job.tab = await openWorkTab('https://chatgpt.com/', 'chatgpt');
+    const handle = await openManagedTab({
+      url: 'https://chatgpt.com/',
+      mode: 'background',
+      purpose: 'chatgpt_extract',
+      autoCloseOnComplete: job.kind !== 'BUILD_DOSSIER',
+    });
+    aiHandles.set(job.id, handle);
+    job.tab = handle.tabId;
     await save(job, 'tab_opened');
   }
   try {
@@ -207,11 +217,17 @@ async function dispatch(job: AiJob, signal: AbortSignal): Promise<void> {
     // A completed or attempted submission must never be restarted in another chat blindly.
     if (['send_clicked', 'user_turn_verified', 'assistant_streaming', 'completion_verified'].includes(job.stage))
       throw new Error('The ChatGPT tab closed after submission. Open the original conversation and review it before retrying.');
-    job.tab = await openWorkTab('https://chatgpt.com/', 'chatgpt');
+    const handle = await openManagedTab({
+      url: 'https://chatgpt.com/',
+      mode: 'background',
+      purpose: 'chatgpt_extract',
+      autoCloseOnComplete: job.kind !== 'BUILD_DOSSIER',
+    });
+    aiHandles.set(job.id, handle);
+    job.tab = handle.tabId;
     await save(job, 'tab_opened');
   }
   if (job.tab === undefined) throw new Error('No ChatGPT tab was assigned.');
-  await chrome.tabs.update(job.tab, { active: true });
   const { documentId } = await ready(job.tab, signal);
   const existing = await chrome.tabs.sendMessage(job.tab, { kind: 'network.ai', action: 'status', id: job.id });
   if (existing?.state === 'response_extracted' && typeof existing.text === 'string') {
@@ -304,11 +320,20 @@ export async function askApi(prompt: string, signal: AbortSignal, api: ApiConfig
  * conversation until it is validated, because a format repair is asked in that same conversation.
  */
 async function done(job: AiJob): Promise<void> {
-  if (job.kind === 'BUILD_DOSSIER' || job.tab === undefined) return;
+  if (job.kind === 'BUILD_DOSSIER' || job.tab === undefined) {
+    aiHandles.get(job.id)?.releaseFocusGuard();
+    return;
+  }
   const tab = job.tab;
   delete job.tab;
   await put('meta', { id: key(job.id), value: job }).catch(() => undefined);
-  await closeWorkTab(tab);
+  const handle = aiHandles.get(job.id);
+  aiHandles.delete(job.id);
+  if (handle) await handle.close();
+  else {
+    releaseBackgroundGuard(tab);
+    await closeWorkTab(tab);
+  }
 }
 async function closeTaskTab(id: string): Promise<void> {
   const job = await load(id);
@@ -316,7 +341,13 @@ async function closeTaskTab(id: string): Promise<void> {
   const tab = job.tab;
   delete job.tab;
   await put('meta', { id: key(job.id), value: job }).catch(() => undefined);
-  await closeWorkTab(tab);
+  const handle = aiHandles.get(id);
+  aiHandles.delete(id);
+  if (handle) await handle.close();
+  else {
+    releaseBackgroundGuard(tab);
+    await closeWorkTab(tab);
+  }
 }
 /** Whether the last ChatGPT task could be sent and read back, so the panel can warn before the next one fails. */
 export const AI_HEALTH_KEY = 'ai-health';
@@ -411,6 +442,21 @@ async function askChatGptOnce(
     const message = e instanceof Error ? e.message : String(e);
     job!.error = message;
     await save(job!, /submitted|uncertain|already|not visible|after submission|tab closed/i.test(message) ? 'uncertain' : 'failed');
+    if (/sign in|challenge|captcha|usage limit|verify/i.test(message)) {
+      void publishProgressTask({
+        id: 'cv_ai_review',
+        status: 'waiting',
+        percent: 40,
+        label: 'Verify ChatGPT Tab',
+        detail: message,
+        ctaLabel: 'Inspect Tab →',
+        targetRoute: 'profile',
+        backgroundTab: true,
+        needsIntervention: true,
+        tabUrl: 'https://chatgpt.com/',
+        ...(job!.tab !== undefined ? { tabId: job!.tab } : {}),
+      });
+    }
     throw e;
   });
   const began = Date.now();

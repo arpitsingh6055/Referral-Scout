@@ -11,8 +11,11 @@ import type { NetworkState } from '../../shared/network';
 import { selectPrimaryProgressTask, type ProcessId, type ProgressTask } from '../../shared/progress-store';
 
 export interface PanelHudAction {
-  kind: 'open-dashboard' | 'tab-home-turn' | 'tab-people-needs' | 'tab-referrals' | 'tab-saved' | 'resume' | 'retry-ai' | 'noop';
+  kind:
+    'open-dashboard' | 'focus-tab' | 'tab-home-turn' | 'tab-people-needs' | 'tab-referrals' | 'tab-saved' | 'resume' | 'retry-ai' | 'noop';
   route?: string;
+  tabId?: number;
+  url?: string;
 }
 
 export interface PanelHudState {
@@ -37,14 +40,27 @@ export function computePanelHudState(input: {
   /* 1. Highest priority: active persisted background task (e.g. CV AI, LinkedIn import, Autofill) */
   const persisted = selectPrimaryProgressTask(persistedTasks, now);
   if (persisted && (persisted.status === 'running' || persisted.status === 'error' || persisted.status === 'waiting')) {
+    const needsTabFocus =
+      (persisted.status === 'waiting' || persisted.needsIntervention) && (persisted.tabId !== undefined || !!persisted.tabUrl);
     return {
       mode: persisted.status === 'error' ? 'error' : persisted.status === 'waiting' ? 'completion' : 'processing',
       percent: persisted.percent,
-      title: `${persisted.percent}% · ${persisted.label}`,
+      title: persisted.needsIntervention
+        ? `Action Needed: ${persisted.label}`
+        : persisted.backgroundTab && persisted.status === 'running'
+          ? `Working in background tab (${persisted.percent}%)…`
+          : `${persisted.percent}% · ${persisted.label}`,
       detail: persisted.detail ?? (persisted.etaSeconds ? `~${persisted.etaSeconds}s remaining` : 'Synced across extension'),
-      ctaLabel: persisted.ctaLabel ?? (persisted.status === 'error' ? 'Retry' : 'Open'),
-      action:
-        persisted.status === 'error' && persisted.id === 'cv_ai_review'
+      ctaLabel: needsTabFocus
+        ? (persisted.ctaLabel ?? 'Inspect Tab →')
+        : (persisted.ctaLabel ?? (persisted.status === 'error' ? 'Retry' : 'Open')),
+      action: needsTabFocus
+        ? {
+            kind: 'focus-tab',
+            ...(persisted.tabId !== undefined ? { tabId: persisted.tabId } : {}),
+            ...(persisted.tabUrl ? { url: persisted.tabUrl } : {}),
+          }
+        : persisted.status === 'error' && persisted.id === 'cv_ai_review'
           ? { kind: 'open-dashboard', route: 'profile' }
           : persisted.targetRoute
             ? { kind: 'open-dashboard', route: persisted.targetRoute }

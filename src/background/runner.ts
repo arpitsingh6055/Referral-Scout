@@ -15,6 +15,7 @@
  */
 
 import { loadApplySession, startApplyOnTab, applyRunning, checkSubmitted, type ApplySession } from './apply';
+import { openManagedTab } from './network-browser';
 import {
   activeCampaign,
   allTasks,
@@ -83,9 +84,13 @@ async function workWindowId(): Promise<number | undefined> {
 
 async function openApplicationTab(url: string): Promise<number> {
   const windowId = await workWindowId();
-  const tab = await chrome.tabs.create({ url, active: false, ...(windowId !== undefined ? { windowId } : {}) });
-  if (tab.id === undefined) throw new Error('The browser did not open a tab for this application.');
-  return tab.id;
+  const handle = await openManagedTab({
+    url,
+    mode: 'background',
+    purpose: 'ats_check',
+    ...(windowId !== undefined ? { windowId } : {}),
+  });
+  return handle.tabId;
 }
 
 /* ---------- reading the engine's state ---------- */

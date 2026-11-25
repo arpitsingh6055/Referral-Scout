@@ -159,7 +159,7 @@ function completeJson(value: string): boolean {
 const OURS = '[REFERRAL_SCOUT_JOB:';
 /** Empties the message box. Only ever used on text this extension typed itself. */
 function clearComposer(editor: HTMLElement): void {
-  editor.focus();
+  if (!document.hidden) editor.focus({ preventScroll: true });
   if (editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) {
     insert(editor, '');
     return;
@@ -310,7 +310,7 @@ async function perform(id: string, prompt: string, parentId?: string, thinking?:
         await wait(() => turnFor(id) || !verify(), signal, 4000).catch(() => undefined);
         if (!turnFor(id) && verify()) {
           const active = composer()!;
-          active.focus();
+          if (!document.hidden) active.focus({ preventScroll: true });
           for (const type of ['keydown', 'keypress', 'keyup'] as const)
             active.dispatchEvent(
               new KeyboardEvent(type, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }),

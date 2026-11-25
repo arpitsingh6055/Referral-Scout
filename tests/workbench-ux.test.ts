@@ -956,3 +956,59 @@ it('overview Command Center & jobs company grouping launch Side Panel on LinkedI
   pinOverflowBtn.click();
   await vi.waitFor(() => expect(ctx.run).toHaveBeenCalledWith({ kind: 'campaign', action: 'pinCompany', company: 'Stripe', pinned: true }));
 });
+
+it('FloatingProgressHUD shows silent background tab status and amber Inspect Tab escalation when paused', () => {
+  const ctx = makeCtx();
+  const runningBg = computeHudState({
+    route: 'overview',
+    view: ctx.view,
+    workspace: ctx.workspace,
+    busyAction: '',
+    busyMessage: '',
+    persistedTasks: {
+      cv_ai_review: {
+        id: 'cv_ai_review',
+        status: 'running',
+        percent: 65,
+        label: 'Reconciling profile with ChatGPT',
+        detail: 'Extracting skills and career summary',
+        backgroundTab: true,
+        tabId: 42,
+        tabUrl: 'https://chatgpt.com/',
+        startedAt: Date.now() - 5000,
+        updatedAt: Date.now(),
+      },
+    },
+  });
+  expect(runningBg?.mode).toBe('processing');
+  expect(runningBg?.title).toBe('Working in background tab (65%)…');
+  expect(runningBg?.inspectTabId).toBe(42);
+
+  const intervened = computeHudState({
+    route: 'overview',
+    view: ctx.view,
+    workspace: ctx.workspace,
+    busyAction: '',
+    busyMessage: '',
+    persistedTasks: {
+      cv_ai_review: {
+        id: 'cv_ai_review',
+        status: 'waiting',
+        percent: 40,
+        label: 'Verify ChatGPT Tab',
+        detail: 'ChatGPT is asking you to sign in.',
+        ctaLabel: 'Inspect Tab →',
+        backgroundTab: true,
+        needsIntervention: true,
+        tabId: 42,
+        tabUrl: 'https://chatgpt.com/',
+        startedAt: Date.now() - 8000,
+        updatedAt: Date.now(),
+      },
+    },
+  });
+  expect(intervened?.tone).toBe('amber');
+  expect(intervened?.title).toBe('Action Needed: Verify ChatGPT Tab');
+  expect(intervened?.ctaLabel).toBe('Inspect Tab →');
+  expect(intervened?.inspectTabId).toBe(42);
+});

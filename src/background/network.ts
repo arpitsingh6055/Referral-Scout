@@ -68,7 +68,7 @@ import {
 import { matchSpecializations, SPECIALIZATIONS } from '../shared/specializations';
 import { seekerEvidence, suggestSpecializationsFromProfile, type SeekerSource } from '../shared/seeker';
 import { extractJson } from '../parsers/json';
-import { networkCommand, networkTab, showWorkTab, closeWorkWindow, readPagesInParallel, PARALLEL_PAGES } from './network-browser';
+import { networkCommand, networkTab, closeWorkWindow, readPagesInParallel, PARALLEL_PAGES } from './network-browser';
 import { prepareIntroduction, prepareInvitation, askChatGpt } from './network-ai';
 
 /** Saved settings with defaults filled in. Templates are the default for the first note; v0.10.0 briefly defaulted to ChatGPT, so existing installs are moved back once. A later choice is kept. */
@@ -1305,11 +1305,9 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
       await note(fresh, `Asking ChatGPT to write a message for ${p.name}…`);
       const text = await ai();
       await currentRun(s.revision, signal);
-      await showWorkTab(tab);
       return text;
     } catch (error) {
       if (signal.aborted || /paused/i.test(String(error))) throw error;
-      await showWorkTab(tab);
       // Never fail silently: say why ChatGPT was not used, then carry on with the template.
       const why = error instanceof Error ? error.message : String(error);
       const reason = /sign in to chatgpt/i.test(why)

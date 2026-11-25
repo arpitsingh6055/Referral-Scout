@@ -4,21 +4,42 @@ vi.mock('../src/storage/state', () => ({
   read: vi.fn(async (key: string) => (key === 'work-window' ? 3 : key === 'network-tab' ? 7 : undefined)),
   write: vi.fn(),
 }));
-const tabs = { get: vi.fn(), update: vi.fn(), create: vi.fn(), sendMessage: vi.fn(), query: vi.fn(), remove: vi.fn() };
-const windows = { update: vi.fn(), get: vi.fn(), create: vi.fn(), remove: vi.fn(), getLastFocused: vi.fn() };
+const onActivatedListeners = new Set<(info: { tabId: number; windowId: number }) => void>();
+const onRemovedListeners = new Set<(tabId: number) => void>();
+const tabs = {
+  get: vi.fn(),
+  update: vi.fn(),
+  create: vi.fn(),
+  sendMessage: vi.fn(),
+  query: vi.fn(),
+  remove: vi.fn(),
+  onActivated: {
+    addListener: vi.fn((fn: (info: { tabId: number; windowId: number }) => void) => onActivatedListeners.add(fn)),
+    removeListener: vi.fn((fn: (info: { tabId: number; windowId: number }) => void) => onActivatedListeners.delete(fn)),
+  },
+  onRemoved: {
+    addListener: vi.fn((fn: (tabId: number) => void) => onRemovedListeners.add(fn)),
+    removeListener: vi.fn((fn: (tabId: number) => void) => onRemovedListeners.delete(fn)),
+  },
+};
+const windows = { update: vi.fn(), get: vi.fn(), create: vi.fn(), remove: vi.fn(), getLastFocused: vi.fn(), getAll: vi.fn() };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  onActivatedListeners.clear();
+  onRemovedListeners.clear();
   tabs.get.mockResolvedValue({ id: 7, windowId: 3, status: 'complete', url: 'https://www.linkedin.com/in/alex/' });
   tabs.update.mockResolvedValue({});
   tabs.sendMessage.mockResolvedValue({ ok: true });
+  tabs.query.mockResolvedValue([{ id: 1, windowId: 1, active: true }]);
+  windows.getAll.mockResolvedValue([{ id: 1 }]);
   vi.stubGlobal('chrome', { tabs, windows, scripting: { executeScript: vi.fn() } });
 });
 
-it('reuses the LinkedIn tab without pulling its window in front of the user’s work', async () => {
+it('reuses the LinkedIn tab silently (active: false) without pulling its window in front of the user’s work', async () => {
   const { networkTab } = await import('../src/background/network-browser');
   await networkTab('https://www.linkedin.com/in/alex/', new AbortController().signal);
-  expect(tabs.update).toHaveBeenCalledWith(7, { url: 'https://www.linkedin.com/in/alex/', active: true });
+  expect(tabs.update).toHaveBeenCalledWith(7, { url: 'https://www.linkedin.com/in/alex/', active: false });
   expect(windows.update).not.toHaveBeenCalled();
 });
 
@@ -53,7 +74,7 @@ it('opens ChatGPT as a tab in the same work window instead of a second window, a
   const { openWorkTab } = await import('../src/background/network-browser');
   expect(await openWorkTab('https://chatgpt.com/', 'chatgpt')).toBe(31);
   expect(windows.remove).toHaveBeenCalledWith(44);
-  expect(tabs.create).toHaveBeenCalledWith({ windowId: 3, url: 'https://chatgpt.com/', active: true });
+  expect(tabs.create).toHaveBeenCalledWith({ windowId: 3, url: 'https://chatgpt.com/', active: false });
   expect(windows.create).not.toHaveBeenCalled();
 });
 
@@ -100,7 +121,7 @@ it('reuses the empty tab for the next task instead of opening another', async ()
   tabs.get.mockResolvedValue({ id: 31, windowId: 3, url: 'about:blank' });
   const { openWorkTab } = await import('../src/background/network-browser');
   expect(await openWorkTab('https://chatgpt.com/', 'chatgpt')).toBe(31);
-  expect(tabs.update).toHaveBeenCalledWith(31, { url: 'https://chatgpt.com/', active: true });
+  expect(tabs.update).toHaveBeenCalledWith(31, { url: 'https://chatgpt.com/', active: false });
   expect(tabs.create).not.toHaveBeenCalled();
   expect(state.write).toHaveBeenCalledWith('work-spare', -1);
   vi.mocked(state.read).mockImplementation(async (key: string) => (key === 'work-window' ? 3 : key === 'network-tab' ? 7 : undefined));
@@ -188,4 +209,56 @@ it('closes the work window after half an hour with nothing to do', async () => {
   expect(state.write).toHaveBeenCalledWith('work-window', -1);
   read.mockImplementation(async (key: string) => (key === 'work-window' ? 3 : key === 'network-tab' ? 7 : undefined));
   tabs.query.mockReset();
+});
+
+describe('TabOrchestrator openManagedTab and focusManagedTab', () => {
+  it('opens background worker tabs silently with active: false, guards focus hijacks, and auto-closes cleanly', async () => {
+    windows.getLastFocused.mockResolvedValue({ id: 1 });
+    tabs.query.mockResolvedValue([{ id: 10, windowId: 1, active: true }]);
+    tabs.create.mockResolvedValue({ id: 55, windowId: 1 });
+    tabs.remove.mockResolvedValue(undefined);
+    const { openManagedTab } = await import('../src/background/network-browser');
+
+    const handle = await openManagedTab({
+      url: 'https://chatgpt.com/',
+      mode: 'background',
+      purpose: 'chatgpt_extract',
+      windowId: 1,
+      autoCloseOnComplete: true,
+    });
+
+    expect(tabs.create).toHaveBeenCalledWith({ windowId: 1, url: 'https://chatgpt.com/', active: false });
+    expect(handle.mode).toBe('background');
+    expect(handle.originalTabId).toBe(10);
+
+    // Simulate a script/redirect trying to steal focus onto the worker tab while automation runs.
+    tabs.update.mockClear();
+    for (const fn of onActivatedListeners) fn({ tabId: 55, windowId: 1 });
+    expect(tabs.update).toHaveBeenCalledWith(10, { active: true });
+
+    await handle.close();
+    expect(onActivatedListeners.size).toBe(0);
+    expect(tabs.remove).toHaveBeenCalledWith(55);
+  });
+
+  it('releases the background guard when focusManagedTab escalates a blocked tab for the user', async () => {
+    windows.getLastFocused.mockResolvedValue({ id: 1 });
+    tabs.query.mockResolvedValue([{ id: 10, windowId: 1, active: true }]);
+    tabs.create.mockResolvedValue({ id: 56, windowId: 1 });
+    tabs.get.mockResolvedValue({ id: 56, windowId: 1, url: 'https://chatgpt.com/' });
+    const { openManagedTab, focusManagedTab } = await import('../src/background/network-browser');
+
+    await openManagedTab({
+      url: 'https://chatgpt.com/',
+      mode: 'background',
+      purpose: 'chatgpt_extract',
+      windowId: 1,
+    });
+    tabs.update.mockClear();
+
+    expect(await focusManagedTab(56)).toBe(true);
+    expect(onActivatedListeners.size).toBe(0);
+    expect(tabs.update).toHaveBeenCalledWith(56, { active: true, url: 'https://chatgpt.com/' });
+    expect(windows.update).toHaveBeenCalledWith(1, { focused: true });
+  });
 });

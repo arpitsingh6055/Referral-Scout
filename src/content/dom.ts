@@ -67,7 +67,29 @@ export async function wait<T>(read: () => T | null | undefined | false, signal: 
     guard(signal);
     const value = read();
     if (value) return value;
-    await sleep(250, signal);
+    const remaining = Math.max(20, end - Date.now());
+    // Event-driven wakeup via MutationObserver keeps `active: false` background tabs responsive despite 1Hz timer throttling.
+    await new Promise<void>(resolve => {
+      let settled = false;
+      const done = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        observer?.disconnect();
+        signal.removeEventListener('abort', done);
+        resolve();
+      };
+      const timer = setTimeout(done, Math.min(250, remaining));
+      const root = document.documentElement ?? document.body;
+      const observer =
+        typeof MutationObserver === 'function' && root
+          ? new MutationObserver(() => {
+              if (read()) done();
+            })
+          : null;
+      observer?.observe(root, { childList: true, subtree: true, characterData: true, attributes: true });
+      signal.addEventListener('abort', done, { once: true });
+    });
   }
   throw new Error('Critical selector/state did not become ready');
 }
@@ -121,7 +143,7 @@ function selectAll(editor: HTMLElement): void {
   selection?.addRange(range);
 }
 export function insert(editor: HTMLElement, value: string): void {
-  editor.focus();
+  if (!document.hidden) editor.focus({ preventScroll: true });
   if (editor instanceof HTMLInputElement || editor instanceof HTMLTextAreaElement) {
     const proto = editor instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
     Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(editor, value);

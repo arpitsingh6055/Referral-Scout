@@ -7,6 +7,7 @@
  */
 
 import { z } from 'zod';
+import { focusManagedTab } from './network-browser';
 import {
   activeCampaign,
   allCampaigns,
@@ -619,15 +620,7 @@ async function handle(req: CampaignRequest): Promise<CampaignView> {
     case 'open': {
       const task = await getTask(req.id);
       if (!task) break;
-      if (task.tabId !== undefined) {
-        const tab = await chrome.tabs.get(task.tabId).catch(() => undefined);
-        if (tab?.id !== undefined) {
-          await chrome.tabs.update(tab.id, { active: true });
-          if (tab.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true });
-          break;
-        }
-      }
-      await chrome.tabs.create({ url: task.url, active: true });
+      await focusManagedTab(task.tabId, task.url);
       break;
     }
     case 'reconcile':

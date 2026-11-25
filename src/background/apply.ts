@@ -45,6 +45,7 @@ import { read, write } from '../storage/state';
 import { all, remove } from '../storage/database';
 import { trustedExtension } from '../validators/security';
 import { AI_HEALTH_KEY, askChatGpt, type AiHealth } from './network-ai';
+import { openManagedTab } from './network-browser';
 import { getNetwork, queueReferral } from './network';
 import { referralJobInput } from '../shared/referral';
 import { clearProgressTask, publishProgressTask } from '../shared/progress-store';
@@ -341,8 +342,11 @@ async function syncApplyProgress(tabId: number, s: ApplySession): Promise<void> 
     percent: payload.percent,
     label,
     ...(payload.detail ? { detail: payload.detail } : {}),
-    ctaLabel: status === 'waiting' ? 'Answer next →' : status === 'error' ? 'Retry fill' : 'View form',
+    ctaLabel: status === 'waiting' ? 'Inspect Tab →' : status === 'error' ? 'Retry fill' : 'View form',
     targetRoute: 'overview',
+    backgroundTab: status !== 'done' && status !== 'error',
+    needsIntervention: status === 'waiting',
+    tabUrl: s.url,
     tabId,
     startedAt: s.startedAt,
     ...(s.stage === 'error' ? { error: s.message } : {}),
@@ -897,7 +901,16 @@ async function handOff(tabId: number, url: string, jobText: string, signal: Abor
   if (target === undefined) {
     const now = await chrome.tabs.get(tabId).catch(() => undefined);
     if (now?.url && !/linkedin\.com/.test(now.url)) target = tabId;
-    else if (dest) target = (await chrome.tabs.create({ url: dest, openerTabId: tabId, active: true })).id;
+    else if (dest) {
+      const handle = await openManagedTab({
+        url: dest,
+        mode: now?.active ? 'foreground' : 'background',
+        purpose: 'ats_check',
+        openerTabId: tabId,
+        ...(now?.windowId !== undefined ? { windowId: now.windowId } : {}),
+      });
+      target = handle.tabId;
+    }
   }
   if (target === undefined)
     throw new Error('The company’s application page did not open. Press Apply on LinkedIn, then press Fill on that page.');
