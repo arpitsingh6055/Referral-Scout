@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   answerFor,
+  buildStudentSmartDefaults,
   canReuse,
   completeness,
+  detectCandidateMode,
   equivalent,
+  essentialReadiness,
+  factsFromProfileSnapshot,
   isStale,
   makeFact,
   matchLabel,
@@ -11,6 +15,7 @@ import {
   statusOf,
   type CandidateFact,
 } from '../src/shared/domain/facts';
+import { emptyProfile } from '../src/shared/domain/profile';
 
 const NOW = 1_700_000_000_000;
 const DAY = 86_400_000;
@@ -161,5 +166,58 @@ describe('migration from the old profile', () => {
   it('does not lose an old answer it could not classify', () => {
     const { keptAnswers } = migrateProfile({ answers: { 'how did you hear about us': 'LinkedIn' } }, 'India', NOW);
     expect(keptAnswers['how did you hear about us']).toBe('LinkedIn');
+  });
+});
+
+describe('smart student inference, defaults & profile hydration', () => {
+  it('detects student/intern persona from internship campaign or future graduation and builds safe defaults', () => {
+    const p = emptyProfile(NOW);
+    p.identity.country = 'India';
+    p.education.push({
+      id: 'edu1',
+      level: 'Masters',
+      institution: 'IMT Ghaziabad',
+      qualification: 'PGDM',
+      endDate: '2028-04',
+      provenance: { source: 'cv', confidence: 0.8, capturedAt: NOW },
+    });
+    const mode = detectCandidateMode(p, 'internship', NOW);
+    expect(mode.mode).toBe('student-intern');
+    expect(mode.gradEnd).toBe('2028-04');
+
+    const defaults = buildStudentSmartDefaults(p, { now: NOW });
+    const byKey = Object.fromEntries(defaults.map(d => [d.canonicalKey, d]));
+    expect(byKey.notice_period?.value).toBe('Immediate');
+    expect(byKey.current_ctc?.value).toBe('N/A (Student)');
+    expect(byKey.work_authorization?.value).toContain('India');
+    expect(byKey.work_authorization?.scopeValue).toBe('India');
+  });
+
+  it('hydrates education & identity facts from CandidateProfile without overwriting user-entered values', () => {
+    const p = emptyProfile(NOW);
+    p.identity.fullName = 'Arpit Singh';
+    p.identity.email = 'a@b.com';
+    p.education.push({
+      id: 'edu1',
+      level: 'Masters',
+      institution: 'IMT Ghaziabad',
+      qualification: 'PGDM',
+      field: 'Marketing',
+      endDate: '2028-04',
+      provenance: { source: 'cv', confidence: 0.8, capturedAt: NOW },
+    });
+    const existing = [fact({ canonicalKey: 'email', value: 'custom@user.com' })];
+    const hydrated = factsFromProfileSnapshot(p, existing, { now: NOW });
+    expect(hydrated.some(f => f.canonicalKey === 'email')).toBe(false);
+    expect(hydrated.find(f => f.canonicalKey === 'graduation_institute')?.value).toBe('IMT Ghaziabad');
+    expect(hydrated.find(f => f.canonicalKey === 'graduation_year')?.value).toBe('2028');
+  });
+
+  it('computes non-punitive Tier-1 essential readiness', () => {
+    const r = essentialReadiness(
+      [fact({ canonicalKey: 'full_name', value: 'Arpit' }), fact({ canonicalKey: 'email', value: 'a@b.com' })],
+      NOW,
+    );
+    expect(r).toEqual({ complete: 2, total: 5, missing: ['work_authorization', 'notice_period', 'relocate'] });
   });
 });

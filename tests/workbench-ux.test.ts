@@ -768,3 +768,101 @@ it('resolveMacroJourney transitions cleanly across all 6 stages and GuidedReview
   fastBtn.click();
   await vi.waitFor(() => expect(ctx.run).toHaveBeenCalledWith({ kind: 'workspace', action: 'approveAiProfileDraft' }));
 });
+
+it('Answer Bank renders 3-tier layout, Student Smart-Fill preset, 1-click pill presets, and learned answers accordion', async () => {
+  const ctx = makeCtx();
+  ctx.workspace!.facts = [
+    {
+      key: 'full_name',
+      label: 'Full name',
+      section: 'identity',
+      value: 'Arpit Singh',
+      status: 'verified',
+      scope: 'global',
+      selfDeclared: false,
+      type: 'text',
+    },
+    {
+      key: 'work_authorization',
+      label: 'Work authorisation',
+      section: 'eligibility',
+      value: '',
+      status: 'empty',
+      scope: 'country',
+      selfDeclared: false,
+      type: 'choice',
+    },
+    {
+      key: 'notice_period',
+      label: 'Notice period',
+      section: 'work',
+      value: '',
+      status: 'empty',
+      scope: 'global',
+      selfDeclared: false,
+      type: 'duration',
+    },
+    {
+      key: 'start_date',
+      label: 'Earliest start date',
+      section: 'work',
+      value: '',
+      status: 'empty',
+      scope: 'global',
+      selfDeclared: false,
+      type: 'date',
+    },
+    {
+      key: 'relocate',
+      label: 'Willing to relocate',
+      section: 'preferences',
+      value: '',
+      status: 'empty',
+      scope: 'job',
+      selfDeclared: false,
+      type: 'choice',
+    },
+    {
+      key: 'expected_ctc',
+      label: 'Expected CTC / stipend',
+      section: 'work',
+      value: '',
+      status: 'empty',
+      scope: 'campaign',
+      selfDeclared: false,
+      type: 'money',
+    },
+    {
+      key: 'current_ctc',
+      label: 'Current CTC / salary',
+      section: 'work',
+      value: '',
+      status: 'empty',
+      scope: 'global',
+      selfDeclared: false,
+      type: 'money',
+    },
+  ];
+  ctx.workspace!.learnedAnswers = [{ label: 'how did you hear about us', value: 'LinkedIn' }];
+
+  document.body.replaceChildren(answers(ctx));
+  expect(document.body.textContent).toContain('You don’t need to fill everything now.');
+  expect(document.body.textContent).toContain('Student / Fresher Mode Active');
+  expect(document.body.textContent).toContain('how did you hear about us');
+
+  const applyDefaultsBtn = [...document.querySelectorAll('button')].find(b => b.textContent?.includes('Apply Student Smart-Defaults'))!;
+  applyDefaultsBtn.click();
+  await vi.waitFor(() => expect(ctx.run).toHaveBeenCalledWith({ kind: 'workspace', action: 'applyStudentDefaults' }));
+
+  const immediateChip = [...document.querySelectorAll<HTMLButtonElement>('button.preset-chip')].find(b => b.textContent === 'Immediate')!;
+  immediateChip.click();
+  await vi.waitFor(() =>
+    expect(ctx.run).toHaveBeenCalledWith({ kind: 'workspace', action: 'saveFact', key: 'notice_period', value: 'Immediate' }),
+  );
+
+  const forgetBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Forget')!;
+  forgetBtn.click();
+  await vi.waitFor(() =>
+    expect(ctx.run).toHaveBeenCalledWith({ kind: 'workspace', action: 'clearLearnedAnswer', label: 'how did you hear about us' }),
+  );
+});
