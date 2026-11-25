@@ -2544,3 +2544,89 @@ details .inline input[type='checkbox'] {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- identity & career snapshot + quick-fill prompts ---------- */
+.snapshot-card {
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 26%, var(--border-subtle));
+  background: var(--bg-subtle);
+}
+
+.snapshot-card.is-saved {
+  border-color: color-mix(in srgb, var(--success) 38%, var(--border-subtle));
+  background: color-mix(in srgb, var(--success-tint) 38%, var(--bg-surface));
+}
+
+.snapshot-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+
+.snapshot-cell {
+  min-width: 0;
+}
+
+.snapshot-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.snapshot-val {
+  margin-top: 2px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-val.is-muted {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.quick-fill-box {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.quick-fill-list {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.quick-fill-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-3);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.quick-fill-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+@media (max-width: 760px) {
+  .snapshot-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .quick-fill-row {
+    grid-template-columns: 1fr;
+  }
+}

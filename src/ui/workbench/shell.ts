@@ -816,6 +816,17 @@ export async function mount(): Promise<void> {
         .catch(() => undefined);
       return false;
     }
+    if (payload.kind === 'ui.profileSynced') {
+      void Promise.all([view(), workspace().catch(() => shop)])
+        .then(([a, b]) => {
+          state = a;
+          shop = b;
+          render(true);
+        })
+        .catch(() => undefined);
+      sendResponse({ shown: document.visibilityState === 'visible' });
+      return false;
+    }
     if (payload.kind === 'ui.toast' && typeof payload.message === 'string') {
       floatingToasts.show(
         payload.tone === 'error' ? 'error' : payload.tone === 'info' ? 'info' : 'success',

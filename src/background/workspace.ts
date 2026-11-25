@@ -40,15 +40,16 @@ import { gmailConnected } from './gmail';
 import { defaultSurface, setDefaultSurface, type Surface } from './surfaces';
 import { getNetwork } from './network';
 import { cvFile } from './apply';
-import { aiProfileDraftSchema, type AiProfileDraft } from '../shared/profile-draft';
+import type { AiProfileDraft } from '../shared/profile-draft';
 import { askChatGpt } from './network-ai';
-import { extractJson } from '../parsers/json';
 import { updateNetwork } from './network';
 import { enqueueShortlisted, syncFromNetwork } from './bridge';
 import { all } from '../storage/database';
 import { trustedExtension } from '../validators/security';
 import { clearAllLocalData } from './reset';
-import { clearProgressTask, publishProgressTask } from '../shared/progress-store';
+import { publishProgressTask } from '../shared/progress-store';
+import { normalizeChatGptResponse } from '../shared/normalizeChatGptProfile';
+import { saveNormalizedProfileApproval, syncProfileSnapshotToLocalStorage } from './profileStorage';
 
 const id = (prefix: string): string => `${prefix}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 7)}`;
 
@@ -195,7 +196,7 @@ export async function workspaceView(): Promise<WorkspaceView> {
     ...(network?.dossier
       ? (() => {
           try {
-            const draft = aiProfileDraftSchema.parse(JSON.parse(network.dossier));
+            const draft = normalizeChatGptResponse(network.dossier);
             return { aiProfileDraft: draft };
           } catch {
             return {};
@@ -416,7 +417,7 @@ async function processProfileWithChatGPT(): Promise<void> {
     reportAiProgress('Checking the structured response and source conflicts…', 97, 2);
     let draft: AiProfileDraft;
     try {
-      draft = aiProfileDraftSchema.parse(extractJson(reply));
+      draft = normalizeChatGptResponse(reply);
     } catch {
       throw new Error(
         'ChatGPT did not return a valid candidate-profile draft. Nothing was added to your profile. Retry processing or inspect the ChatGPT response.',
@@ -462,101 +463,29 @@ async function processProfileWithChatGPT(): Promise<void> {
   }
 }
 
-async function approveAiProfileDraft(): Promise<number> {
+async function approveAiProfileDraft(options?: {
+  skippedEmploymentIndexes?: readonly number[];
+  skippedEducationIndexes?: readonly number[];
+}): Promise<number> {
   const network = await getNetwork();
   if (!network.dossier) throw new Error('There is no ChatGPT profile draft to approve. Process your CV and LinkedIn profile first.');
-  const draft = aiProfileDraftSchema.parse(JSON.parse(network.dossier));
-  const now = Date.now();
-  const provenance = { source: 'model' as const, confidence: 0.6, capturedAt: now };
-  await changeProfile(p => {
-    const haveEducation = new Set(p.education.map(e => `${e.institution}|${e.qualification ?? e.level}`.toLowerCase()));
-    const haveEmployment = new Set(p.employment.map(e => `${e.employer}|${e.title}|${e.startDate ?? ''}`.toLowerCase()));
-    const haveProjects = new Set(p.projects.map(e => e.name.toLowerCase()));
-    const haveSkills = new Set(p.skills.map(e => e.skill.toLowerCase()));
-    // Build typed records without assigning `undefined` to optional properties. The project enables
-    // exactOptionalPropertyTypes, so absent evidence must remain absent rather than an explicit undefined.
-    const education: EducationRecord[] = draft.education.flatMap(e => {
-      const level = e.level || e.qualification;
-      if (!e.institution || !level) return [];
-      const key = `${e.institution}|${e.qualification || level}`.toLowerCase();
-      if (haveEducation.has(key)) return [];
-      return [
-        {
-          id: id('edu'),
-          level,
-          institution: e.institution,
-          ...(e.qualification ? { qualification: e.qualification } : {}),
-          ...(e.field ? { field: e.field } : {}),
-          ...(e.startDate ? { startDate: e.startDate } : {}),
-          ...(e.endDate ? { endDate: e.endDate } : {}),
-          ...(e.grade ? { grade: e.grade } : {}),
-          ...(e.gradeScale ? { gradeScale: e.gradeScale } : {}),
-          provenance,
-        },
-      ];
-    });
-    const employment: EmploymentRecord[] = draft.employment
-      .filter(e => e.employer && e.title && !haveEmployment.has(`${e.employer}|${e.title}|${e.startDate}`.toLowerCase()))
-      .map(e => ({
-        id: id('job'),
-        employer: e.employer,
-        title: e.title,
-        ...(e.location ? { location: e.location } : {}),
-        ...(e.startDate ? { startDate: e.startDate } : {}),
-        ...(e.endDate ? { endDate: e.endDate } : {}),
-        current: e.current,
-        responsibilities: e.responsibilities,
-        achievements: e.achievements,
-        technologies: e.technologies,
-        provenance,
-      }));
-    const projects: ProjectRecord[] = draft.projects
-      .filter(e => e.name && !haveProjects.has(e.name.toLowerCase()))
-      .map(e => ({
-        id: id('project'),
-        name: e.name,
-        ...(e.summary ? { summary: e.summary } : {}),
-        ...(e.role ? { role: e.role } : {}),
-        skills: e.skills,
-        outcomes: e.outcomes,
-        links: e.links,
-        provenance,
-      }));
-    const skills = draft.skills
-      .filter(skill => !haveSkills.has(skill.toLowerCase()))
-      .map(skill => ({ id: id('skill'), skill, evidenceRefs: [], provenance }));
-    return {
-      ...p,
-      identity: {
-        ...p.identity,
-        ...(p.identity.fullName ? {} : draft.identity.fullName ? { fullName: draft.identity.fullName } : {}),
-        ...(p.identity.email ? {} : draft.identity.email ? { email: draft.identity.email } : {}),
-        ...(p.identity.phone ? {} : draft.identity.phone ? { phone: draft.identity.phone } : {}),
-        ...(p.identity.city ? {} : draft.identity.city ? { city: draft.identity.city } : {}),
-        ...(p.identity.state ? {} : draft.identity.state ? { state: draft.identity.state } : {}),
-        ...(p.identity.country ? {} : draft.identity.country ? { country: draft.identity.country } : {}),
-        ...(p.identity.profileUrl ? {} : draft.identity.profileUrl ? { profileUrl: draft.identity.profileUrl } : {}),
-      },
-      education: [...p.education, ...education],
-      employment: [...p.employment, ...employment],
-      projects: [...p.projects, ...projects],
-      skills: [...p.skills, ...skills],
-      narrative: {
-        ...p.narrative,
-        ...(p.narrative.strengths ? {} : draft.narrative.strengths ? { strengths: draft.narrative.strengths } : {}),
-        ...(p.narrative.careerGoal ? {} : draft.narrative.careerGoal ? { careerGoal: draft.narrative.careerGoal } : {}),
-      },
-    };
+  const result = await saveNormalizedProfileApproval(network.dossier, {
+    ...(options?.skippedEmploymentIndexes ? { skippedEmploymentIndexes: options.skippedEmploymentIndexes } : {}),
+    ...(options?.skippedEducationIndexes ? { skippedEducationIndexes: options.skippedEducationIndexes } : {}),
   });
   await requalify();
   await updateNetwork(s => ({
     ...s,
     dossier: '',
     dossierSavedAt: 0,
-    status: 'ChatGPT profile draft approved and added as unverified suggestions. Review each record before using it in applications.',
+    status: 'ChatGPT profile draft approved and verified in your Candidate Profile.',
   }));
-  await clearProgressTask('cv_ai_review');
-  return draft.education.length + draft.employment.length + draft.projects.length + draft.skills.length;
+  try {
+    void chrome.runtime?.sendMessage?.({ kind: 'ui.profileSynced', snapshot: result.snapshot })?.catch?.(() => undefined);
+  } catch {
+    // Ignore when no other extension page is open.
+  }
+  return result.added;
 }
 
 export const workspaceRequest = z.discriminatedUnion('action', [
@@ -608,7 +537,12 @@ export const workspaceRequest = z.discriminatedUnion('action', [
   }),
   z.object({ kind: z.literal('workspace'), action: z.literal('surface'), surface: z.enum(['tab', 'panel']) }),
   z.object({ kind: z.literal('workspace'), action: z.literal('processProfileWithChatGPT') }),
-  z.object({ kind: z.literal('workspace'), action: z.literal('approveAiProfileDraft') }),
+  z.object({
+    kind: z.literal('workspace'),
+    action: z.literal('approveAiProfileDraft'),
+    skippedEmploymentIndexes: z.array(z.number().int().min(0).max(50)).max(50).optional(),
+    skippedEducationIndexes: z.array(z.number().int().min(0).max(50)).max(50).optional(),
+  }),
   z.object({ kind: z.literal('workspace'), action: z.literal('export') }),
   z.object({ kind: z.literal('workspace'), action: z.literal('clear'), confirm: z.literal(true) }),
 ]);
@@ -676,6 +610,9 @@ async function handle(req: WorkspaceRequest): Promise<WorkspaceResult | { json: 
         const given = Object.fromEntries(Object.entries(req.identity).filter(([, v]) => v !== undefined));
         return { ...p, identity: { ...p.identity, ...given, portfolioLinks: req.identity.portfolioLinks ?? p.identity.portfolioLinks } };
       });
+      void getProfile()
+        .then(syncProfileSnapshotToLocalStorage)
+        .catch(() => undefined);
       break;
     case 'preferences':
       await changeProfile(p => ({
@@ -772,8 +709,11 @@ async function handle(req: WorkspaceRequest): Promise<WorkspaceResult | { json: 
         'ChatGPT has prepared a profile draft using your CV as the priority source. Review it before adding anything to your profile.';
       break;
     case 'approveAiProfileDraft': {
-      const added = await approveAiProfileDraft();
-      message = `${added} profile suggestions added. They remain unverified until you review and confirm them.`;
+      const added = await approveAiProfileDraft({
+        ...(req.skippedEmploymentIndexes ? { skippedEmploymentIndexes: req.skippedEmploymentIndexes } : {}),
+        ...(req.skippedEducationIndexes ? { skippedEducationIndexes: req.skippedEducationIndexes } : {}),
+      });
+      message = `Saved to your Candidate Profile (${added} records added).`;
       break;
     }
     case 'export':
