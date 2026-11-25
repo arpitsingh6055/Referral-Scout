@@ -2247,6 +2247,16 @@ details .inline input[type='checkbox'] {
   border-color: color-mix(in srgb, var(--success) 48%, var(--border-strong));
 }
 
+.floating-hud.is-error {
+  border-color: color-mix(in srgb, var(--destructive) 55%, var(--border-strong));
+}
+
+.floating-hud.is-error .hud-ring-fill,
+.floating-hud.is-error .hud-progress-fill {
+  stroke: var(--destructive);
+  background: var(--destructive);
+}
+
 .floating-hud.is-collapsed {
   width: auto;
   border-radius: var(--radius-pill);

@@ -12,6 +12,14 @@ import type { NetworkRequest } from '../../shared/network';
 import { button, div, el, icon, isEditing, pageSkeleton, restoreForm, snapshotForm, text } from './dom';
 import { computeHudState, createFloatingHud, type HudState } from './components/floating-hud';
 import { getReviewProgressSnapshot, resetReviewSession } from './components/guided-review';
+import {
+  clearProgressTask,
+  getCachedProgressTasks,
+  readProgressTasks,
+  subscribeProgressTasks,
+  type ProcessId,
+  type ProgressTask,
+} from '../../shared/progress-store';
 import { overview, overviewHeader } from './screens/overview';
 import { applications, applicationsHeader } from './screens/applications';
 import { needsYou, needsYouHeader } from './screens/needs-you';
@@ -107,6 +115,7 @@ let busyMessage = '';
 let busyStartedAt = 0;
 let aiError = '';
 let cvProgress = { active: false, percent: 0, label: '', startedAt: 0 };
+let persistedTasks: Partial<Record<ProcessId, ProgressTask>> = getCachedProgressTasks();
 let drawn = '';
 let deferred: { view: CampaignView; workspace: WorkspaceView | null } | null = null;
 let mobileDrawerOpen = false;
@@ -490,10 +499,24 @@ function render(force = false): void {
       busyAction,
       busyMessage,
       busyStartedAt,
+      persistedTasks,
       ...(cvProgress.active ? { cvProgress } : {}),
       reviewProgress: getReviewProgressSnapshot(shop),
     });
     const navigateHud = (target: HudState): void => {
+      if (target.mode === 'error' && target.retryTaskId) {
+        void clearProgressTask(target.retryTaskId);
+        if (target.retryTaskId === 'cv_ai_review') {
+          if (current !== 'profile') ctx.go('profile');
+          void ctx.run({ kind: 'workspace', action: 'processProfileWithChatGPT' });
+          return;
+        }
+        if (target.retryTaskId === 'linkedin_import') {
+          if (current !== 'profile') ctx.go('profile');
+          void ctx.runNetwork({ kind: 'network', action: 'import' });
+          return;
+        }
+      }
       if (target.mode === 'ready' && target.targetRoute === 'overview' && !shop?.jobs.length) {
         ctx.openPanel();
         return;
@@ -615,15 +638,17 @@ export async function mount(): Promise<void> {
   if (hash) current = hash;
   root.replaceChildren(div('page', [pageSkeleton()]));
   try {
-    const [a, b] = await Promise.all([
+    const [a, b, tasks] = await Promise.all([
       view(),
       workspace().catch((e: unknown) => {
         error = `Your profile and jobs could not be loaded: ${e instanceof Error ? e.message : 'unknown error'}`;
         return null;
       }),
+      readProgressTasks().catch(() => ({})),
     ]);
     state = a;
     shop = b;
+    persistedTasks = tasks;
   } catch (e) {
     root.replaceChildren(
       div('page', [
@@ -720,6 +745,11 @@ export async function mount(): Promise<void> {
   });
 
   addEventListener('referral-scout-review-change', () => {
+    if (state) render(true);
+  });
+
+  subscribeProgressTasks(tasks => {
+    persistedTasks = tasks;
     if (state) render(true);
   });
 

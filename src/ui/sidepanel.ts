@@ -35,9 +35,56 @@ import { buildPeople } from './people';
 import { buildActivity } from './activity';
 import { applyHome, refreshCard } from './apply';
 import { renderCampaignCard } from './side-panel/campaign-card';
+import { computePanelHudState, createSidePanelHud, type PanelHudAction } from './side-panel/floating-hud';
+import type { CampaignView } from '../background/campaign';
+import {
+  clearAllProgressTasks,
+  getCachedProgressTasks,
+  readProgressTasks,
+  subscribeProgressTasks,
+  type ProcessId,
+  type ProgressTask,
+} from '../shared/progress-store';
 
 /** Where the compact campaign card is drawn; it survives redraws so the panel does not flicker. */
 const campaignHost = node('div', '', 'rs-campaign-host');
+const panelHud = createSidePanelHud(document.body);
+let cachedCampaignView: CampaignView | null = null;
+let cachedProgressTasks: Partial<Record<ProcessId, ProgressTask>> = getCachedProgressTasks();
+
+const handlePanelHudAction = (action: PanelHudAction): void => {
+  if (action.kind === 'open-dashboard') {
+    void openDashboard(action.route ?? 'overview').catch(e => notify('error', errorText(e)));
+    return;
+  }
+  if (action.kind === 'tab-referrals') {
+    ui.tab = 'referrals';
+    if (flags.last) render(flags.last);
+    return;
+  }
+  if (action.kind === 'tab-people-needs') {
+    ui.filter = 'needs';
+    ui.tab = 'people';
+    if (flags.last) render(flags.last);
+    return;
+  }
+  if (action.kind === 'tab-home-turn') {
+    ui.tab = 'home';
+    if (flags.last) render(flags.last);
+    requestAnimationFrame(() => document.querySelector('.home-turn, .todos')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }));
+  }
+};
+
+const syncPanelHud = (): void => {
+  panelHud.update(
+    computePanelHudState({
+      network: flags.last,
+      campaign: cachedCampaignView,
+      persistedTasks: cachedProgressTasks,
+    }),
+    handlePanelHudAction,
+  );
+};
 
 /** The running build, so it is easy to tell whether the extension was reloaded after an update. */
 const version = (globalThis as { chrome?: typeof chrome }).chrome?.runtime?.getManifest?.().version ?? '';
@@ -651,13 +698,22 @@ function render(s: NetworkState): void {
   setTab(ui.tab);
   tick();
   document.scrollingElement?.scrollTo({ top: scroll });
+  syncPanelHud();
 }
 
 /* ---------- refresh ---------- */
 async function refresh(): Promise<void> {
   const typing = page.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName ?? '');
   if (flags.busy || flags.dirty || typing) return; // never throw away what the user is typing
-  const current = await request({ kind: 'network', action: 'status' });
+  const [current, campReply, tasks] = await Promise.all([
+    request({ kind: 'network', action: 'status' }),
+    chrome.runtime?.sendMessage?.({ kind: 'campaign', action: 'view' })?.catch?.(() => undefined) as Promise<
+      { ok?: boolean; view?: CampaignView } | undefined
+    >,
+    readProgressTasks().catch(() => cachedProgressTasks),
+  ]);
+  if (campReply?.ok && campReply.view) cachedCampaignView = campReply.view;
+  cachedProgressTasks = tasks;
   announce(current);
   const before = flags.last;
   // The moment it becomes the person's turn, take them there and say so, instead of leaving a button to be noticed.
@@ -694,7 +750,10 @@ async function refresh(): Promise<void> {
     document.scrollingElement?.scrollTo({ top: 0 });
   }
   if (JSON.stringify(current) !== flags.signature) render(current);
-  else if (campaignHost.isConnected) void renderCampaignCard(campaignHost).catch(() => undefined);
+  else {
+    if (campaignHost.isConnected) void renderCampaignCard(campaignHost).catch(() => undefined);
+    syncPanelHud();
+  }
 }
 /* Work done in the background (a search, a draft, a send, a ChatGPT fallback) is announced as a notification too,
    not only written to the Activity tab. Actions the user just pressed already notify on their own. */
@@ -732,6 +791,10 @@ const timer = setInterval(() => {
 addEventListener('pagehide', () => clearInterval(timer), { once: true });
 
 onRedraw(render);
+subscribeProgressTasks(tasks => {
+  cachedProgressTasks = tasks;
+  syncPanelHud();
+});
 
 // Important milestones are broadcast by the service worker so the side panel and dashboard share one feedback model.
 chrome.runtime?.onMessage?.addListener((message: unknown, sender, sendResponse) => {
@@ -740,6 +803,9 @@ chrome.runtime?.onMessage?.addListener((message: unknown, sender, sendResponse) 
   if (payload.kind === 'ui.cleared') {
     announcedUpTo = -1;
     flags.dirty = false;
+    cachedCampaignView = null;
+    cachedProgressTasks = {};
+    void clearAllProgressTasks();
     try {
       localStorage.removeItem('rs-apply-setup-skipped');
     } catch {

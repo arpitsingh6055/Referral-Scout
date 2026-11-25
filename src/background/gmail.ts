@@ -36,6 +36,7 @@ import {
 } from '../shared/persistence/campaign-store';
 import { read, write } from '../storage/state';
 import { trustedSite } from '../validators/security';
+import { clearProgressTask, publishProgressTask } from '../shared/progress-store';
 
 const GMAIL_URL = 'https://mail.google.com/mail/u/0/';
 const INTENT_KEY = 'gmail-intent';
@@ -359,8 +360,35 @@ async function handle(req: GmailRequest): Promise<unknown> {
       return { address: await gmailIdentity(true) };
     case 'status':
       return { connected: await gmailConnected(), address: await read<string>(IDENTITY_KEY) };
-    case 'sync':
-      return syncOutcomes(req.sinceDays !== undefined ? { sinceDays: req.sinceDays } : {});
+    case 'sync': {
+      void publishProgressTask({
+        id: 'gmail_sync',
+        status: 'running',
+        percent: 38,
+        label: 'Scanning Gmail for recruiter replies…',
+        detail: 'Matching responses to applications & outreach',
+        targetRoute: 'activity',
+        etaSeconds: 10,
+      });
+      try {
+        const res = await syncOutcomes(req.sinceDays !== undefined ? { sinceDays: req.sinceDays } : {});
+        void clearProgressTask('gmail_sync');
+        return res;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Gmail sync could not complete.';
+        void publishProgressTask({
+          id: 'gmail_sync',
+          status: 'error',
+          percent: 100,
+          label: 'Gmail reply check interrupted',
+          detail: msg,
+          error: msg,
+          ctaLabel: 'Open Settings',
+          targetRoute: 'settings',
+        });
+        throw err;
+      }
+    }
     case 'draft':
       return draftMail({ to: req.to, subject: req.subject, body: req.body, confidence: req.confidence });
     case 'send': {

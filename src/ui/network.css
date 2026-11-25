@@ -107,7 +107,7 @@ body {
 #app {
   max-width: 560px;
   margin: 0 auto;
-  padding: 0 14px calc(var(--nav-h) + 28px);
+  padding: 0 14px calc(var(--nav-h) + 88px + env(safe-area-inset-bottom, 0px));
 }
 h1,
 h2,
@@ -2339,4 +2339,148 @@ button.pill:focus-visible {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
+}
+
+/* ---------- compact side-panel floating HUD (360-420px constrained) ---------- */
+.sp-hud {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--nav-h) + 10px + env(safe-area-inset-bottom, 0px));
+  z-index: 60;
+  width: min(532px, calc(100vw - 24px));
+  border-radius: 14px;
+  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+  transition:
+    transform var(--dur) var(--ease-out),
+    border-color var(--dur) var(--ease-out);
+}
+.sp-hud.is-ready {
+  border-color: color-mix(in srgb, var(--ok) 48%, var(--border-strong));
+}
+.sp-hud.is-error {
+  border-color: color-mix(in srgb, var(--bad) 55%, var(--border-strong));
+}
+.sp-hud.is-collapsed {
+  left: auto;
+  right: 12px;
+  transform: none;
+  width: auto;
+  border-radius: 999px;
+}
+.sp-hud-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+.sp-hud-ring-wrap {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.sp-hud-ring {
+  width: 30px;
+  height: 30px;
+  transform: rotate(-90deg);
+}
+.sp-hud-track {
+  fill: none;
+  stroke: var(--surface-2);
+  stroke-width: 2.8;
+}
+.sp-hud-fill {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 2.8;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 200ms var(--ease-out);
+}
+.sp-hud.is-ready .sp-hud-fill {
+  stroke: var(--ok);
+}
+.sp-hud.is-error .sp-hud-fill {
+  stroke: var(--bad);
+}
+.sp-hud-pct {
+  position: absolute;
+  font-size: 8.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.sp-hud-copy {
+  flex: 1;
+  min-width: 0;
+}
+.sp-hud-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sp-hud-detail {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sp-hud-min {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.sp-hud-min:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.sp-hud-chip {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 6px;
+  cursor: pointer;
+}
+.sp-hud-bar {
+  height: 3px;
+  background: var(--surface-2);
+}
+.sp-hud-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  transition: width 200ms var(--ease-out);
+}
+.sp-hud.is-ready .sp-hud-bar > span {
+  background: var(--ok);
+}
+.sp-hud.is-error .sp-hud-bar > span {
+  background: var(--bad);
 }

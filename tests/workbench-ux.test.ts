@@ -10,6 +10,8 @@ import { profile } from '../src/ui/workbench/screens/profile';
 import { confirmModal, field, pageSkeleton, setFieldError } from '../src/ui/workbench/dom';
 import { computeHudState, createFloatingHud } from '../src/ui/workbench/components/floating-hud';
 import { guidedReviewWorkspace, resetReviewSession } from '../src/ui/workbench/components/guided-review';
+import { clearAllProgressTasks, publishProgressTask, readProgressTasks, selectPrimaryProgressTask } from '../src/shared/progress-store';
+import { computePanelHudState, createSidePanelHud } from '../src/ui/side-panel/floating-hud';
 
 function makeCtx(overrides: Partial<Ctx> = {}): Ctx {
   const baseProfile = emptyProfile();
@@ -494,4 +496,60 @@ it('GuidedReviewWorkspace walks through live bridge, Before/After diffs, and 1-c
   ctx.workspace!.cv.imported = true;
   document.body.replaceChildren(guidedReviewWorkspace(ctx)!);
   expect(document.body.textContent).toContain('Step 3 of 3: Your Profile is Organized');
+});
+
+it('progress-store rehydrates chrome.storage.session and SidePanel HUD prioritizes active jobs', async () => {
+  await clearAllProgressTasks();
+  const backing: Record<string, unknown> = {};
+  vi.stubGlobal('chrome', {
+    storage: {
+      session: {
+        get: vi.fn(async (key: string) => ({ [key]: backing[key] })),
+        set: vi.fn(async (patch: Record<string, unknown>) => Object.assign(backing, patch)),
+        remove: vi.fn(async (key: string) => {
+          delete backing[key];
+        }),
+      },
+      onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
+    },
+  });
+
+  await publishProgressTask({
+    id: 'cv_ai_review',
+    status: 'running',
+    percent: 62,
+    label: 'ChatGPT is analysing your documents…',
+    etaSeconds: 18,
+    targetRoute: 'profile',
+  });
+  // Monotonic guard preserves higher %, preventing accidental regression on unordered events.
+  await publishProgressTask({
+    id: 'cv_ai_review',
+    status: 'running',
+    percent: 45,
+    label: 'ChatGPT is drafting your structured profile…',
+  });
+
+  const rehydrated = await readProgressTasks();
+  const primary = selectPrimaryProgressTask(rehydrated)!;
+  expect(primary.percent).toBeGreaterThanOrEqual(62);
+
+  const ctx = makeCtx();
+  const panelState = computePanelHudState({
+    network: null,
+    campaign: ctx.view,
+    persistedTasks: rehydrated,
+  })!;
+  expect(panelState.mode).toBe('processing');
+  expect(panelState.title).toContain('62%');
+
+  const host = document.createElement('div');
+  const spHud = createSidePanelHud(host);
+  spHud.update(panelState, vi.fn());
+  expect(host.querySelector('.sp-hud-pct')?.textContent).toBe('62%');
+  host.querySelector<HTMLButtonElement>('.sp-hud-min')!.click();
+  expect(host.querySelector('.sp-hud-chip')?.textContent).toContain('62%');
+
+  await clearAllProgressTasks();
+  expect(Object.keys(await readProgressTasks())).toHaveLength(0);
 });

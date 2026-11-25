@@ -8,6 +8,7 @@ import { resetNetworkRuntime } from './network';
 import { saveApiConfig } from './network-ai';
 import { stopRunnerAndWait } from './runner';
 import { applySurfaceBehaviour } from './surfaces';
+import { clearAllProgressTasks } from '../shared/progress-store';
 
 /** Stops active background work and atomically clears all local IndexedDB stores across every surface. */
 export async function clearAllLocalData(): Promise<void> {
@@ -16,6 +17,7 @@ export async function clearAllLocalData(): Promise<void> {
   await resetNetworkRuntime();
   await saveApiConfig(null);
   await clearDatabase();
+  await clearAllProgressTasks();
   await applySurfaceBehaviour().catch(() => undefined);
   try {
     void chrome.runtime?.sendMessage?.({ kind: 'ui.cleared' })?.catch?.(() => undefined);

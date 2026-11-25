@@ -9,6 +9,7 @@
  */
 import { buttonRole, sensitivity } from '../shared/fields';
 import type { FieldKind, FormField, PageSnapshot } from '../shared/apply';
+import { updatePageHud, type PageHudPayload } from './floating-hud';
 
 type Control = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLElement;
 interface Entry {
@@ -1515,3 +1516,17 @@ function nextJobCard(doc: Document, currentId: string): { el: HTMLElement; id: s
   return [...cards.slice(at + 1), ...cards.slice(0, Math.max(at, 0))].find(open) ?? null;
 }
 if (!scope.__referralScoutApply || scope.__referralScoutApply.version !== VERSION) scope.__referralScoutApply = create();
+
+const rsApplyScope = globalThis as typeof globalThis & { __referralScoutApplyHudBound?: boolean };
+if (!rsApplyScope.__referralScoutApplyHudBound) {
+  rsApplyScope.__referralScoutApplyHudBound = true;
+  try {
+    (globalThis as { chrome?: typeof chrome }).chrome?.runtime?.onMessage?.addListener((msg: unknown) => {
+      if (!msg || typeof msg !== 'object' || (msg as { kind?: unknown }).kind !== 'rs.applyHud') return false;
+      updatePageHud(msg as PageHudPayload);
+      return false;
+    });
+  } catch {
+    // Running inside isolated JSDOM test context without chrome.runtime.
+  }
+}
