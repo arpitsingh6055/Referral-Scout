@@ -712,7 +712,12 @@ html {
   display: flex;
   align-items: flex-start;
   gap: var(--sp-2);
-  overflow-x: auto;
+  row-gap: var(--sp-4);
+  /*
+   * These five stages used to sit on one line with `overflow-x: auto`, which hid the last of them behind a
+   * scrollbar inside the card. They wrap now, so every stage is visible at any width.
+   */
+  flex-wrap: wrap;
   padding-bottom: var(--sp-1);
 }
 
@@ -720,8 +725,17 @@ html {
   display: flex;
   align-items: flex-start;
   gap: var(--sp-3);
-  /* `flex: none` pushed this 125px past the panel edge at 360px. It may shrink; its text ellipsises. */
-  flex: 0 1 auto;
+  /*
+   * Letting a stage shrink made its label overflow its own box and run under the connector beside it, which
+   * drew a 2px line straight through the word — it read as a strikethrough on a completed step. A stage keeps
+   * its content width and the row wraps instead.
+   */
+  flex: 0 0 auto;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.stage > * {
   min-width: 0;
 }
 
@@ -766,9 +780,24 @@ html {
   height: 2px;
   width: 44px;
   background: var(--border-subtle);
+  /* Level with the middle of the 32px dot beside it, never with the label's text. */
   margin-top: 15px;
-  flex: none;
+  flex: 0 1 44px;
+  min-width: 12px;
   border-radius: 2px;
+}
+
+/* Narrow enough that the stages read down the card, where a connector between them means nothing. */
+@media (max-width: 820px) {
+  .stages {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-3);
+  }
+
+  .stage-join {
+    display: none;
+  }
 }
 
 .stage-join.done {
@@ -2363,10 +2392,14 @@ details .inline input[type='checkbox'] {
   width: min(500px, calc(100vw - 32px));
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-strong);
-  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  /*
+   * Opaque. At 88% the card underneath showed through: two lines of unrelated text occupied the same pixels,
+   * and on a dark canvas the blur was not enough to separate them.
+   */
+  background: var(--bg-surface);
   box-shadow: var(--shadow-float);
+  /* The progress bar drawn along the bottom edge used to run past the rounded corner. */
+  overflow: hidden;
   overflow: hidden;
   transition:
     transform var(--dur) var(--ease-out),

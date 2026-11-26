@@ -2385,9 +2385,8 @@ button.pill:focus-visible {
   width: min(360px, calc(100vw - 24px));
   border-radius: 14px;
   border: 1px solid var(--border-strong);
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  /* Opaque: at 88% the panel content read through the HUD's own text. */
+  background: var(--surface);
   box-shadow: var(--shadow-float);
   overflow: hidden;
   transition:

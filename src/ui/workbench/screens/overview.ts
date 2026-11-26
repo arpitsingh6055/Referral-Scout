@@ -470,7 +470,9 @@ export const overviewHeader = (ctx: Ctx): { title: string; sub: string; status?:
   const shortlisted = discovered.filter(j => j.judgement === 'shortlisted').length;
   return {
     title: 'Overview',
-    sub: `${c.name} · ${c.targetRoles.join(' · ')} — ${c.location}`,
+    // The breadcrumb one line above already names the campaign; repeating it here printed it three times
+    // within 80px, beside a second, different-sounding name for the same thing.
+    sub: `${c.targetRoles.join(' · ')} — ${c.location}`,
     status: statusPill(c.status, ctx.view.inboxCounts.open),
     actions: [
       running
