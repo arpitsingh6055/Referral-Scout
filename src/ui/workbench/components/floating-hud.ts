@@ -342,6 +342,15 @@ export function createFloatingHud(host: HTMLElement): FloatingHudController {
   element.hidden = true;
   host.append(element);
 
+  // Auto-collapse when the user focuses a form control so the HUD never obscures an input they are editing.
+  host.ownerDocument?.addEventListener('focusin', e => {
+    const t = e.target as Element | null;
+    if (!collapsed && t && t.closest('.page') && t.matches('input, textarea, select')) {
+      collapsed = true;
+      paint();
+    }
+  });
+
   const paint = (): void => {
     if (!lastState) {
       element.hidden = true;

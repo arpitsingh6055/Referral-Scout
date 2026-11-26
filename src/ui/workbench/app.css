@@ -295,11 +295,11 @@
  */
 html {
   scroll-padding-top: 62px;
-  scroll-padding-bottom: 124px;
+  scroll-padding-bottom: 156px;
 }
 
 .page {
-  padding: var(--sp-6) var(--sp-8) calc(120px + env(safe-area-inset-bottom, 0px));
+  padding: var(--sp-6) var(--sp-8) calc(148px + env(safe-area-inset-bottom, 0px));
   width: 100%;
   max-width: 1360px;
 }
@@ -824,6 +824,7 @@ html {
 
 .row-queue {
   grid-template-columns: minmax(0, 2.4fr) 110px minmax(0, 1.2fr) 124px auto;
+  align-items: center;
 }
 
 /*
@@ -986,18 +987,26 @@ html {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   padding: var(--sp-4);
-  display: grid;
-  grid-template-columns: 140px minmax(0, 1fr) auto;
-  gap: var(--sp-4);
-  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  align-items: stretch;
   margin-bottom: var(--sp-3);
   background: var(--bg-surface);
+}
+
+.inbox-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
 }
 
 .inbox-item > .note,
 .inbox-item > .note-amber,
 .inbox-item > .note-violet {
-  grid-column: 1 / -1;
+  width: 100%;
 }
 
 .inbox-item .note {
@@ -1005,8 +1014,8 @@ html {
 }
 
 .inbox-item.urgent {
-  border-color: color-mix(in srgb, var(--destructive) 45%, transparent);
-  background: var(--destructive-tint);
+  border-color: color-mix(in srgb, var(--warning) 48%, transparent);
+  background: color-mix(in srgb, var(--warning-tint) 65%, var(--bg-surface));
 }
 
 .inbox-q {
@@ -1032,6 +1041,11 @@ html {
   display: flex;
   gap: var(--sp-2);
   align-items: center;
+  flex-wrap: wrap;
+}
+
+.inbox-answer .input {
+  flex: 1 1 240px;
 }
 
 /* ---------- standardized form controls ---------- */
@@ -1254,11 +1268,34 @@ details .inline input[type='checkbox'] {
 
 .rule-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(220px, 1fr) auto;
   gap: var(--sp-3);
   align-items: center;
   padding: var(--sp-3) 0;
   border-top: 1px solid var(--border-subtle);
+}
+
+.status-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+
+.status-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  .status-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /*
@@ -2385,11 +2422,12 @@ details .inline input[type='checkbox'] {
 /* ---------- persistent floating completion HUD ---------- */
 .floating-hud {
   position: fixed;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 24px;
+  left: auto;
+  transform: none;
   bottom: max(20px, env(safe-area-inset-bottom, 0px));
   z-index: 50;
-  width: min(500px, calc(100vw - 32px));
+  width: min(390px, calc(100vw - 48px));
   border-radius: var(--radius-lg);
   border: 1px solid var(--border-strong);
   /*
@@ -2400,11 +2438,18 @@ details .inline input[type='checkbox'] {
   box-shadow: var(--shadow-float);
   /* The progress bar drawn along the bottom edge used to run past the rounded corner. */
   overflow: hidden;
-  overflow: hidden;
   transition:
     transform var(--dur) var(--ease-out),
     border-color var(--dur) var(--ease-out),
     box-shadow var(--dur) var(--ease-out);
+}
+
+@media (max-width: 760px) {
+  .floating-hud {
+    right: 16px;
+    left: 16px;
+    width: auto;
+  }
 }
 
 .floating-hud.is-ready {

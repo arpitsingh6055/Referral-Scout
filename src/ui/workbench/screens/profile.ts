@@ -49,7 +49,7 @@ const sourceLabel: Record<string, string> = {
 const provenance = (p: { source: string; verifiedAt?: number }, approved = false): HTMLElement =>
   p.verifiedAt || approved
     ? pill(p.source === 'user' ? 'You entered this' : 'Verified', 'green')
-    : pill(sourceLabel[p.source] ?? p.source, 'amber');
+    : pill(sourceLabel[p.source] ?? p.source, p.source === 'model' ? 'amber' : 'grey');
 
 /* ---------- education ---------- */
 function educationForm(record: Partial<EducationRecord>, ctx: Ctx): HTMLElement {
@@ -716,17 +716,13 @@ export const profileHeader = (ctx: Ctx): { title: string; sub: string; status?: 
   actions.push(button('Answer Bank', 'btn', () => ctx.go('answers')));
 
   return {
-    title: 'Candidate profile',
+    title: 'Profile & Answers',
     sub: isProfilePendingReview(reviewStatus)
       ? 'Quick 10s review — verify extracted details below, then click Approve Profile & Continue →.'
       : isProfileApproved(reviewStatus)
         ? 'Approved & ready for matching and autofill. You can re-open review or edit records anytime.'
         : 'Review the information Referral Scout uses before it matches jobs or prepares applications.',
-    ...(isProfilePendingReview(reviewStatus)
-      ? { status: pill('Pending Review', 'amber') }
-      : isProfileApproved(reviewStatus)
-        ? { status: pill('Approved & Ready ✓', 'green') }
-        : {}),
+    ...(isProfilePendingReview(reviewStatus) ? { status: pill('Pending Review', 'amber') } : {}),
     actions,
   };
 };

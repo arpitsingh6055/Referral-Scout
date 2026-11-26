@@ -300,7 +300,7 @@ export function overview(ctx: Ctx): HTMLElement {
         'Shortlisted jobs',
         shortlistedJobsCount || counts.total,
         shortlistedJobsCount
-          ? `${strongJobsCount} strong · ${discoveredJobs.length} discovered`
+          ? `${strongJobsCount} strong ${strongJobsCount === 1 ? 'match' : 'matches'}`
           : counts.queued
             ? `${counts.queued} waiting in the queue`
             : `${discoveredJobs.length} discovered`,
@@ -322,23 +322,63 @@ export function overview(ctx: Ctx): HTMLElement {
     ]),
   );
 
-  // Stage progress strip
-  const strip = div('stages');
-  stages.forEach((s, i) => {
-    if (i) strip.append(div(s.done ? 'stage-join done' : 'stage-join'));
-    strip.append(
-      div('stage', [
-        div(s.done ? 'stage-dot done' : 'stage-dot', [
-          icon(s.done ? 'check' : ['discover', 'qualify', 'apply', 'referral', 'outcomes'][i] === 'apply' ? 'list' : 'target', 17),
-        ]),
-        div('', [text('div', 'stage-name', s.label), text('div', 'stage-detail', s.detail)]),
+  // Three independent pipeline status cards (discovery, applications, referrals advance independently)
+  const discoveryDone = discoveredJobs.length > 0 || stages[0]?.done;
+  const applyDone = counts.submitted > 0;
+  const applyActive = counts.running > 0 || counts.queued > 0;
+  const referralDone = !!stages[3]?.done;
+  const referralActive = peopleIdentified > 0 || (ctx.view.outreach?.length ?? 0) > 0;
+
+  const statusCards = div('status-cards', [
+    div('status-card', [
+      div('between', [
+        text('span', 'cell-strong', 'Discovery'),
+        pill(discoveryDone ? 'Active' : 'Not started', discoveryDone ? 'green' : 'grey'),
       ]),
-    );
-  });
+      text(
+        'div',
+        'cell-muted',
+        discoveredJobs.length
+          ? `${discoveredJobs.length} found · ${shortlistedJobsCount} shortlisted`
+          : 'Search LinkedIn for matching roles',
+      ),
+      button('View jobs →', 'btn-link', () => ctx.go('jobs')),
+    ]),
+    div('status-card', [
+      div('between', [
+        text('span', 'cell-strong', 'Applications'),
+        pill(applyDone ? 'Submitted' : applyActive ? 'In progress' : 'Not started', applyDone ? 'green' : applyActive ? 'violet' : 'grey'),
+      ]),
+      text(
+        'div',
+        'cell-muted',
+        counts.submitted
+          ? `${counts.submitted} submitted · ${counts.queued + counts.running} in queue`
+          : counts.queued + counts.running
+            ? `${counts.queued + counts.running} queued to fill`
+            : 'No applications queued yet',
+      ),
+      button('Open pipeline →', 'btn-link', () => ctx.go('applications')),
+    ]),
+    div('status-card', [
+      div('between', [
+        text('span', 'cell-strong', 'Referrals'),
+        pill(referralDone ? 'Sent' : referralActive ? 'Ready' : 'Not started', referralDone ? 'green' : referralActive ? 'blue' : 'grey'),
+      ]),
+      text(
+        'div',
+        'cell-muted',
+        peopleIdentified
+          ? `${peopleIdentified} contacts${stages[3]?.detail ? ` · ${stages[3].detail}` : ''}`
+          : 'Find people who can refer you',
+      ),
+      button('View people →', 'btn-link', () => ctx.go('people')),
+    ]),
+  ]);
   page.append(
-    card('Campaign progress', {
-      sub: 'Job discovery, applications, and referrals advance independently.',
-      body: [strip],
+    card('Tracks', {
+      sub: 'Discovery, applications, and referrals advance independently.',
+      body: [statusCards],
     }),
   );
 

@@ -18,7 +18,7 @@ const TONE: Record<string, 'violet' | 'green' | 'amber' | 'red' | 'grey' | 'blue
   auth: 'amber',
   security: 'amber',
   'page-failure': 'red',
-  'submission-uncertain': 'red',
+  'submission-uncertain': 'amber',
   'profile-gap': 'grey',
 };
 
@@ -84,7 +84,7 @@ function itemCard(item: InboxRow, ctx: Ctx): HTMLElement {
     action.append(box, button('Save', 'btn btn-primary btn-sm', submitAnswer));
   } else if (item.resolution === 'confirm') {
     body.append(
-      div('note note-amber', [
+      div('note', [
         text(
           'p',
           '',
@@ -103,7 +103,7 @@ function itemCard(item: InboxRow, ctx: Ctx): HTMLElement {
     );
   } else if (item.resolution === 'open-tab') {
     body.append(
-      div('note note-amber', [
+      div('note', [
         text(
           'p',
           '',
@@ -141,7 +141,11 @@ function itemCard(item: InboxRow, ctx: Ctx): HTMLElement {
     );
   }
 
-  return div(urgent ? 'inbox-item urgent' : 'inbox-item', [div('', [pill(item.kindLabel, TONE[item.kind] ?? 'grey')]), body, action]);
+  return div(urgent ? 'inbox-item urgent' : 'inbox-item', [
+    div('inbox-item-head', [pill(item.kindLabel, TONE[item.kind] ?? 'grey')]),
+    body,
+    action,
+  ]);
 }
 
 export function needsYou(ctx: Ctx): HTMLElement {
@@ -226,8 +230,8 @@ export function needsYou(ctx: Ctx): HTMLElement {
 }
 
 export const needsYouHeader = (ctx: Ctx): { title: string; sub: string; status?: HTMLElement } => ({
-  title: 'Needs you & Answer Bank',
-  sub: 'Answer a recurring fact once, resolve the affected applications and keep the queue moving.',
+  title: 'Needs you',
+  sub: 'Answer a recurring fact once, resolve waiting applications, and manage your Answer Bank.',
   ...(ctx.view.inboxCounts.blocked
     ? { status: pill(`${plural(ctx.view.inboxCounts.blocked, 'application')} paused for you`, 'amber') }
     : {}),

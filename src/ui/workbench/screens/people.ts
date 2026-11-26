@@ -78,7 +78,7 @@ function row(contact: ContactRow, ctx: Ctx, pinnedSet: Set<string>): HTMLElement
             ctx.run({ kind: 'campaign', action: 'pinCompany', company: contact.company!, pinned: !companyPinned }),
           )
         : null,
-      copyLinkButton(contact.profileUrl, 'Copy'),
+      copyLinkButton(contact.profileUrl || contact.email, 'Copy'),
       contact.suppressed
         ? pill('Suppressed', 'red')
         : button('Never contact', 'btn btn-sm btn-ghost', async () => {
@@ -255,7 +255,7 @@ export function people(ctx: Ctx): HTMLElement {
               'The same person found at two companies is one record, so they are never approached twice as though they were strangers.',
             ),
           ]),
-          div('note note-amber', [
+          div('note', [
             text(
               'p',
               '',

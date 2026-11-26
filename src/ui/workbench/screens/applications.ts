@@ -92,7 +92,7 @@ function rowFor(row: QueueRow, ctx: Ctx): HTMLElement {
     div('row-title', [
       text('div', 'row-company', row.company),
       externalLink(row.title, row.url, 'cell-strong cell-link'),
-      Object.assign(text('div', 'cell-muted', row.note || row.stateLabel), { title: row.note || row.stateLabel }),
+      row.note ? Object.assign(text('div', 'cell-muted', row.note), { title: row.note }) : null,
     ]),
     div('col-hide', [pill(row.ats || row.source || 'direct', 'grey')]),
     div('', [pill(row.stateLabel, TONE[row.state] ?? 'grey')]),
@@ -167,8 +167,8 @@ export function applications(ctx: Ctx): HTMLElement {
   page.append(
     div('grid metrics', [
       metric('list', 'Ready to process', counts.queued, 'in the next batch'),
-      metric('refresh', 'In progress', counts.running, `${plural(workers.limit, 'worker slot')} configured`),
-      metric('alert', 'Needs you', counts.needsYou, counts.needsYou ? 'exceptions waiting' : 'nothing waiting'),
+      metric('refresh', 'In progress', counts.running, `${workers.limit} running at a time`),
+      metric('alert', 'Needs you', counts.needsYou, counts.needsYou ? 'waiting on you' : 'nothing waiting'),
       metric(
         'check',
         'Submitted',
@@ -240,13 +240,19 @@ export function applications(ctx: Ctx): HTMLElement {
 
   const running = campaign.status === 'running' || campaign.status === 'stopping';
   const side = div('stack', [
-    card('Queue health', {
+    card('Queue status', {
       body: [
         div('spread', [
-          text('div', 'rule-name', 'Active workers'),
+          text('div', 'rule-name', 'Parallel applications'),
           pill(`${workers.active} of ${workers.limit}`, workers.active ? 'green' : 'grey'),
         ]),
-        div('', [text('div', 'cell-muted', campaign.statusNote || (running ? 'Claiming eligible jobs.' : 'Not claiming new jobs.'))]),
+        div('', [
+          text(
+            'div',
+            'cell-muted',
+            campaign.statusNote || (running ? 'Processing queued applications.' : 'Paused — not starting new applications.'),
+          ),
+        ]),
         div('inline', [
           running
             ? button('Pause queue', 'btn', () => ctx.run({ kind: 'campaign', action: 'control', control: 'pause' }))
@@ -267,7 +273,7 @@ export function applications(ctx: Ctx): HTMLElement {
             'When one application needs you, the others carry on. Pausing stops new jobs being claimed; work already on a form stops at its next safe point.',
           ),
         ]),
-        div('note note-amber', [
+        div('note', [
           text(
             'p',
             '',
@@ -283,6 +289,6 @@ export function applications(ctx: Ctx): HTMLElement {
 }
 
 export const applicationsHeader = (): { title: string; sub: string } => ({
-  title: 'Application queue',
-  sub: 'Shortlisted jobs move step-by-step from queue to filled application.',
+  title: 'Pipeline',
+  sub: 'Shortlisted jobs move step-by-step from queue to submitted application.',
 });

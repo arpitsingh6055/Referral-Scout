@@ -1402,3 +1402,56 @@ it('content floating-hud expands Shadow-DOM Quick-Control Drawer immediately on 
   toggleQuickControlDrawer(false);
   expect(host?.dataset.rsDrawerOpen).toBe('false');
 });
+
+it('aligns screen titles with nav labels, replaces linear stepper with independent track cards, removes worker jargon, and auto-collapses HUD on input focus', async () => {
+  const { overview } = await import('../src/ui/workbench/screens/overview');
+  const { applications, applicationsHeader } = await import('../src/ui/workbench/screens/applications');
+  const { needsYou, needsYouHeader } = await import('../src/ui/workbench/screens/needs-you');
+  const { profileHeader } = await import('../src/ui/workbench/screens/profile');
+  const { createFloatingHud } = await import('../src/ui/workbench/components/floating-hud');
+
+  const ctx = makeCtx();
+  ctx.view.counts.total = 1;
+  expect(applicationsHeader().title).toBe('Pipeline');
+  expect(needsYouHeader(ctx).title).toBe('Needs you');
+  expect(profileHeader(ctx).title).toBe('Profile & Answers');
+
+  const ov = overview(ctx);
+  expect(ov.querySelectorAll('.status-card').length).toBe(3);
+  expect(ov.querySelector('.stages')).toBeNull();
+
+  const appEl = applications(ctx);
+  expect(appEl.textContent).not.toMatch(/worker slot|Active workers|Claiming eligible jobs/i);
+
+  ctx.view.inbox = [
+    {
+      id: 'ex-1',
+      kind: 'submission-uncertain',
+      kindLabel: 'Needs confirmation',
+      prompt: 'Did your application to Acme go through?',
+      resolution: 'confirm',
+      createdAt: 1,
+      affected: [{ applicationId: 'a1', company: 'Acme', title: 'PM Intern' }],
+    },
+  ];
+  const nyEl = needsYou(ctx);
+  expect(nyEl.querySelector('.inbox-item-head .pill')?.className).toContain('pill-amber');
+  expect(nyEl.querySelector('.inbox-item .note-amber')).toBeNull();
+
+  document.body.innerHTML = '<div class="page"><input id="city-input" type="text" /></div><div id="hud-host"></div>';
+  const hud = createFloatingHud(document.getElementById('hud-host')!);
+  hud.update(
+    {
+      mode: 'processing',
+      percent: 42,
+      title: 'Filling application',
+      detail: 'Acme · PM Intern',
+      ctaLabel: 'View',
+      targetRoute: 'overview',
+    },
+    () => undefined,
+  );
+  expect(document.querySelector('.floating-hud')?.classList.contains('is-collapsed')).toBe(false);
+  document.getElementById('city-input')!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+  expect(document.querySelector('.floating-hud')?.classList.contains('is-collapsed')).toBe(true);
+});
