@@ -359,15 +359,40 @@ function rail(ctx: Ctx): { aside: HTMLElement; backdrop: HTMLElement } {
                   ? 'Paused'
                   : c.status === 'completed'
                     ? 'Completed'
-                    : 'Idle',
+                    : 'Nothing running',
           ]),
           text('div', 'rail-foot-name', c.name),
           text(
             'div',
             'rail-foot-meta',
-            `${c.location} · ${c.employmentType} · ${c.sources.length} source${c.sources.length === 1 ? '' : 's'}`,
+            // `employmentType` is stored as 'any' when the person did not narrow it; the raw enum meant nothing
+            // on screen, so that case is left out rather than printed.
+            [
+              c.location,
+              c.employmentType === 'any' ? '' : c.employmentType,
+              `${c.sources.length} source${c.sources.length === 1 ? '' : 's'}`,
+            ]
+              .filter(Boolean)
+              .join(' · '),
           ),
-          div('rail-bar', [el('span', { style: `width:${done}%` })]),
+          // A bar sitting at 0% with no label says nothing the card does not already say, and reads as broken.
+          // It appears once there is something to show, and then says what it is measuring.
+          ...(done > 0
+            ? [
+                el(
+                  'div',
+                  {
+                    class: 'rail-bar',
+                    role: 'progressbar',
+                    'aria-valuenow': String(done),
+                    'aria-valuemin': '0',
+                    'aria-valuemax': '100',
+                    'aria-label': `${done}% of this campaign's applications submitted`,
+                  },
+                  [el('span', { style: `width:${done}%` })],
+                ),
+              ]
+            : []),
         ])
       : div('rail-foot', [
           text('div', 'rail-foot-label', 'Setup in progress'),

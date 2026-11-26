@@ -178,6 +178,9 @@ export interface StageProgress {
  * pipelines run independently: a referral figure says nothing about how far the applications have got, and one bar
  * covering both would imply the queue is waiting for outreach when it is not.
  */
+/** "1 replies" reads as a bug to the person looking at it. One of anything takes the singular. */
+const count = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+
 export function stages(input: {
   found: number;
   qualified: number;
@@ -194,16 +197,23 @@ export function stages(input: {
       label: 'Apply queue',
       value: input.applied,
       of: input.queued,
-      detail: `${input.applied} / ${input.queued}`,
+      // "0 / 0" reads as something broken rather than as nothing queued yet.
+      detail: input.queued === 0 ? 'nothing queued' : `${input.applied} / ${input.queued}`,
       done: input.queued > 0 && input.applied >= input.queued,
     },
     {
       key: 'referral',
       label: 'Referral outreach',
       value: input.contacts,
-      detail: `${input.contacts} identified`,
+      detail: input.contacts === 0 ? 'nobody yet' : `${input.contacts} identified`,
       done: input.contacts > 0,
     },
-    { key: 'outcomes', label: 'Track outcomes', value: input.replies, detail: `${input.replies} replies`, done: input.replies > 0 },
+    {
+      key: 'outcomes',
+      label: 'Track outcomes',
+      value: input.replies,
+      detail: input.replies === 0 ? 'no replies yet' : count(input.replies, 'reply', 'replies'),
+      done: input.replies > 0,
+    },
   ];
 }
