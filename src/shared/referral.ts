@@ -283,18 +283,149 @@ export function rankReferral(
   };
 }
 
+const ACRONYMS = new Set([
+  'PM',
+  'APM',
+  'UI',
+  'UX',
+  'AI',
+  'ML',
+  'SDE',
+  'QA',
+  'HR',
+  'HRBP',
+  'VP',
+  'B2B',
+  'B2C',
+  'SAAS',
+  'SQL',
+  'IT',
+  'IOS',
+  'CFO',
+  'CTO',
+  'CEO',
+  'COO',
+  'CRM',
+  'ERP',
+  'FP&A',
+]);
+
+/**
+ * Strips scraped job-board noise from a raw job title so outreach notes sound human:
+ * removes parentheticals `(Paid - India/Remote)`, brackets `[Hybrid]`, Req IDs, trailing
+ * location/work-mode/employment-type qualifiers, and normalizes ALL-CAPS yelling.
+ */
+export function humanizeJobTitle(raw: string): string {
+  let s = (raw ?? '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+
+  // Remove parenthetical and bracketed metadata (e.g., "(Paid - India/Remote)", "(Growth, Recruiting & Ops)", "[Hybrid]").
+  s = s.replace(/\s*\([^)]*\)/g, ' ').replace(/\s*\[[^\]]*\]/g, ' ');
+
+  // Remove Req/Job IDs.
+  s = s.replace(/\b(?:req|requisition|job\s*id|id)\s*[:#-]?\s*[a-z0-9-]{3,}\b/gi, ' ').replace(/#\d{3,}\b/g, ' ');
+
+  // Remove trailing qualifiers after -, –, —, |, or / (e.g., "- Full Time", "| Core Payments", "- Bengaluru 2026").
+  s = s.replace(
+    /\s*[-–—|]\s*(?:remote|hybrid|on-?site|onsite|paid|unpaid|stipend|india|bengaluru|bangalore|mumbai|delhi|ncr|gurgaon|gurugram|hyderabad|pune|chennai|full[- ]?time|part[- ]?time|contract|immediate(?:\s+joiner)?|urgent|hiring|202\d|core\s+.+|ai\/ml\s+.+)\b.*$/i,
+    '',
+  );
+
+  // Strip trailing standalone pipe/dash fragments if anything was left dangling.
+  s = s
+    .replace(/\s*[-–—|/]+\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Normalize ALL-CAPS titles into Title Case while preserving acronyms.
+  const letters = s.replace(/[^a-zA-Z]/g, '');
+  if (letters.length >= 4 && letters === letters.toUpperCase()) {
+    s = s
+      .toLowerCase()
+      .split(' ')
+      .map(w => {
+        const upper = w.toUpperCase();
+        if (ACRONYMS.has(upper)) return upper;
+        return w.charAt(0).toUpperCase() + w.slice(1);
+      })
+      .join(' ');
+  }
+
+  // If still excessively long (> 44 chars), condense at a separator or word boundary.
+  if (s.length > 44) {
+    const parts = s.split(/\s*[-–—|]\s*/);
+    if (parts[0] && parts[0].length >= 8 && parts[0].length <= 44) {
+      s = parts[0].trim();
+    } else {
+      const cut = s
+        .slice(0, 44)
+        .replace(/\s+\S*$/, '')
+        .trim();
+      if (cut.length >= 8) s = cut;
+    }
+  }
+
+  return s || raw.trim();
+}
+
+/**
+ * Strips accelerator batches `(YC W22)`, legal suffixes (`Pvt. Ltd.`, `Private Limited`, `Inc.`, `LLC`),
+ * and redundant corporate noise from scraped company names.
+ */
+export function humanizeCompanyName(raw: string): string {
+  let s = (raw ?? '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+
+  // Remove parenthetical accelerator batches or locations, e.g. "(YC W22)", "(Techstars '23)", "(India)".
+  s = s.replace(/\s*\([^)]*\)/g, ' ').replace(/\s*\[[^\]]*\]/g, ' ');
+
+  // Remove trailing legal suffixes iteratively.
+  s = s
+    .replace(
+      /[,.]?\s*\b(?:private\s+limited|pvt\.?\s*ltd\.?|limited|ltd\.?|inc\.?|incorporated|llc|llp|corp\.?|corporation|gmbh|technologies|solutions|services)\b\.?$/gi,
+      '',
+    )
+    .replace(
+      /[,.]?\s*\b(?:private\s+limited|pvt\.?\s*ltd\.?|limited|ltd\.?|inc\.?|incorporated|llc|llp|corp\.?|corporation|gmbh|technologies|solutions|services)\b\.?$/gi,
+      '',
+    );
+
+  return (
+    s
+      .replace(/[,.\s]+$/, '')
+      .replace(/\s+/g, ' ')
+      .trim() || raw.trim()
+  );
+}
+
 const first = (name: string): string => name.split(/\s+/)[0] || name;
-const role = (job: Pick<ReferralJob, 'title' | 'company'>): string => `the ${job.title} role at ${job.company}`;
+const role = (job: Pick<ReferralJob, 'title' | 'company'>): string =>
+  `the ${humanizeJobTitle(job.title)} role at ${humanizeCompanyName(job.company)}`;
 /** "I’ve applied for" once the application is in (a referral then attaches to a real application), else "I’m applying for". */
 const applying = (job: { applied?: number | undefined }): string => (job.applied ? 'I’ve applied for' : 'I’m applying for');
-/** Connection note for someone not yet connected. Within LinkedIn's 200 characters; shortened by the caller if a title is very long. */
+/** Connection note for someone not yet connected. Fits within LinkedIn's 200-char (free) or 300-char (Premium) limit without mid-word truncation. */
 export function referralNote(
   job: Pick<ReferralJob, 'title' | 'company'> & { applied?: number | undefined },
   person: { name: string; category?: string | undefined },
   me: string,
+  limit = 200,
 ): string {
   const ask = person.category === 'recruiter' ? 'Would love to connect about it.' : 'Would love to connect and hear your view of the team.';
-  return `Hi ${first(person.name)}, I’m ${first(me)}. ${applying(job)} ${role(job)}. ${ask}`;
+  const full = `Hi ${first(person.name)}, I’m ${first(me)}. ${applying(job)} ${role(job)}. ${ask}`;
+  if (full.length <= limit) return full;
+
+  const shortAsk = 'Would love to connect.';
+  const compact = `Hi ${first(person.name)}, I’m ${first(me)}. ${applying(job)} ${role(job)}. ${shortAsk}`;
+  if (compact.length <= limit) return compact;
+
+  const bare = `Hi ${first(person.name)}, I’m ${first(me)}. ${applying(job)} ${role(job)}.`;
+  if (bare.length <= limit) return bare;
+
+  const cut = bare
+    .slice(0, Math.max(0, limit - 1))
+    .replace(/\s+\S*$/, '')
+    .trim();
+  return cut ? `${cut}…` : bare.slice(0, limit);
 }
 /** Message to someone who is, or has just become, a connection. `accepted` adds the thank-you. */
 export function referralAsk(
@@ -355,8 +486,8 @@ export function replyPrompt(input: {
     'Rules: 30 to 90 words. Plain, warm, specific. Match their tone and language. No flattery, no list of achievements, no invented facts, no emojis unless they used them, no phone numbers or email addresses. Do not paste the CV; the seeker attaches it themselves. Use the job link only if one is given below.',
     '',
     `THE SEEKER: ${JSON.stringify({ name: input.me, lookingFor: input.roles, about: input.about.slice(0, 1200) })}`,
-    `THE OTHER PERSON: ${JSON.stringify({ name: input.person.name, headline: input.person.headline, ...(input.person.companyName ? { company: input.person.companyName } : {}) })}`,
-    `THE JOB: ${input.job ? JSON.stringify({ title: input.job.title, company: input.job.company, link: input.job.url }) : 'no specific job on record'}`,
+    `THE OTHER PERSON: ${JSON.stringify({ name: input.person.name, headline: input.person.headline, ...(input.person.companyName ? { company: humanizeCompanyName(input.person.companyName) } : {}) })}`,
+    `THE JOB: ${input.job ? JSON.stringify({ title: humanizeJobTitle(input.job.title), company: humanizeCompanyName(input.job.company), link: input.job.url }) : 'no specific job on record'}`,
     `THE CONVERSATION SO FAR, oldest first: ${JSON.stringify(input.messages.map(m => ({ from: m.mine ? input.me : input.person.name, text: m.text })))}`,
     '',
     'Reply with ONLY one JSON object: {"reply": the message text}.',

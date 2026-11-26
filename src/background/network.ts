@@ -27,6 +27,8 @@ import { companyFromCurrent } from '../parsers/network';
 import { read, write, mutate } from '../storage/state';
 import { acquire, release, renew } from './lease';
 import {
+  humanizeCompanyName,
+  humanizeJobTitle,
   referralAsk,
   referralNote,
   referralPlan,
@@ -1353,8 +1355,8 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
     ? {
         firstName: p.name.split(/\s+/)[0] || p.name,
         myFirstName: me.split(/\s+/)[0] || me,
-        title: job.title,
-        company: job.company,
+        title: humanizeJobTitle(job.title),
+        company: humanizeCompanyName(job.company),
         jobUrl: job.url,
       }
     : undefined;
