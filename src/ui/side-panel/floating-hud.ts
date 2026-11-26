@@ -12,7 +12,16 @@ import { selectPrimaryProgressTask, type ProcessId, type ProgressTask } from '..
 
 export interface PanelHudAction {
   kind:
-    'open-dashboard' | 'focus-tab' | 'tab-home-turn' | 'tab-people-needs' | 'tab-referrals' | 'tab-saved' | 'resume' | 'retry-ai' | 'noop';
+    | 'open-dashboard'
+    | 'focus-tab'
+    | 'retry-apply'
+    | 'tab-home-turn'
+    | 'tab-people-needs'
+    | 'tab-referrals'
+    | 'tab-saved'
+    | 'resume'
+    | 'retry-ai'
+    | 'noop';
   route?: string;
   tabId?: number;
   url?: string;
@@ -54,17 +63,24 @@ export function computePanelHudState(input: {
       ctaLabel: needsTabFocus
         ? (persisted.ctaLabel ?? 'Inspect Tab →')
         : (persisted.ctaLabel ?? (persisted.status === 'error' ? 'Retry' : 'Open')),
-      action: needsTabFocus
-        ? {
-            kind: 'focus-tab',
-            ...(persisted.tabId !== undefined ? { tabId: persisted.tabId } : {}),
-            ...(persisted.tabUrl ? { url: persisted.tabUrl } : {}),
-          }
-        : persisted.status === 'error' && persisted.id === 'cv_ai_review'
-          ? { kind: 'open-dashboard', route: 'profile' }
-          : persisted.targetRoute
-            ? { kind: 'open-dashboard', route: persisted.targetRoute }
-            : { kind: 'tab-home-turn' },
+      action:
+        persisted.id === 'apply_autofill' && persisted.status === 'error'
+          ? {
+              kind: 'retry-apply',
+              ...(persisted.tabId !== undefined ? { tabId: persisted.tabId } : {}),
+              ...(persisted.tabUrl ? { url: persisted.tabUrl } : {}),
+            }
+          : needsTabFocus
+            ? {
+                kind: 'focus-tab',
+                ...(persisted.tabId !== undefined ? { tabId: persisted.tabId } : {}),
+                ...(persisted.tabUrl ? { url: persisted.tabUrl } : {}),
+              }
+            : persisted.status === 'error' && persisted.id === 'cv_ai_review'
+              ? { kind: 'open-dashboard', route: 'profile' }
+              : persisted.targetRoute
+                ? { kind: 'open-dashboard', route: persisted.targetRoute }
+                : { kind: 'tab-home-turn' },
     };
   }
 

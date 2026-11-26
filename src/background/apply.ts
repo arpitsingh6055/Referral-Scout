@@ -104,7 +104,9 @@ export interface ApplySession {
   /** On a company's site reached from LinkedIn: the LinkedIn tab the application started in. */
   from?: number;
   /** On LinkedIn: the tab where the company's own application is being filled. */
-  handoff?: { tabId: number; host: string } | undefined;
+  handoff?: { tabId: number; host: string; url?: string | undefined } | undefined;
+  /** Last non-error progress percentage so an error never displays a false 100%. */
+  lastPercent?: number;
   /** The site asked to sign in or create an account: filling carries on once the form shows. */
   waitSignIn?: boolean;
   /** Lists already extended on a step ("step|button"), so entries are added once and never again in a loop. */
@@ -302,37 +304,41 @@ async function syncApplyProgress(tabId: number, s: ApplySession): Promise<void> 
     review: 100,
     done: 100,
     submitted: 100,
-    error: 100,
+    error: 25,
   };
+  const isLoginWait = !!s.waitSignIn;
   const status =
     s.stage === 'error'
       ? ('error' as const)
-      : s.stage === 'review' && (s.ask.length > 0 || s.leftForYou.length > 0 || s.captcha)
+      : isLoginWait || (s.stage === 'review' && (s.ask.length > 0 || s.leftForYou.length > 0 || s.captcha))
         ? ('waiting' as const)
         : s.stage === 'submitted' || s.stage === 'done' || s.stage === 'review'
           ? ('done' as const)
           : s.stage === 'permission'
             ? ('waiting' as const)
             : ('running' as const);
+  const percent = isLoginWait ? 35 : s.stage === 'error' ? Math.min(85, Math.max(15, s.lastPercent ?? 25)) : (stagePct[s.stage] ?? 50);
   const label =
     s.stage === 'error'
       ? s.message || 'Autofill paused'
-      : status === 'waiting'
-        ? s.ask.length
-          ? `${s.ask.length} form answer${s.ask.length === 1 ? '' : 's'} needed`
-          : s.captcha
-            ? 'Complete verification check on page'
-            : 'Site access permission needed'
-        : status === 'done'
-          ? s.stage === 'submitted'
-            ? 'Application submitted'
-            : 'Form filled — review & submit'
-          : s.message || 'Filling application form…';
+      : isLoginWait
+        ? 'Sign in on this ATS page, then click Resume Fill'
+        : status === 'waiting'
+          ? s.ask.length
+            ? `${s.ask.length} form answer${s.ask.length === 1 ? '' : 's'} needed`
+            : s.captcha
+              ? 'Complete verification check on page'
+              : 'Site access permission needed'
+          : status === 'done'
+            ? s.stage === 'submitted'
+              ? 'Application submitted'
+              : 'Form filled — review & submit'
+            : s.message || 'Filling application form…';
 
   const payload = {
     kind: 'rs.applyHud' as const,
     status,
-    percent: stagePct[s.stage] ?? 50,
+    percent,
     label,
     detail: s.job ? `${s.job.company} · ${s.job.title}` : s.step || undefined,
     askCount: s.ask.length + s.leftForYou.length,
@@ -343,7 +349,7 @@ async function syncApplyProgress(tabId: number, s: ApplySession): Promise<void> 
     percent: payload.percent,
     label,
     ...(payload.detail ? { detail: payload.detail } : {}),
-    ctaLabel: status === 'waiting' ? 'Inspect Tab →' : status === 'error' ? 'Retry fill' : 'View form',
+    ctaLabel: isLoginWait ? 'Sign In & Resume' : status === 'waiting' ? 'Inspect Tab →' : status === 'error' ? 'Retry fill' : 'View form',
     targetRoute: 'overview',
     backgroundTab: status !== 'done' && status !== 'error',
     needsIntervention: status === 'waiting',
@@ -366,6 +372,21 @@ async function update(tabId: number, fn: (s: ApplySession) => ApplySession | voi
     const before = s.stage;
     const next = fn(s) ?? s;
     next.updatedAt = Date.now();
+    if (next.stage !== 'error') {
+      const pctMap: Record<ApplyStage, number> = {
+        reading: 18,
+        opening: 28,
+        thinking: 56,
+        filling: 78,
+        moving: 88,
+        permission: 40,
+        review: 95,
+        done: 95,
+        submitted: 100,
+        error: 25,
+      };
+      next.lastPercent = next.waitSignIn ? 35 : (pctMap[next.stage] ?? next.lastPercent ?? 25);
+    }
     if (next.stage !== before || !next.stageSince) next.stageSince = next.updatedAt; // for the panel's elapsed time
     await write(sessionKey(tabId), next);
     void syncApplyProgress(tabId, next);
@@ -807,14 +828,34 @@ async function openCompanyApplication(tabId: number, signal: AbortSignal): Promi
       await followTo(tabId, spawned, signal);
       return 'moved';
     }
-    // The form opens on the same page, on a new page, or (on some sites) in a new tab: wait for the page to settle.
-    await pause(1500, signal);
+    // The form opens on the same page, on a new page, or via an SPA mount (Workday / Greenhouse / Lever):
+    // wait for tab navigation to settle, then wait up to 8000ms via MutationObserver for form controls or a login wall.
     for (let w = 0; w < 20; w++) {
       const t = await chrome.tabs.get(tabId).catch(() => undefined);
       if (!t || t.status === 'complete') break;
-      await pause(500, signal);
+      await pause(400, signal);
     }
-    await pause(800, signal);
+    const waited = await inFrames(
+      tabId,
+      () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.waitForForm?.(8000) ?? Promise.resolve('timeout'),
+    ).catch(() => []);
+    if (waited.some(r => r.result === 'login')) {
+      const host = (() => {
+        try {
+          return new URL(s0?.url ?? '').host;
+        } catch {
+          return 'this site';
+        }
+      })();
+      await update(tabId, x => ({
+        ...x,
+        stage: 'review',
+        waitSignIn: true,
+        message: `Sign in on ${host}, then click Resume Fill (Referral Scout never types passwords).`,
+      }));
+      return 'signin';
+    }
+    if (waited.some(r => r.result === 'form')) return 'form';
   }
   return 'form';
 }
@@ -965,7 +1006,7 @@ async function handOff(tabId: number, url: string, jobText: string, signal: Abor
     await update(tabId, x => ({
       ...x,
       stage: 'done',
-      handoff: { tabId: target, host },
+      handoff: { tabId: target, host, url: page },
       message: `This job is applied for on ${host}. Referral Scout opened it in a new tab and is filling the application there.`,
     }));
   if (!(await allowed(originOf(page)))) {
@@ -985,7 +1026,8 @@ async function fillStep(
   signal: AbortSignal,
   attempt: number,
 ): Promise<{ advance: boolean; again?: boolean; moved?: boolean; opened?: boolean } | void> {
-  const tab = await chrome.tabs.get(tabId);
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+  if (!tab) throw new Error('The application tab was closed or reloaded. Click Retry fill to reopen it.');
   const url = tab.url ?? '';
   const kind = pageKindFromUrl(url);
   if (!canFill(kind)) throw new Error('Open a single job or its application form first; a list of jobs cannot be filled.');
@@ -1752,21 +1794,106 @@ const signature = (p: { form: FormField[]; step: string }): string => `${p.step}
  * Starts the per-tab fill engine on one tab. The campaign runner calls this instead of the side panel's Fill button;
  * everything below is unchanged, so the queue drives exactly the engine that is already known to work.
  */
-export const startApplyOnTab = (tabId: number): Promise<void> => start(tabId);
-async function start(tabId: number, attempt = 1): Promise<void> {
-  const tab = await chrome.tabs.get(tabId);
+export interface ResolvedApplicationTab {
+  tab: chrome.tabs.Tab;
+  tabId: number;
+  recovered: boolean;
+}
+
+/**
+ * Self-healing tab lookup for external ATS & LinkedIn application flows.
+ * 1) Validates `tabId` via `chrome.tabs.get` inside try/catch.
+ * 2) Falls back to querying open tabs by normalized application URL or ATS hostname.
+ * 3) If still missing and `url` is http(s), opens a new foreground tab, waits for load + content script readiness.
+ */
+export async function resolveOrOpenApplicationTab(opts: {
+  tabId?: number | undefined;
+  url?: string | undefined;
+  activate?: boolean | undefined;
+  waitReady?: boolean | undefined;
+}): Promise<ResolvedApplicationTab> {
+  const activate = opts.activate ?? true;
+  const isHttp = (u: string | undefined): u is string => !!u && /^https?:\/\//i.test(u);
+
+  const waitTabLoad = async (id: number): Promise<chrome.tabs.Tab | undefined> => {
+    for (let i = 0; i < 20; i++) {
+      const t = await chrome.tabs.get(id).catch(() => undefined);
+      if (!t) return undefined;
+      if (t.status === 'complete') return t;
+      await new Promise(r => setTimeout(r, 400));
+    }
+    return await chrome.tabs.get(id).catch(() => undefined);
+  };
+
+  if (opts.tabId !== undefined && opts.tabId >= 0) {
+    const existing = await chrome.tabs.get(opts.tabId).catch(() => undefined);
+    if (existing?.id !== undefined) {
+      if (activate) await chrome.tabs.update(existing.id, { active: true }).catch(() => undefined);
+      const settled = opts.waitReady ? ((await waitTabLoad(existing.id)) ?? existing) : existing;
+      return { tab: settled, tabId: existing.id, recovered: false };
+    }
+  }
+
+  if (isHttp(opts.url)) {
+    const allTabs = await chrome.tabs.query({}).catch(() => []);
+    const targetHost = (() => {
+      try {
+        return new URL(opts.url).host;
+      } catch {
+        return '';
+      }
+    })();
+    const matched =
+      allTabs.find(t => t.id !== undefined && t.url && sameApplication(t.url, opts.url!)) ??
+      allTabs.find(t => {
+        if (t.id === undefined || !t.url || !targetHost) return false;
+        try {
+          return new URL(t.url).host === targetHost;
+        } catch {
+          return false;
+        }
+      });
+    if (matched?.id !== undefined) {
+      if (activate) await chrome.tabs.update(matched.id, { active: true }).catch(() => undefined);
+      const settled = opts.waitReady ? ((await waitTabLoad(matched.id)) ?? matched) : matched;
+      return { tab: settled, tabId: matched.id, recovered: true };
+    }
+
+    const created = await chrome.tabs.create({ url: opts.url, active: activate });
+    if (created.id === undefined) throw new Error('The application tab could not be opened.');
+    const settled = (await waitTabLoad(created.id)) ?? created;
+    if (opts.waitReady) await inject(created.id).catch(() => undefined);
+    return { tab: settled, tabId: created.id, recovered: true };
+  }
+
+  throw new Error('The application tab was closed or reloaded. Open the job page and press Retry fill.');
+}
+
+export const startApplyOnTab = async (tabId: number): Promise<void> => {
+  await start(tabId);
+};
+async function start(tabId: number, attempt = 1, fallbackUrl?: string): Promise<number> {
   const old = await loadSession(tabId);
-  const same = old && old.tabId === tabId;
-  await saveSession(tabId, {
+  const resolved = await resolveOrOpenApplicationTab({
     tabId,
-    url: tab.url ?? '',
+    url: fallbackUrl ?? old?.url ?? old?.job?.url,
+    activate: false,
+    waitReady: true,
+  });
+  const activeTabId = resolved.tabId;
+  const tab = resolved.tab;
+  const prev = activeTabId === tabId ? old : ((await loadSession(activeTabId)) ?? old);
+  const same = !!prev;
+  await saveSession(activeTabId, {
+    tabId: activeTabId,
+    url: tab.url ?? fallbackUrl ?? prev?.url ?? '',
     stage: 'reading',
-    message: 'Reading the application form…',
+    message: resolved.recovered ? 'Tab recovered — reading the application form…' : 'Reading the application form…',
     startedAt: Date.now(),
     updatedAt: Date.now(),
     step: '',
-    stepCount: same ? old.stepCount : 1,
-    summary: same ? old.summary : '',
+    stepCount: same ? prev.stepCount : 1,
+    summary: same ? prev.summary : '',
     filled: [],
     files: [],
     ask: [],
@@ -1775,11 +1902,12 @@ async function start(tabId: number, attempt = 1): Promise<void> {
     hasSubmit: false,
     captcha: false,
     // A fill handed over from LinkedIn keeps the LinkedIn job (for the referral step) and its description.
-    ...(same && old.from !== undefined
-      ? { from: old.from, ...(old.job ? { job: old.job } : {}), ...(old.jobText ? { jobText: old.jobText } : {}) }
+    ...(same && prev.from !== undefined
+      ? { from: prev.from, ...(prev.job ? { job: prev.job } : {}), ...(prev.jobText ? { jobText: prev.jobText } : {}) }
       : {}),
   } satisfies ApplySession);
-  void run(tabId, signal => autoRun(tabId, signal, attempt));
+  void run(activeTabId, signal => autoRun(activeTabId, signal, attempt));
+  return activeTabId;
 }
 /** Presses the site's Next / Continue / Review and waits for the next step. False when the site stayed put. */
 /** True when the page shows the site's own validation errors (fields marked invalid, an alert with text). */
@@ -1819,7 +1947,8 @@ async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
   for (let i = 0; Date.now() - began < 25000; i++) {
     await new Promise(r => setTimeout(r, i < 4 ? 400 : 800));
     signal.throwIfAborted();
-    const tab = await chrome.tabs.get(tabId);
+    const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+    if (!tab) throw new Error('The application tab was closed or reloaded. Click Retry fill to reopen it.');
     if (tab.status === 'loading') continue;
     const frames = await scanAll(tabId, pageKindFromUrl(tab.url ?? '') === 'linkedin-job').catch(() => [] as Frame[]);
     const page = merge(frames, tab.url ?? '', tab.title ?? '');
@@ -1990,7 +2119,19 @@ export const applyRequest = z.discriminatedUnion('action', [
     tabId: z.number().int().optional(),
     withPhoto: z.boolean().optional(),
   }),
-  z.object({ kind: z.literal('apply'), action: z.literal('start'), tabId: z.number().int(), again: z.boolean().optional() }),
+  z.object({
+    kind: z.literal('apply'),
+    action: z.literal('start'),
+    tabId: z.number().int().optional(),
+    url: z.string().max(1000).optional(),
+    again: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal('apply'),
+    action: z.literal('focusHandoff'),
+    tabId: z.number().int().optional(),
+    url: z.string().max(1000).optional(),
+  }),
   z.object({ kind: z.literal('apply'), action: z.literal('next') }),
   z.object({ kind: z.literal('apply'), action: z.literal('nextJob') }),
   z.object({ kind: z.literal('apply'), action: z.literal('testAi') }),
@@ -2090,8 +2231,42 @@ export function registerApplyMessages(): void {
         if (!s.profile) throw new Error('Set up Referral Scout with your LinkedIn profile first.');
         if (!(await cvFile()))
           throw new Error('Upload your CV in Candidate profile in the dashboard first; applications need the file itself.');
+        const requestedTabId = req.tabId ?? tabId;
+        const old = await loadSession(requestedTabId);
+        const activeTabId = await start(
+          requestedTabId,
+          req.again && old?.tabId === requestedTabId ? 2 + Math.floor(Math.random() * 1000) : 1,
+          req.url,
+        );
+        return detect(activeTabId);
+      }
+      if (req.action === 'focusHandoff') {
         const old = await loadSession(tabId);
-        await start(req.tabId, req.again && old?.tabId === req.tabId ? 2 + Math.floor(Math.random() * 1000) : 1);
+        const targetUrl = req.url ?? old?.handoff?.url;
+        const resolved = await resolveOrOpenApplicationTab({
+          tabId: req.tabId ?? old?.handoff?.tabId,
+          url: targetUrl,
+          activate: true,
+        });
+        if (old?.handoff && resolved.tabId !== old.handoff.tabId) {
+          await update(tabId, x => ({
+            ...x,
+            handoff: {
+              tabId: resolved.tabId,
+              host:
+                x.handoff?.host ??
+                (() => {
+                  try {
+                    return new URL(resolved.tab.url || targetUrl || '').host;
+                  } catch {
+                    return '';
+                  }
+                })(),
+              ...(resolved.tab.url || targetUrl ? { url: resolved.tab.url || targetUrl } : {}),
+            },
+          }));
+        }
+        return detect(tabId);
       }
       if (req.action === 'startForJob') {
         const s = await getNetwork();
@@ -2277,7 +2452,7 @@ export function registerApplyMessages(): void {
       }
       if (req.action === 'deletePhoto') await remove('meta', PHOTO_KEY);
       return detect(
-        req.action === 'detect' || req.action === 'start' ? (req.tabId ?? (typeof raw === 'number' ? raw : undefined)) : tabId,
+        req.action === 'detect' ? (req.tabId ?? (typeof raw === 'number' ? raw : undefined)) : tabId,
         req.action === 'detect' ? !!req.withPhoto : req.action.endsWith('Photo'),
       );
     })()

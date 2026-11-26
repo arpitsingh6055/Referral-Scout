@@ -64,6 +64,18 @@ try {
 }
 
 const handlePanelHudAction = (action: PanelHudAction): void => {
+  if (action.kind === 'retry-apply') {
+    void chrome.runtime
+      .sendMessage({
+        kind: 'apply',
+        action: 'start',
+        ...(action.tabId !== undefined ? { tabId: action.tabId } : {}),
+        ...(action.url ? { url: action.url } : {}),
+        again: true,
+      })
+      .catch(e => notify('error', errorText(e)));
+    return;
+  }
   if (action.kind === 'focus-tab') {
     void chrome.runtime
       .sendMessage({

@@ -426,7 +426,7 @@ export function updatePageHud(payload: PageHudPayload): void {
   detailEl.textContent =
     payload.detail ?? (payload.status === 'waiting' ? 'Click Next gap to jump to highlighted field' : 'Referral Scout Autofill');
   jumpBtn.textContent = 'Next gap';
-  jumpBtn.hidden = payload.status === 'running' && !(payload.askCount && payload.askCount > 0);
+  jumpBtn.hidden = payload.status === 'error' || payload.status === 'done' || !(payload.askCount && payload.askCount > 0);
 
   if (payload.status === 'done') {
     hideTimer = setTimeout(() => {

@@ -73,6 +73,28 @@ export const selectors = {
     challenge: ['iframe[src*="challenges.cloudflare.com"]', '#challenge-running', '#challenge-stage'],
   },
 } as const;
+
+export const atsSelectors = {
+  jdApply: [
+    '[data-automation-id="adventureButton"]',
+    '#apply_button',
+    'a.postings-btn[href*="/apply"]',
+    '.postings-btn',
+    'button[data-qa="btn-apply"]',
+    'a[data-qa="btn-apply"]',
+  ],
+  manualApply: [
+    '[data-automation-id="applyManually"]',
+    'button[data-automation-id*="applyManually" i]',
+    'a[data-automation-id*="applyManually" i]',
+  ],
+  loginGate: [
+    '[data-automation-id="signInContent"]',
+    '[data-automation-id="createAccountContent"]',
+    'form[action*="login" i]',
+    'form[action*="signin" i]',
+  ],
+} as const;
 export type Site = keyof typeof selectors;
 export function siteForHost(host: string): Site | null {
   return (

@@ -867,12 +867,14 @@ export function applyError(raw: string): string {
   if (/could not be read\. press fill again/i.test(m)) return 'ChatGPT answered in an unexpected format. Press Fill again.';
   if (/Cannot access|cannot be scripted|chrome:\/\/|edge:\/\//i.test(m))
     return 'The browser does not allow extensions on this page. Open the job’s application form in a normal tab.';
-  if (/Frame with ID|No tab with id|tab was closed|The tab was closed/i.test(m))
-    return 'The page changed or was closed while filling. Open the application again and press Fill.';
+  if (/Frame with ID|No tab with id|tab was closed|The tab was closed|could not be found/i.test(m))
+    return 'The application tab was reloaded or closed. Click Retry fill to reopen it.';
+  if (/No form fields were found|NO_FORM_FOUND/i.test(m))
+    return 'No application form fields were found yet. Click Apply or open the form on this page, then press Retry fill.';
   if (/Extension context invalidated|Receiving end does not exist/i.test(m))
     return 'Referral Scout was just updated. Refresh this page and press Fill again.';
   if (/^[A-Z][^{}[\]<>]{0,280}[.!?]$/.test(m)) return m; // already a plain sentence written for the person
-  return 'Something unexpected happened while filling. Press Fill again; if it repeats, refresh the page.';
+  return 'Autofill paused before finishing. Click Retry fill to reload the form.';
 }
 
 /** One written answer redone on request: afresh, or shorter. The same facts-only rules as the full fill. */

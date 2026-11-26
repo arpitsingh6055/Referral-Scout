@@ -647,7 +647,7 @@ describe('plain-English errors', () => {
     expect(applyError('Cannot access contents of url "chrome://extensions"')).toMatch(/does not allow extensions/);
     expect(applyError('Extension context invalidated.')).toMatch(/was just updated/);
     expect(applyError('Upload your CV in Settings first.')).toBe('Upload your CV in Settings first.');
-    expect(applyError('TypeError: x is undefined at {foo}')).toMatch(/^Something unexpected/);
+    expect(applyError('TypeError: x is undefined at {foo}')).toMatch(/^Autofill paused before finishing\./);
   });
   it('asks for a shorter answer within the same facts-only rules', () => {
     const field = { id: 'q1', kind: 'textarea', label: 'Why us?', required: true, maxLength: 300 } as unknown as FormField;
@@ -1436,5 +1436,99 @@ describe('ChatGPT’s next move, checked', () => {
     expect(consentTick(f('I agree to the privacy policy'))).toBe(true);
     expect(consentTick(f('I have read and accept the terms and conditions'))).toBe(true);
     expect(consentTick(f('Type your full name as your signature', 'text'))).toBe(false);
+  });
+});
+
+describe('ATS pre-form navigation, SPA form waiter, and stale tab recovery', () => {
+  it('clicks Workday Apply then Apply Manually, and waitForForm resolves when SPA controls mount', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    Element.prototype.scrollIntoView = function () {};
+    document.body.innerHTML = `
+      <main>
+        <h1>Intern: MBA/Graduate</h1>
+        <button data-automation-id="adventureButton">Apply</button>
+      </main>`;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+
+    expect(api.openApplication(true)).toBe('opened');
+
+    // Simulate Workday modal mounting "Autofill with Resume" + "Apply Manually"
+    document.body.innerHTML = `
+      <div role="dialog">
+        <button data-automation-id="autofillWithResume">Autofill with Resume</button>
+        <button data-automation-id="applyManually">Apply Manually</button>
+      </div>`;
+    expect(api.openApplication(true)).toBe('opened');
+
+    // Simulate SPA form mounting asynchronously 40ms later
+    document.body.innerHTML = '<main><p>Loading application...</p></main>';
+    setTimeout(() => {
+      document.body.innerHTML = `
+        <form>
+          <input type="text" name="firstName" />
+          <input type="email" name="email" />
+        </form>`;
+    }, 40);
+    await expect(api.waitForForm(600)).resolves.toBe('form');
+  });
+
+  it('detects Workday sign-in gate via waitForForm and signIn', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    document.body.innerHTML = `
+      <main data-automation-id="signInContent">
+        <input type="email" name="username" />
+        <input type="password" name="password" />
+      </main>`;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+    expect(api.signIn()).toBe(true);
+    await expect(api.waitForForm(300)).resolves.toBe('login');
+  });
+
+  it('recovers stale tabId by matching open ATS tab or creating a new tab without throwing', async () => {
+    const prevChrome = (globalThis as { chrome?: unknown }).chrome;
+    const tabsGet = vi.fn().mockRejectedValue(new Error('No tab with id: 1221493975.'));
+    const tabsQuery = vi.fn().mockResolvedValue([
+      {
+        id: 77,
+        url: 'https://medtronic.wd1.myworkdayjobs.com/en-US/MedtronicCareers/job/Intern-MBA_R123',
+        status: 'complete',
+      },
+    ]);
+    const tabsUpdate = vi.fn().mockResolvedValue({});
+    const tabsCreate = vi.fn();
+    (globalThis as { chrome: unknown }).chrome = {
+      tabs: { get: tabsGet, query: tabsQuery, update: tabsUpdate, create: tabsCreate },
+    };
+    try {
+      const { resolveOrOpenApplicationTab } = await import('../src/background/apply');
+      const res = await resolveOrOpenApplicationTab({
+        tabId: 1221493975,
+        url: 'https://medtronic.wd1.myworkdayjobs.com/en-US/MedtronicCareers/job/Intern-MBA_R123',
+        activate: true,
+      });
+      expect(res.tabId).toBe(77);
+      expect(res.recovered).toBe(true);
+      expect(tabsUpdate).toHaveBeenCalledWith(77, { active: true });
+      expect(tabsCreate).not.toHaveBeenCalled();
+    } finally {
+      (globalThis as { chrome?: unknown }).chrome = prevChrome;
+    }
+  });
+
+  it('maps stale tab and missing form errors to actionable messages instead of "Something unexpected"', async () => {
+    const { applyError } = await import('../src/shared/apply');
+    expect(applyError('No tab with id: 1221493975.')).not.toContain('Something unexpected');
+    expect(applyError('No tab with id: 1221493975.')).toContain('Retry fill');
+    expect(applyError('No form fields were found on this page.')).toContain('Retry fill');
   });
 });

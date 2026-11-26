@@ -79,6 +79,8 @@ export interface ApplyApi {
    * opens it ("Apply", "Apply for this job", "Apply manually") and says 'opened'. Never a button that sends a form.
    */
   openApplication(click?: boolean): 'form' | 'opened' | 'none';
+  /** Waits via MutationObserver up to timeoutMs for SPA form controls or a login wall to mount. */
+  waitForForm(timeoutMs?: number): Promise<'form' | 'login' | 'timeout'>;
   /** Declines optional cookies on a site's cookie banner, so it does not cover the form. True when it pressed one. */
   dismissCookies(): boolean;
   /** True when the page asks to sign in or create an account (a password field on a short form). */
@@ -1320,17 +1322,31 @@ function create(): ApplyApi {
         /^(apply|apply now|apply here|apply online|apply for (this|the) (job|position|role|opening)|apply to (this|the) (job|position|role)|apply for job|apply manually|start (my |your )?application|begin (my |your )?application|i'?m interested|submit (your |my )?(cv|resume))$/i;
       const name = (b: HTMLElement) =>
         (clean(b.getAttribute('aria-label')) || clean(b.textContent) || clean((b as HTMLInputElement).value)).replace(/[›→>]+$/, '').trim();
+      const explicitSelectors = [
+        '[data-automation-id="applyManually"]',
+        '[data-automation-id="adventureButton"]',
+        '#apply_button',
+        'a.postings-btn[href*="/apply"]',
+        '.postings-btn',
+        'button[data-qa="btn-apply"]',
+        'a[data-qa="btn-apply"]',
+      ];
+      const explicit = explicitSelectors
+        .flatMap(sel => [...document.querySelectorAll<HTMLElement>(sel)])
+        .find(b => visible(b) && !b.hasAttribute('data-rs-opened'));
       const controls = [
         ...document.querySelectorAll<HTMLElement>('a, button, [role="button"], input[type="button"], input[type="submit"]'),
       ].filter(visible);
-      const pick = controls.find(b => {
-        if (!OPEN.test(name(b)) || b.hasAttribute('data-rs-opened')) return false; // each control is pressed once
-        // Signing in through another account (LinkedIn, Indeed, Google) or a resume autofill is never chosen for the person.
-        if (/linkedin|indeed|google|facebook|seek|autofill/i.test(`${name(b)} ${b.getAttribute('href') ?? ''}`)) return false;
-        // A button inside a form that already holds fields would send that form: never pressed.
-        const form = b.closest('form');
-        return !(form && [...form.querySelectorAll('input:not([type="hidden"]), select, textarea')].some(visible));
-      });
+      const pick =
+        explicit ??
+        controls.find(b => {
+          if (!OPEN.test(name(b)) || b.hasAttribute('data-rs-opened')) return false; // each control is pressed once
+          // Signing in through another account (LinkedIn, Indeed, Google) or a resume autofill is never chosen for the person.
+          if (/linkedin|indeed|google|facebook|seek|autofill/i.test(`${name(b)} ${b.getAttribute('href') ?? ''}`)) return false;
+          // A button inside a form that already holds fields would send that form: never pressed.
+          const form = b.closest('form');
+          return !(form && [...form.querySelectorAll('input:not([type="hidden"]), select, textarea')].some(visible));
+        });
       if (!pick) return 'none';
       if (click) {
         pick.setAttribute('data-rs-opened', '1');
@@ -1338,6 +1354,46 @@ function create(): ApplyApi {
         pick.click();
       }
       return 'opened';
+    },
+    waitForForm(timeoutMs = 8000) {
+      const check = (): 'form' | 'login' | null => {
+        if (this.signIn()) return 'login';
+        const fields = [
+          ...document.querySelectorAll<HTMLElement>(
+            'input:not([type="hidden"]):not([type="search"]):not([type="submit"]):not([type="button"]):not([type="image"]):not([type="reset"]), select, textarea, [role="combobox"]',
+          ),
+        ].filter(visible);
+        if (fields.length >= 2 || fields.some(f => (f as HTMLInputElement).type === 'file')) return 'form';
+        return null;
+      };
+      const immediate = check();
+      if (immediate) return Promise.resolve(immediate);
+      return new Promise<'form' | 'login' | 'timeout'>(resolve => {
+        const root = document.body ?? document.documentElement;
+        if (!root) {
+          resolve('timeout');
+          return;
+        }
+        let settled = false;
+        const done = (result: 'form' | 'login' | 'timeout') => {
+          if (settled) return;
+          settled = true;
+          observer.disconnect();
+          clearInterval(poll);
+          clearTimeout(timer);
+          resolve(result);
+        };
+        const observer = new MutationObserver(() => {
+          const hit = check();
+          if (hit) done(hit);
+        });
+        observer.observe(root, { childList: true, subtree: true, attributes: true });
+        const poll = setInterval(() => {
+          const hit = check();
+          if (hit) done(hit);
+        }, 250);
+        const timer = setTimeout(() => done('timeout'), timeoutMs);
+      });
     },
     dismissCookies() {
       const REJECT =
@@ -1414,7 +1470,11 @@ function create(): ApplyApi {
         ),
       ].filter(visible);
       const pw = all.filter(i => i instanceof HTMLInputElement && i.type === 'password');
-      return pw.length > 0 && all.length - pw.length <= 4;
+      if (pw.length > 0 && all.length - pw.length <= 4) return true;
+      const hasAuthContainer = [
+        ...document.querySelectorAll<HTMLElement>('[data-automation-id="signInContent"], [data-automation-id="createAccountContent"]'),
+      ].some(visible);
+      return hasAuthContainer && all.length <= 4;
     },
     press(id) {
       if (!addable.has(id)) return false;

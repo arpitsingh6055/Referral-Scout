@@ -414,7 +414,14 @@ function draw(d: Detect): void {
       button(
         `Go to ${to.host}`,
         async () => {
-          await chrome.tabs.update(to.tabId, { active: true });
+          draw(
+            await applyRequest({
+              kind: 'apply',
+              action: 'focusHandoff',
+              tabId: to.tabId,
+              ...(to.url ? { url: to.url } : {}),
+            }),
+          );
         },
         'btn primary',
         'Switched.',
@@ -503,7 +510,7 @@ function draw(d: Detect): void {
     );
   actions.append(
     button(
-      s.stage === 'error' || s.stage === 'done' ? 'Fill again' : 'Refill this step',
+      s.waitSignIn ? 'Resume Fill' : s.stage === 'error' || s.stage === 'done' ? 'Fill again' : 'Refill this step',
       () => startFill(d, s.stage === 'review'),
       'btn sm',
     ),
