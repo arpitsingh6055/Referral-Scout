@@ -249,7 +249,8 @@ export function profile(ctx: Ctx): HTMLElement {
     return emptyState({
       icon: 'person',
       title: 'Your profile could not be loaded',
-      description: 'The message above says why. Reload the extension, then reopen this page.',
+      description: 'Something interrupted loading your profile. Try refreshing.',
+      action: button('Retry', 'btn btn-primary', () => ctx.refresh()),
     });
   const p = w.profile;
 

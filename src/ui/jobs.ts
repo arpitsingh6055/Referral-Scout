@@ -378,25 +378,12 @@ export function buildReferrals(s: NetworkState): HTMLElement {
     target.append(orderBox);
   }
 
-  // Batch-safe Apply Queue (one job at a time, always stops for human review)
-  const queuedUrls = s.applyQueue ?? [];
-  if (queuedUrls.length) {
-    const nextUrl = queuedUrls[0]!;
-    const nextJob = jobs.find(j => j.url === nextUrl);
+  // Queue status is unified on the campaign runner (see top Campaign card).
+  if ((s.applyQueue ?? []).length) {
     const qBox = node('section', '', 'card queue-bar');
     qBox.append(
-      node('b', `${queuedUrls.length} ${queuedUrls.length === 1 ? 'job' : 'jobs'} queued for guided apply`),
-      node('p', 'Processed one at a time. Referral Scout always stops at the final review so you press Submit.', 'muted small'),
-      button(
-        nextJob ? `Apply next: ${nextJob.company}` : 'Apply next in queue',
-        () =>
-          startApplyForJob({
-            url: nextUrl,
-            ...(nextJob ? { title: nextJob.title, company: nextJob.company, location: nextJob.location } : {}),
-          }),
-        'btn sm primary',
-        'Opening…',
-      ),
+      node('b', 'Applications are managed in the Campaign Queue'),
+      node('p', 'Your queued applications run automatically in the background and pause whenever something needs you.', 'muted small'),
     );
     target.append(qBox);
   }
@@ -620,18 +607,20 @@ export function buildReferrals(s: NetworkState): HTMLElement {
       );
     if (control.childElementCount) body.append(control);
     const applyActions = node('div', '', 'person-actions');
-    const isQueued = queuedUrls.includes(job.url);
+    const isQueued = (s.applyQueue ?? []).includes(job.url);
     if (applyStatus.stage !== 'applied' && applyStatus.stage !== 'submitted') {
       const applyLabel =
-        applyStatus.stage === 'needs-review'
-          ? 'Resume review'
-          : applyStatus.stage === 'failed'
-            ? 'Retry fill'
-            : 'Apply with Referral Scout';
+        applyStatus.stage === 'needs-review' ? 'Resume review' : applyStatus.stage === 'failed' ? 'Retry fill' : 'Apply now';
       applyActions.append(
         button(
           applyLabel,
-          () => startApplyForJob({ url: job.url, title: job.title, company: job.company, location: job.location }),
+          async () => {
+            await act(
+              { kind: 'network', action: 'queueJobsForApply', urls: [job.url] },
+              `${job.company}: added to top of application queue.`,
+            );
+            await startApplyForJob({ url: job.url, title: job.title, company: job.company, location: job.location });
+          },
           'btn sm primary',
           'Opening…',
         ),
@@ -642,6 +631,7 @@ export function buildReferrals(s: NetworkState): HTMLElement {
               isQueued
                 ? { kind: 'network', action: 'dequeueJobForApply', url: job.url }
                 : { kind: 'network', action: 'queueJobsForApply', urls: [job.url] },
+              isQueued ? `${job.company}: removed from queue.` : `${job.company}: added to application queue.`,
             ),
           `btn sm${isQueued ? ' choice on' : ''}`,
         ),

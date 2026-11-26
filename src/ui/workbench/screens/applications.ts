@@ -55,6 +55,7 @@ const TONE: Record<string, 'violet' | 'green' | 'amber' | 'red' | 'grey' | 'blue
 let filter: Filter = 'all';
 let query = '';
 let currentPage = 1;
+let openReceiptId: string | null = null;
 const PAGE_SIZE = 50;
 
 function rowFor(row: QueueRow, ctx: Ctx): HTMLElement {
@@ -73,13 +74,21 @@ function rowFor(row: QueueRow, ctx: Ctx): HTMLElement {
     if (row.canRetry) actions.append(button('Retry', 'btn btn-sm', () => ctx.run({ kind: 'campaign', action: 'retry', id: row.id })));
     actions.append(button('Skip', 'btn btn-sm', () => ctx.run({ kind: 'campaign', action: 'skip', id: row.id })));
   } else if (row.state === 'submitted' || row.state === 'skipped') {
+    if (row.receipt) {
+      actions.append(
+        button(openReceiptId === row.id ? 'Hide receipt' : 'Receipt', 'btn btn-sm btn-primary', () => {
+          openReceiptId = openReceiptId === row.id ? null : row.id;
+          ctx.redraw();
+        }),
+      );
+    }
     actions.append(button('Open', 'btn btn-sm', () => ctx.run({ kind: 'campaign', action: 'open', id: row.id })));
   } else {
     actions.append(button('Open', 'btn btn-sm', () => ctx.run({ kind: 'campaign', action: 'open', id: row.id })));
     actions.append(button('Skip', 'btn btn-sm', () => ctx.run({ kind: 'campaign', action: 'skip', id: row.id })));
   }
 
-  return div('row row-queue', [
+  const rowEl = div('row row-queue', [
     div('row-title', [
       text('div', 'row-company', row.company),
       externalLink(row.title, row.url, 'cell-strong cell-link'),
@@ -93,6 +102,26 @@ function rowFor(row: QueueRow, ctx: Ctx): HTMLElement {
     ]),
     actions,
   ]);
+
+  if (openReceiptId === row.id && row.receipt) {
+    const r = row.receipt;
+    const receiptCard = card(`Receipt · ${r.company}`, {
+      sub: `${r.title} · Submitted ${new Date(r.submittedAt).toLocaleString()} · ${r.mode === 'autopilot' ? 'Autopilot' : 'Guided'} · ${r.ats || r.route}`,
+      body: [
+        text('p', 'field-help', `Resume used: ${r.resumeName}`),
+        r.answersUsed.length
+          ? div(
+              'stack',
+              r.answersUsed.map(a =>
+                div('row row-compact', [text('span', 'cell-strong', a.label), text('span', 'cell-muted', a.value), pill(a.source, 'grey')]),
+              ),
+            )
+          : text('p', 'cell-muted', 'No custom answers recorded.'),
+      ],
+    });
+    return div('stack', [rowEl, receiptCard]);
+  }
+  return rowEl;
 }
 
 export function applications(ctx: Ctx): HTMLElement {

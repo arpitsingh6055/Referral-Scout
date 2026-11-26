@@ -162,7 +162,8 @@ export function answers(ctx: Ctx): HTMLElement {
     return emptyState({
       icon: 'alert',
       title: 'Your answers could not be loaded',
-      description: 'The message above says why. Reload the extension, then reopen this page.',
+      description: 'Something interrupted loading your Answer Bank. Try refreshing.',
+      action: button('Retry', 'btn btn-primary', () => ctx.refresh()),
     });
 
   const page = div('stack');

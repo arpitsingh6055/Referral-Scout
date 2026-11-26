@@ -830,11 +830,27 @@ async function handle(req: WorkspaceRequest): Promise<WorkspaceResult | { json: 
       message = 'Removed learned answer.';
       break;
     }
-    case 'judgeJob':
+    case 'judgeJob': {
+      const targetJob = (await allJobs()).find(j => j.id === req.id);
       await changeJob(req.id, j =>
         j ? { ...j, userJudgement: req.judgement, ...(req.reason ? { userReason: req.reason } : {}), updatedAt: Date.now() } : j,
       );
+      if (targetJob?.canonicalUrl) {
+        await updateNetwork(net => {
+          const picked = req.judgement === 'shortlisted';
+          const found = net.jobSearch?.found?.map(f => (f.url === targetJob.canonicalUrl ? { ...f, picked } : f));
+          return {
+            ...net,
+            ...(net.jobSearch && found ? { jobSearch: { ...net.jobSearch, found } } : {}),
+          };
+        }).catch(() => undefined);
+      }
+      const camp = await activeCampaign().catch(() => undefined);
+      if (camp?.application.autoAdmit && req.judgement === 'shortlisted') {
+        await enqueueShortlisted().catch(() => undefined);
+      }
       break;
+    }
     case 'requalify': {
       const n = await requalify();
       message = n

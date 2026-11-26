@@ -67,13 +67,16 @@ export async function renderCampaignCard(host: HTMLElement, force = false): Prom
   }
   const { campaign, counts, inboxCounts } = view;
   const running = campaign.status === 'running' || campaign.status === 'stopping';
+  const mode = campaign.application.mode ?? 'guided';
+  const modeLabel = mode === 'autopilot' ? 'Autopilot' : mode === 'discover' ? 'Discover only' : 'Guided';
 
   const card = el('section', 'rs-campaign');
   card.setAttribute('aria-label', 'Campaign');
+  card.setAttribute('aria-live', 'polite');
 
   const head = el('div', 'rs-campaign-head');
   const state = el('span', `rs-campaign-state ${running ? 'is-running' : inboxCounts.open ? 'is-attention' : 'is-paused'}`);
-  state.textContent = running ? 'Running' : inboxCounts.open ? 'Needs you' : 'Paused';
+  state.textContent = running ? `Running · ${modeLabel}` : inboxCounts.open ? `Needs you · ${modeLabel}` : `Paused · ${modeLabel}`;
   head.append(el('span', 'rs-campaign-name', campaign.name), state);
 
   // Stacked chips rather than a row of metric cards: at this width a row wraps into something unreadable.
@@ -141,8 +144,8 @@ export async function renderCampaignCard(host: HTMLElement, force = false): Prom
   const open = document.createElement('button');
   open.type = 'button';
   open.className = 'btn';
-  open.textContent = 'Open workbench';
-  open.addEventListener('click', () => openWorkbench());
+  open.textContent = 'Mission';
+  open.addEventListener('click', () => openWorkbench('setup'));
 
   actions.append(primary, open);
   card.append(head, chips, line, actions);

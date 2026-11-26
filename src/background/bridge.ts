@@ -249,11 +249,14 @@ export async function importContacts(now = Date.now()): Promise<number> {
  * whatever the side panel has found without the person having to press anything.
  */
 export async function syncFromNetwork(now = Date.now()): Promise<BridgeReport> {
-  await ensureDefaultCampaignFromNetwork(now).catch(() => null);
+  const campaign = await ensureDefaultCampaignFromNetwork(now).catch(() => null);
   const [jobs, contactsAdded] = await Promise.all([
     importJobs(now).catch(() => ({ added: 0, updated: 0 })),
     importContacts(now).catch(() => 0),
   ]);
+  if (campaign?.application.autoAdmit && (jobs.added > 0 || jobs.updated > 0)) {
+    await enqueueShortlisted().catch(() => undefined);
+  }
   return { jobsAdded: jobs.added, jobsUpdated: jobs.updated, contactsAdded };
 }
 

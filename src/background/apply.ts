@@ -1023,7 +1023,13 @@ async function fillStep(
         : 'All steps are filled. This is the final review: check the application and press Submit on the page yourself.',
     }));
     // Hands-free: a final review page with nothing left to answer is submitted for the person.
-    if (!page.hasNext && !page.captcha && ((await applyProfile()).autoSubmit ?? 'never') === 'auto') {
+    const { activeCampaign } = await import('../shared/persistence/campaign-store');
+    const camp = await activeCampaign().catch(() => undefined);
+    const autopilotAllowed =
+      camp !== undefined
+        ? camp.application.mode === 'autopilot' && !!camp.application.autopilotOptInAt && !!camp.application.preflightApprovedAt
+        : ((await applyProfile()).autoSubmit ?? 'never') === 'auto';
+    if (!page.hasNext && !page.captcha && autopilotAllowed) {
       const left = (await loadSession(tabId))?.ask.length ?? 0;
       if (!left) await submitForPerson(tabId, undefined, signal);
     }
@@ -1232,10 +1238,15 @@ async function fillStep(
   signal.throwIfAborted();
   // A login form read as fields: the person signs in, filling carries on afterwards.
   if (plan.phase === 'signin' && !linkedin && page.form.some(f => f.sensitive === 'password')) return void (await waitForSignIn(tabId));
-  // Hands-free: the required "I agree to the privacy policy" ticks are part of submitting, so they are ticked too.
-  // Signatures, declarations to type and every other legal field stay with the person (and stop hands-free below).
-  const handsFree = (profile.autoSubmit ?? 'never') === 'auto';
-  if (handsFree)
+  // Consent/terms checkboxes stay with the person unless they explicitly opted into `allowConsentAutoTick`.
+  const { activeCampaign } = await import('../shared/persistence/campaign-store');
+  const camp = await activeCampaign().catch(() => undefined);
+  const handsFree =
+    camp !== undefined
+      ? camp.application.mode === 'autopilot' && !!camp.application.autopilotOptInAt && !!camp.application.preflightApprovedAt
+      : (profile.autoSubmit ?? 'never') === 'auto';
+  const allowConsentTick = !!camp?.application.allowConsentAutoTick;
+  if (handsFree && allowConsentTick)
     for (const f of page.form)
       if (f.required && consentTick(f) && f.value !== 'true' && !plan.fill.some(x => x.id === f.id)) {
         plan.fill.push({
@@ -1245,7 +1256,7 @@ async function fillStep(
           label: f.label,
           value: 'true',
           confidence: 'high',
-          why: 'Hands-free: terms accepted',
+          why: 'Consent auto-tick (explicitly opted in)',
         });
         plan.leftForYou = plan.leftForYou.filter(l => l.id !== f.id);
       }
@@ -1565,10 +1576,13 @@ async function startOfTodayCount(): Promise<number> {
 async function submitForPerson(tabId: number, chosen: FillPlan['next'], signal: AbortSignal): Promise<void> {
   const s0 = await loadSession(tabId);
   if (!s0 || s0.autoSent || s0.sent) return;
-  if ((await startOfTodayCount()) >= DAILY_SOFT_CAP)
+  const { activeCampaign } = await import('../shared/persistence/campaign-store');
+  const camp = await activeCampaign().catch(() => undefined);
+  const effectiveCap = Math.min(camp?.application.dailyTarget || DAILY_SOFT_CAP, DAILY_SOFT_CAP);
+  if ((await startOfTodayCount()) >= effectiveCap)
     return void (await update(tabId, x => ({
       ...x,
-      message: `All steps are filled. You have sent ${DAILY_SOFT_CAP} applications today, so hands-free stops here: review it and press Submit yourself.`,
+      message: `All steps are filled. You have sent ${effectiveCap} applications today, so Autopilot stops here: review it and press Submit yourself.`,
     })));
   await update(tabId, x => ({
     ...x,

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.61.0: Unified Campaign Queue, Autopilot Trust Gates, Receipts & Mission Screen
+- **Unified Apply Queue & v7 Migration (`migration-v7.ts`, `network-messages.ts`, `ui/jobs.ts`, `service-worker.ts`):** Retired the legacy `NetworkState.applyQueue` manual queue and unified all job applications onto the restart-safe `applications` IDB store and campaign runner. Added idempotent `migrateV6ToV7()` to migrate legacy `applyQueue`, `apply-history`, and `ReferralJob.applied` records.
+- **Wired All Campaign Rules (`campaign.ts`, `runner.ts`, `bridge.ts`, `workspace.ts`):** Wired `autoAdmit` (auto-queueing shortlisted jobs on sync/judgement), `referralTrigger` (`on-queue` / `on-submit` / `never`), `strategyOrder` (`parallel` / `referral-first` / `apply-first`), and two-way `judgeJob` sync between dashboard and side panel.
+- **Autopilot Trust Gates, Consent Safety & Receipts (`shared/autopilot.ts`, `background/apply.ts`, `background/runner.ts`):**
+  - Enforced `evaluateAutopilotGates()` in the runner: explicit risk opt-in, one-time Pre-flight Preview approval, unified daily cap (default 15, hard ceiling 25), active-hours window, randomized pacing gaps (45s–120s), failure-streak auto-pause (3 consecutive failures), and reliable-route filtering.
+  - Stopped auto-ticking required terms/privacy checkboxes by default; added an explicit opt-in (`allowConsentAutoTick`).
+  - Added per-submission `ApplicationReceipt` records (job, time, route, ATS, resume used, answers sent) viewable from the Pipeline screen.
+- **Mission Screen & Error Recovery (`ui/workbench/screens/setup.ts`, `applications.ts`, `answers.ts`, `profile.ts`, `welcome.ts`, `ui/side-panel/campaign-card.ts`):** Upgraded Campaign setup into the Mission screen (`Discover only` / `Guided` / `Autopilot` modes, Pre-flight Preview, risk disclosure), added `aria-live` status updates, and replaced dead-end reload prompts with recoverable `Retry` actions.
+
 ## 0.60.0: Unified Side-Panel-First Architecture, Clickable Links, Companion Dashboard Rebuild & Diagnostics
 - **Unified Data Bridge & Migration (`bridge.ts`, `migration-v6.ts`, `service-worker.ts`):** Extended `importJobs()` to sync `referralJobs` (including `applied` status) alongside `jobSearch.found`, added `ensureDefaultCampaignFromNetwork()` so the companion dashboard never shows false `"No campaign yet"` states when active data exists, and added idempotent `migrateV5ToV6()` on startup.
 - **Dashboard Rebuild (`shell.ts`, `dom.ts`, `jobs.ts`, `people.ts`, `applications.ts`, `overview.ts`, `settings.ts`, `activity.ts`):**

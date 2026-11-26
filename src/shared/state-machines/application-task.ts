@@ -11,6 +11,7 @@
  */
 
 import { dedupeKey as vacancyKey } from '../domain/job';
+import type { ApplicationReceipt } from '../autopilot';
 
 /* ---------- states ---------- */
 export type TaskState =
@@ -88,6 +89,8 @@ export interface ApplicationTask {
   route: ApplyRoute;
   /** 0-100 fit from the ranking step; the queue orders by this before anything else. */
   fit: number;
+  /** Optional priority boost (e.g. 1 for "Apply now" top priority). */
+  priority?: number;
   /** When the posting was seen, for the freshness part of the order. */
   postedAt?: number;
   state: TaskState;
@@ -106,6 +109,8 @@ export interface ApplicationTask {
   /** Which version of the Answer Bank filled this, so a later profile edit does not rewrite history. */
   profileVersion?: number;
   submission?: SubmissionEvidence;
+  /** Saved receipt when submitted (job, time, route, resume, answers sent). */
+  receipt?: ApplicationReceipt;
   /** Open exception ids blocking this item. */
   blockedBy?: string[];
   history: TaskEvent[];
@@ -254,14 +259,15 @@ const DAY = 86_400_000;
  * it must never push a clearly better external role down the list: that is how a queue fills up with easy, useless
  * applications and the numbers look busy while nothing comes of them.
  */
-export function priorityOf(task: Pick<ApplicationTask, 'fit' | 'postedAt' | 'route' | 'attempts'>, now = Date.now()): number {
+export function priorityOf(task: Pick<ApplicationTask, 'fit' | 'postedAt' | 'route' | 'attempts' | 'priority'>, now = Date.now()): number {
+  const boost = (task.priority ?? 0) * 10000;
   const fit = Math.max(0, Math.min(100, task.fit)) * 10;
   const ageDays = task.postedAt ? (now - task.postedAt) / DAY : 14;
   const freshness = Math.max(0, 30 - ageDays * 2);
   const effort = task.route === 'easy-apply' ? 12 : 0;
   // Something that has already failed twice goes behind everything untried.
   const penalty = task.attempts * 25;
-  return fit + freshness + effort - penalty;
+  return boost + fit + freshness + effort - penalty;
 }
 
 export interface SchedulerOptions {

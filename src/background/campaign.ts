@@ -53,7 +53,9 @@ import { computeAnalyticsSummary, type AnalyticsSummary } from '../shared/analyt
 import { syncOutcomes } from './gmail';
 import { migrateV3ToV4 } from './migration-v4';
 import { read, write } from '../storage/state';
-import { applyControl, newCampaign, stages, type Campaign, type Control } from '../shared/domain/campaign';
+import { applyControl, newCampaign, stages, type Campaign, type Control, type MissionMode } from '../shared/domain/campaign';
+import type { StrategyOrder } from '../shared/apply-status';
+import type { ApplicationReceipt } from '../shared/autopilot';
 import { canonicalCompany } from '../shared/domain/job';
 import {
   admit,
@@ -79,7 +81,7 @@ import {
 } from '../shared/domain/facts';
 import { applyProfile, PROFILE_KEY } from './apply';
 import { ensureRunnerAlarm, reconcile, resumeApplication, tick, abortApplication, activeWorkerCount } from './runner';
-import { getNetwork } from './network';
+import { getNetwork, queueReferral, updateNetwork } from './network';
 import { trustedExtension } from '../validators/security';
 
 const MIGRATED_KEY = 'answer-bank-migrated';
@@ -90,6 +92,7 @@ export interface JobCandidate extends AdmissionCandidate {
   url: string;
   ats?: string;
   postedAt?: number;
+  priority?: number;
 }
 
 export interface AdmissionReport {
@@ -128,6 +131,7 @@ export async function enqueueJobs(campaignId: string, candidates: readonly JobCa
       ats: c.ats ?? '',
       route: c.route,
       fit: c.fit,
+      ...(c.priority !== undefined ? { priority: c.priority } : {}),
       ...(c.postedAt ? { postedAt: c.postedAt } : {}),
       state: 'queued',
       note: 'Waiting for a worker.',
@@ -153,7 +157,26 @@ export async function enqueueJobs(campaignId: string, candidates: readonly JobCa
       occurredAt: now,
       confidence: 'verified',
     });
-  if (made.length) void tick();
+  if (made.length) {
+    // Wire `referralTrigger: 'on-queue'` (default) unless strategy is explicitly `apply-first`.
+    const shouldTriggerReferrals =
+      campaign.application.referralTrigger === 'on-queue' && campaign.application.strategyOrder !== 'apply-first';
+    if (shouldTriggerReferrals) {
+      for (const t of made) {
+        if (!t.url || !t.company || !t.title) continue;
+        void queueReferral(
+          {
+            url: t.url,
+            title: t.title,
+            company: t.company,
+            location: t.location,
+          },
+          'referral',
+        ).catch(() => undefined);
+      }
+    }
+    void tick();
+  }
   return { added: made.length, skipped };
 }
 
@@ -352,6 +375,7 @@ export interface QueueRow {
   updatedAt: number;
   canRetry: boolean;
   blocked: number;
+  receipt?: ApplicationReceipt;
 }
 
 export interface InboxRow {
@@ -387,6 +411,7 @@ export interface CampaignView {
   opportunityNotes?: Record<string, OpportunityNote>;
   readiness?: ApplicationReadiness;
   analytics?: AnalyticsSummary;
+  receipts?: ApplicationReceipt[];
 }
 
 import { KIND_LABELS, RESOLUTION } from '../shared/domain/exceptions';
@@ -485,6 +510,7 @@ export async function campaignView(): Promise<CampaignView> {
           updatedAt: t.updatedAt,
           canRetry: safeToRetry(t),
           blocked: (t.blockedBy ?? []).length,
+          ...(t.receipt ? { receipt: t.receipt } : {}),
         };
       }),
     inbox: sortInbox(open).map(e => ({
@@ -509,6 +535,10 @@ export async function campaignView(): Promise<CampaignView> {
       replies: empty.replies,
     }),
     events,
+    receipts: tasks
+      .map(t => t.receipt)
+      .filter((r): r is ApplicationReceipt => !!r)
+      .sort((a, b) => b.submittedAt - a.submittedAt),
   };
 }
 
@@ -537,12 +567,23 @@ export const campaignRequest = z.discriminatedUnion('action', [
   z.object({
     kind: z.literal('campaign'),
     action: z.literal('rules'),
+    mode: z.enum(['discover', 'guided', 'autopilot']).optional(),
     minFit: z.number().int().min(0).max(100).optional(),
     autoAdmit: z.boolean().optional(),
-    dailyTarget: z.number().int().min(0).max(100).optional(),
+    dailyTarget: z.number().int().min(0).max(25).optional(),
     concurrency: z.union([z.literal(1), z.literal(2)]).optional(),
     submitPolicy: z.enum(['review', 'auto']).optional(),
     routes: z.array(routes).max(4).optional(),
+    referralTrigger: z.enum(['on-qualify', 'on-queue', 'on-submit', 'never']).optional(),
+    strategyOrder: z.enum(['referral-first', 'apply-first', 'parallel']).optional(),
+    referralWaitHours: z.number().int().min(1).max(168).optional(),
+    activeHours: z
+      .object({ start: z.number().int().min(0).max(23), end: z.number().int().min(0).max(23) })
+      .nullable()
+      .optional(),
+    autopilotOptIn: z.boolean().optional(),
+    preflightApprove: z.boolean().optional(),
+    allowConsentAutoTick: z.boolean().optional(),
     weeklyBudget: z.number().int().min(0).max(500).optional(),
     maxPerCompany: z.number().int().min(1).max(5).optional(),
   }),
@@ -562,6 +603,7 @@ export const campaignRequest = z.discriminatedUnion('action', [
           source: z.string().max(40).optional(),
           ats: z.string().max(60).optional(),
           postedAt: z.number().optional(),
+          priority: z.number().int().min(0).max(10).optional(),
         }),
       )
       .min(1)
@@ -672,7 +714,14 @@ async function handle(req: CampaignRequest): Promise<CampaignView> {
     case 'control': {
       const current = await activeCampaign();
       if (!current) throw new Error('Create a campaign first.');
-      await changeCampaign(current.id, c => (c ? applyControl(c, req.control as Control) : c));
+      await changeCampaign(current.id, c =>
+        c
+          ? {
+              ...applyControl(c, req.control as Control),
+              ...(req.control === 'start' || req.control === 'resume' ? { application: { ...c.application, failureStreak: 0 } } : {}),
+            }
+          : c,
+      );
       if (req.control === 'start' || req.control === 'resume') {
         await ensureRunnerAlarm();
         void tick();
@@ -682,19 +731,31 @@ async function handle(req: CampaignRequest): Promise<CampaignView> {
     case 'rules': {
       const current = await activeCampaign();
       if (!current) throw new Error('Create a campaign first.');
+      const now = Date.now();
+      const nextMode: MissionMode | undefined =
+        req.mode ?? (req.submitPolicy === 'auto' ? 'autopilot' : req.submitPolicy === 'review' ? 'guided' : undefined);
+      const nextSubmitPolicy = nextMode !== undefined ? (nextMode === 'autopilot' ? 'auto' : 'review') : req.submitPolicy;
       await changeCampaign(current.id, c =>
         c
           ? {
               ...c,
-              updatedAt: Date.now(),
+              updatedAt: now,
               application: {
                 ...c.application,
+                ...(nextMode !== undefined ? { mode: nextMode } : {}),
                 ...(req.minFit !== undefined ? { minFit: req.minFit } : {}),
                 ...(req.autoAdmit !== undefined ? { autoAdmit: req.autoAdmit } : {}),
-                ...(req.dailyTarget !== undefined ? { dailyTarget: req.dailyTarget } : {}),
+                ...(req.dailyTarget !== undefined ? { dailyTarget: Math.min(25, Math.max(0, req.dailyTarget)) } : {}),
                 ...(req.concurrency !== undefined ? { concurrency: req.concurrency } : {}),
-                ...(req.submitPolicy !== undefined ? { submitPolicy: req.submitPolicy } : {}),
+                ...(nextSubmitPolicy !== undefined ? { submitPolicy: nextSubmitPolicy } : {}),
                 ...(req.routes !== undefined ? { routes: req.routes } : {}),
+                ...(req.referralTrigger !== undefined ? { referralTrigger: req.referralTrigger } : {}),
+                ...(req.strategyOrder !== undefined ? { strategyOrder: req.strategyOrder as StrategyOrder } : {}),
+                ...(req.referralWaitHours !== undefined ? { referralWaitHours: req.referralWaitHours } : {}),
+                ...(req.activeHours !== undefined ? { activeHours: req.activeHours } : {}),
+                ...(req.autopilotOptIn === true ? { autopilotOptInAt: c.application.autopilotOptInAt ?? now } : {}),
+                ...(req.preflightApprove === true ? { preflightApprovedAt: c.application.preflightApprovedAt ?? now } : {}),
+                ...(req.allowConsentAutoTick !== undefined ? { allowConsentAutoTick: req.allowConsentAutoTick } : {}),
               },
               referral: {
                 ...c.referral,
@@ -704,6 +765,9 @@ async function handle(req: CampaignRequest): Promise<CampaignView> {
             }
           : c,
       );
+      if (req.strategyOrder !== undefined) {
+        await updateNetwork(s => ({ ...s, strategyOrder: req.strategyOrder as StrategyOrder })).catch(() => undefined);
+      }
       break;
     }
     case 'enqueue': {

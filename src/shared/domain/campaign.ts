@@ -8,8 +8,12 @@
  */
 
 import { defaultAdmission, type AdmissionRules } from '../state-machines/application-task';
+import type { StrategyOrder } from '../apply-status';
 
 export type CampaignStatus = 'draft' | 'running' | 'paused' | 'stopping' | 'completed';
+
+/** High-level mission mode controlling discovery, guided review, and opt-in autopilot. */
+export type MissionMode = 'discover' | 'guided' | 'autopilot';
 
 /** What the runner does when every step of a form is complete and valid. */
 export type SubmitPolicy = 'review' | 'auto';
@@ -30,11 +34,29 @@ export interface ReferralRules {
 }
 
 export interface ApplicationRules extends AdmissionRules {
+  /** Primary mission mode: discover only, guided (default), or autopilot (opt-in). */
+  mode: MissionMode;
   submitPolicy: SubmitPolicy;
   /** Page workers at once. One until the pilot proves two is safe; see the concurrency note below. */
   concurrency: 1 | 2;
   /** Start looking for referral contacts when the application reaches this point. */
   referralTrigger: 'on-qualify' | 'on-queue' | 'on-submit' | 'never';
+  /** How applications and referral outreach are ordered. */
+  strategyOrder: StrategyOrder;
+  /** For referral-first / pinned companies: hours to wait for a referral before applying. */
+  referralWaitHours?: number;
+  /** Active hours window (24h local time), or null for anytime. */
+  activeHours?: { start: number; end: number } | null;
+  /** Timestamp when user explicitly opted into Autopilot and acknowledged LinkedIn risk. */
+  autopilotOptInAt?: number;
+  /** Timestamp when user approved the one-time Pre-flight Preview. */
+  preflightApprovedAt?: number;
+  /** Explicit informed opt-in for ticking required terms/privacy checkboxes in Autopilot. Default false. */
+  allowConsentAutoTick?: boolean;
+  /** Consecutive application failures; pauses automatically at 3. */
+  failureStreak?: number;
+  /** Earliest timestamp for claiming the next application (randomized pacing). */
+  nextClaimAfter?: number;
 }
 
 export interface Campaign {
@@ -58,11 +80,17 @@ export interface Campaign {
 
 export const defaultApplicationRules = (): ApplicationRules => ({
   ...defaultAdmission(),
+  mode: 'guided',
   submitPolicy: 'review',
   // One worker. Two page tabs are not two AI sessions: with one ChatGPT conversation the model calls serialise
   // anyway, so a second tab buys contention rather than speed until that is measured.
   concurrency: 1,
   referralTrigger: 'on-queue',
+  strategyOrder: 'parallel',
+  referralWaitHours: 48,
+  activeHours: null,
+  allowConsentAutoTick: false,
+  failureStreak: 0,
 });
 
 export const defaultReferralRules = (): ReferralRules => ({

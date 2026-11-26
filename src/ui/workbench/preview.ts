@@ -22,6 +22,8 @@ const view: CampaignView = {
     sources: ['linkedin', 'internshala'],
     status: 'running',
     application: {
+      mode: 'guided',
+      strategyOrder: 'parallel',
       minFit: 60,
       autoAdmit: true,
       dailyTarget: 15,

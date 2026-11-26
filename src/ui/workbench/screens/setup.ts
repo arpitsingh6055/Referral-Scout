@@ -6,9 +6,12 @@
  * the queue actually runs into it. So this screen asks for the goal and the rules, and nothing else.
  */
 
-import { button, card, div, field, input, pill, select, setFieldError, text } from '../dom';
+import { button, card, div, el, field, input, pill, select, setFieldError, text } from '../dom';
 import { send, sendNetwork, sendWorkspace } from '../api';
 import { defaultSettings } from '../../../shared/network';
+import { AUTOPILOT_RISK_DISCLOSURE, HARD_DAILY_CAP } from '../../../shared/autopilot';
+import type { MissionMode } from '../../../shared/domain/campaign';
+import type { StrategyOrder } from '../../../shared/apply-status';
 import type { Ctx } from '../shell';
 
 export function setup(ctx: Ctx): HTMLElement {
@@ -30,17 +33,53 @@ export function setup(ctx: Ctx): HTMLElement {
     ],
     c?.employmentType ?? 'internship',
   );
+  const currentMode: MissionMode = c?.application.mode ?? (c?.application.submitPolicy === 'auto' ? 'autopilot' : 'guided');
+  const missionMode = select(
+    [
+      { value: 'discover', label: 'Discover only (find and rank jobs, no applying)' },
+      { value: 'guided', label: 'Guided (default — fills forms, you review & press Submit)' },
+      { value: 'autopilot', label: 'Autopilot (opt-in — auto-submits when every gate passes)' },
+    ],
+    currentMode,
+  );
   const minFit = input(String(c?.application.minFit ?? 60), { type: 'number', min: '0', max: '100' });
-  const dailyTarget = input(String(c?.application.dailyTarget ?? 15), { type: 'number', min: '0', max: '100' });
+  const dailyTarget = input(String(Math.min(c?.application.dailyTarget ?? 15, HARD_DAILY_CAP)), {
+    type: 'number',
+    min: '0',
+    max: String(HARD_DAILY_CAP),
+  });
+  const autoAdmit = select(
+    [
+      { value: 'false', label: 'Manual — only jobs I shortlist or queue' },
+      { value: 'true', label: 'Automatic — queue shortlisted & matching jobs' },
+    ],
+    String(c?.application.autoAdmit ?? false),
+  );
+  const strategyOrder = select(
+    [
+      { value: 'parallel', label: 'In parallel (recommended — apply & find referrers together)' },
+      { value: 'referral-first', label: 'Ask a referrer first, then apply' },
+      { value: 'apply-first', label: 'Apply first, then find referrers' },
+    ],
+    c?.application.strategyOrder ?? 'parallel',
+  );
+  const referralTrigger = select(
+    [
+      { value: 'on-queue', label: 'When a job enters the queue (default)' },
+      { value: 'on-submit', label: 'After application is submitted' },
+      { value: 'never', label: 'Manual only' },
+    ],
+    c?.application.referralTrigger ?? 'on-queue',
+  );
+  const activeHoursSelect = select(
+    [
+      { value: 'any', label: 'Anytime (24 hours)' },
+      { value: 'daytime', label: 'Daytime only (08:00 – 22:00)' },
+    ],
+    c?.application.activeHours ? 'daytime' : 'any',
+  );
   const weeklyBudget = input(String(c?.referral.weeklyBudget ?? 80), { type: 'number', min: '0', max: '500' });
   const maxPerCompany = input(String(c?.referral.maxPerCompany ?? 3), { type: 'number', min: '1', max: '5' });
-  const submitPolicy = select(
-    [
-      { value: 'review', label: 'Fill it and leave Submit to me' },
-      { value: 'auto', label: 'Submit when everything validates' },
-    ],
-    c?.application.submitPolicy ?? 'review',
-  );
   const concurrency = select(
     [
       { value: '1', label: 'One application at a time' },
@@ -49,7 +88,61 @@ export function setup(ctx: Ctx): HTMLElement {
     String(c?.application.concurrency ?? 1),
   );
 
-  const save = button(existing ? 'Save campaign' : 'Create campaign', 'btn btn-primary btn-lg', async () => {
+  const optInCheck = el('input', { type: 'checkbox' }) as HTMLInputElement;
+  optInCheck.checked = !!c?.application.autopilotOptInAt;
+  const consentCheck = el('input', { type: 'checkbox' }) as HTMLInputElement;
+  consentCheck.checked = !!c?.application.allowConsentAutoTick;
+  const preflightApproved = !!c?.application.preflightApprovedAt;
+
+  const autopilotBox = div('stack', []);
+  const samples = (ctx.view.queue?.length ? ctx.view.queue : []).slice(0, 3);
+  const sampleFacts = (ctx.view.facts ?? []).filter(f => f.value.trim()).slice(0, 4);
+  const preflightCard = div('note note-violet', [
+    text('strong', '', preflightApproved ? 'Pre-flight Preview approved' : 'One-time Pre-flight Preview'),
+    text(
+      'p',
+      '',
+      samples.length
+        ? `Sample applications ready: ${samples.map(s => `${s.company} (${s.title})`).join(', ')}.`
+        : 'Queue or shortlist 2–3 jobs to preview exact answers before Autopilot submits.',
+    ),
+    text(
+      'p',
+      'field-help',
+      sampleFacts.length
+        ? `Answers used from your bank: ${sampleFacts.map(f => `${f.canonicalKey}: ${f.value}`).join(' · ')}`
+        : 'Answers will come from your Profile and Answer Bank. Unanswered required questions always pause for you.',
+    ),
+    preflightApproved
+      ? pill('Pre-flight approved', 'green')
+      : button('Approve Pre-flight Preview', 'btn btn-sm btn-primary', async () => {
+          if (!c) {
+            ctx.fail('Save your Mission first before approving Pre-flight Preview.');
+            return;
+          }
+          await ctx.run({ kind: 'campaign', action: 'rules', preflightApprove: true });
+          ctx.inform('Pre-flight Preview approved.');
+        }),
+  ]);
+
+  autopilotBox.append(
+    div('note note-amber', [
+      text('strong', '', 'Autopilot safety & LinkedIn terms'),
+      text('p', '', AUTOPILOT_RISK_DISCLOSURE),
+      el('label', { class: 'inline' }, [optInCheck, text('span', '', 'I understand the risks and want to enable Autopilot.')]),
+      el('label', { class: 'inline' }, [
+        consentCheck,
+        text('span', '', 'Allow Autopilot to tick required privacy/terms checkboxes (off by default).'),
+      ]),
+    ]),
+    preflightCard,
+  );
+  autopilotBox.hidden = missionMode.value !== 'autopilot';
+  missionMode.addEventListener('change', () => {
+    autopilotBox.hidden = missionMode.value !== 'autopilot';
+  });
+
+  const save = button(existing ? 'Save mission' : 'Create mission', 'btn btn-primary btn-lg', async () => {
     const targetRoles = roles.value
       .split(/[\n;,]+/)
       .map(r => r.trim())
@@ -68,6 +161,12 @@ export function setup(ctx: Ctx): HTMLElement {
       ctx.fail('Give at least one target role and a location.');
       return;
     }
+    const chosenMode = missionMode.value as MissionMode;
+    if (chosenMode === 'autopilot' && !optInCheck.checked) {
+      ctx.fail('Tick the Autopilot risk acknowledgment box before enabling Autopilot.');
+      optInCheck.focus();
+      return;
+    }
     try {
       await send({
         kind: 'campaign',
@@ -82,15 +181,22 @@ export function setup(ctx: Ctx): HTMLElement {
         await send({
           kind: 'campaign',
           action: 'rules',
+          mode: chosenMode,
           minFit: Number(minFit.value),
-          dailyTarget: Number(dailyTarget.value),
+          autoAdmit: autoAdmit.value === 'true',
+          dailyTarget: Math.min(HARD_DAILY_CAP, Math.max(0, Number(dailyTarget.value))),
           weeklyBudget: Number(weeklyBudget.value),
           maxPerCompany: Number(maxPerCompany.value),
-          submitPolicy: submitPolicy.value as 'review' | 'auto',
+          submitPolicy: chosenMode === 'autopilot' ? 'auto' : 'review',
+          strategyOrder: strategyOrder.value as StrategyOrder,
+          referralTrigger: referralTrigger.value as 'on-queue' | 'on-submit' | 'never',
+          activeHours: activeHoursSelect.value === 'daytime' ? { start: 8, end: 22 } : null,
+          ...(chosenMode === 'autopilot' && optInCheck.checked ? { autopilotOptIn: true } : {}),
+          allowConsentAutoTick: consentCheck.checked,
           concurrency: Number(concurrency.value) === 2 ? 2 : 1,
         });
       } catch {
-        warnings.push('The campaign target was saved, but its automation rules were not. Reopen Campaign settings to check them.');
+        warnings.push('The mission target was saved, but its automation rules were not. Reopen Mission to check them.');
       }
       const preferredEmployment = employment.value === 'any' ? ['internship', 'full-time', 'part-time', 'contract'] : [employment.value];
       const legacyEmployment = employment.value === 'internship' || employment.value === 'full-time' ? employment.value : 'any';
@@ -103,9 +209,8 @@ export function setup(ctx: Ctx): HTMLElement {
           employmentTypes: preferredEmployment,
         });
       } catch {
-        warnings.push('Candidate profile search preferences could not be synchronised. Review Candidate profile before using matching.');
+        warnings.push('Candidate profile search preferences could not be synchronised.');
       }
-      // The older referral engine shares these target settings. Keep one source of truth: the Campaign screen.
       try {
         const previous = await sendNetwork({ kind: 'network', action: 'status' });
         const parsedWeekly = Number(weeklyBudget.value);
@@ -120,62 +225,49 @@ export function setup(ctx: Ctx): HTMLElement {
           settings: { ...(previous.settings ?? defaultSettings), roles: targetRoles, employmentType: legacyEmployment, weeklyInvites },
         });
       } catch {
-        warnings.push('Referral Scout could not synchronise the side-panel referral preferences. Check them before starting outreach.');
+        warnings.push('Side-panel referral preferences could not be synchronised.');
       }
       await ctx.refresh();
       ctx.go('overview');
       ctx.inform(
         warnings.length
-          ? `Campaign saved with follow-up needed: ${warnings.join(' ')}`
-          : 'Campaign settings saved across the job and referral workflows.',
+          ? `Mission saved with follow-up needed: ${warnings.join(' ')}`
+          : 'Mission settings saved across job discovery, applications, and referrals.',
       );
     } catch (error) {
-      ctx.fail(error instanceof Error ? error.message : 'The campaign could not be saved. Please try again.');
+      ctx.fail(error instanceof Error ? error.message : 'The mission could not be saved. Please try again.');
     }
   });
 
-  const form = card(existing ? 'Campaign' : 'Create campaign', {
-    sub: 'A short setup controls both the application and referral pipelines.',
+  const form = card(existing ? 'Mission' : 'Create your mission', {
+    sub: 'One setup controls job discovery, application mode, daily cap, and referral strategy.',
     body: [
       div('form-grid', [
-        field('Campaign name', name),
+        field('Mission name', name),
         field('Location', location),
         field('Target roles', roles),
         field('Employment type', employment),
-        field('Minimum fit to queue a job', minFit),
-        field('Applications a day (pacing)', dailyTarget),
-        field('Weekly invitation budget', weeklyBudget),
+        field('Minimum fit to queue a job (0–100)', minFit),
+        field(`Daily application cap (max ${HARD_DAILY_CAP})`, dailyTarget),
+        field('Weekly referral invitations', weeklyBudget),
         field('Most contacts per company', maxPerCompany),
       ]),
       div('note note-violet', [
-        text(
-          'p',
-          '',
-          'Nothing here has to be final. The queue asks for anything it needs as it runs, and you can change these at any time.',
-        ),
+        text('p', '', 'Everything here can be changed while your mission is running. Any missing answer pauses only that application.'),
       ]),
     ],
   });
 
-  const rules = card('Automation rules', {
-    sub: 'Choose how much of the repetitive work the runner handles.',
+  const rules = card('Mode & Automation', {
+    sub: 'Choose how much of the daily loop runs on its own.',
     body: [
-      div('', [field('When a form is complete', submitPolicy)]),
+      div('', [field('Mission mode', missionMode)]),
+      autopilotBox,
+      div('', [field('Adding shortlisted jobs to queue', autoAdmit)]),
+      div('', [field('Referral & apply order', strategyOrder)]),
+      div('', [field('When to search for referrers', referralTrigger)]),
+      div('', [field('Active hours', activeHoursSelect)]),
       div('', [field('How many at once', concurrency)]),
-      div('rule-row', [
-        div('', [
-          text('div', 'rule-name', 'Keep the queue moving'),
-          text('div', 'rule-note', 'Carry on with other jobs when one needs a fact from you'),
-        ]),
-        pill('Always on', 'green'),
-      ]),
-      div('rule-row', [
-        div('', [
-          text('div', 'rule-name', 'Never retry an uncertain submission'),
-          text('div', 'rule-note', 'If Submit was pressed and nothing confirmed it, you decide what happened'),
-        ]),
-        pill('Always on', 'green'),
-      ]),
       div('rule-row', [
         div('', [text('div', 'rule-name', 'Gmail outcome sync'), text('div', 'rule-note', 'Match replies to applications and contacts')]),
         pill(ctx.workspace?.connections.gmail ? 'Connected' : 'Not connected', ctx.workspace?.connections.gmail ? 'green' : 'grey'),
@@ -187,9 +279,6 @@ export function setup(ctx: Ctx): HTMLElement {
         ]),
         pill(ctx.workspace?.outreachAutomatic ? 'On' : 'Off', ctx.workspace?.outreachAutomatic ? 'green' : 'grey'),
       ]),
-      div('note note-amber', [
-        text('p', '', 'Recommended: run one application at a time so ChatGPT fills each form steadily without tab contention.'),
-      ]),
       div('', [save]),
     ],
   });
@@ -198,6 +287,6 @@ export function setup(ctx: Ctx): HTMLElement {
 }
 
 export const setupHeader = (): { title: string; sub: string } => ({
-  title: 'Campaign setup & automation rules',
-  sub: 'Set the target once; choose how much of the repetitive work the extension can handle.',
+  title: 'Mission',
+  sub: 'Set your roles, daily cap, referral strategy, and Guided vs. Autopilot mode.',
 });

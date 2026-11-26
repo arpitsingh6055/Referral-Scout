@@ -14,11 +14,12 @@
  *      retried automatically. A duplicate application is worse than a missing one.
  */
 
-import { loadApplySession, startApplyOnTab, applyRunning, checkSubmitted, type ApplySession } from './apply';
+import { loadApplySession, startApplyOnTab, applyRunning, checkSubmitted, cvFile, type ApplySession } from './apply';
 import { openManagedTab } from './network-browser';
 import {
   activeCampaign,
   allTasks,
+  changeCampaign,
   changeException,
   changeTask,
   getCampaign,
@@ -31,6 +32,15 @@ import {
 } from '../shared/persistence/campaign-store';
 import { read, write } from '../storage/state';
 import { mayClaim, mayContinue, type Campaign } from '../shared/domain/campaign';
+import {
+  evaluateAutopilotGates,
+  FAILURE_STREAK_LIMIT,
+  HARD_DAILY_CAP,
+  nextRandomGapMs,
+  withinActiveHoursWindow,
+  type ApplicationReceipt,
+} from '../shared/autopilot';
+import { queueReferral } from './network';
 import { raise, resolve as resolveExc, type ApplicationException, type ExceptionKind } from '../shared/domain/exceptions';
 import {
   heartbeat,
@@ -266,13 +276,46 @@ async function workOne(task: ApplicationTask, campaign: Campaign, signal: AbortS
 
       if (reading.state === 'needs-you' || reading.state === 'uncertain' || reading.state === 'failed') {
         await park(task, reading, campaign);
+        if (reading.state === 'failed') {
+          await recordFailureAndCheckStreak(campaign.id);
+        }
         // The tab stays open: a sign-in or a security check is completed on that page by the person.
         const keepOpen = reading.exception?.kind === 'auth' || reading.exception?.kind === 'security' || reading.state === 'uncertain';
         if (!keepOpen) await closeTab(tabId);
         await note(reading, task, campaign);
+        notifyRunnerEvent(
+          reading.state === 'uncertain'
+            ? `Check ${task.company}: Submit was pressed`
+            : reading.state === 'needs-you'
+              ? `${task.company} needs you`
+              : `${task.company} failed`,
+          reading.note,
+        );
         return;
       }
       if (reading.state === 'submitted') {
+        const cv = await cvFile().catch(() => undefined);
+        const receipt: ApplicationReceipt = {
+          id: `rcpt:${task.id}:${Date.now()}`,
+          applicationId: task.id,
+          jobId: task.jobId,
+          title: task.title,
+          company: task.company,
+          url: task.url,
+          submittedAt: Date.now(),
+          route: task.route,
+          ats: task.ats || task.source,
+          mode: campaign.application.mode === 'autopilot' ? 'autopilot' : 'guided',
+          resumeName: cv?.name ?? 'Profile / CV',
+          answersUsed: (session?.filled ?? []).map(f => ({
+            label: f.label,
+            value: f.value,
+            source: f.why?.includes('earlier') ? 'bank' : f.why?.includes('profile') ? 'profile' : 'ai',
+          })),
+          ...(reading.note ? { confirmationNote: reading.note } : {}),
+        };
+        await changeTask(task.id, old => (old ? { ...old, receipt } : old));
+        await resetFailureStreakAndPace(campaign.id);
         await recordEvent({
           campaignId: campaign.id,
           entityId: task.id,
@@ -284,24 +327,47 @@ async function workOne(task: ApplicationTask, campaign: Campaign, signal: AbortS
           occurredAt: Date.now(),
           confidence: 'verified',
         });
+        if (campaign.application.referralTrigger === 'on-submit' || campaign.application.referralTrigger === 'on-queue') {
+          void queueReferral(
+            {
+              url: task.url,
+              title: task.title,
+              company: task.company,
+              location: task.location,
+            },
+            'referral',
+          ).catch(() => undefined);
+        }
         await closeTab(tabId);
         return;
       }
-      if (reading.state === 'ready' && campaign.application.submitPolicy === 'review') {
-        // The person chose to press Submit themselves. The form is filled and the tab is left for them.
-        await park(
-          task,
-          {
-            state: 'needs-you',
-            note: 'Ready for you to submit.',
-            exception: { kind: 'written-review', prompt: 'This application is filled and ready. Check it and press Submit on the page.' },
-          },
+      if (reading.state === 'ready') {
+        const since = startOfToday();
+        const doneToday = (await tasksFor(campaign.id)).filter(t => t.state === 'submitted' && t.updatedAt >= since).length;
+        const gate = evaluateAutopilotGates({
           campaign,
-        );
-        await changeTask(task.id, old =>
-          old ? transition(old, { to: 'needs-you', reason: 'Filled and waiting for you to submit.' }) : old,
-        );
-        return;
+          task,
+          doneToday,
+          hasMissingRequired: !!session?.ask?.length,
+          hasCaptcha: !!session?.captcha,
+          hasLoginWall: !!session?.waitSignIn,
+          hasSensitiveOrLegalUnanswered: !!session?.leftForYou?.length,
+        });
+        if (!gate.ok) {
+          // Guided mode or an Autopilot gate failed: park for human review with the exact reason.
+          await park(
+            task,
+            {
+              state: 'needs-you',
+              note: gate.reason,
+              exception: { kind: 'written-review', prompt: `${gate.reason} Check the form and press Submit on the page.` },
+            },
+            campaign,
+          );
+          await changeTask(task.id, old => (old ? transition(old, { to: 'needs-you', reason: gate.reason }) : old));
+          notifyRunnerEvent(`${task.company} is ready for your review`, gate.reason);
+          return;
+        }
       }
     } else {
       await changeTask(task.id, old => (old ? heartbeat(old, OWNER) : old));
@@ -344,8 +410,69 @@ async function closeTab(tabId: number): Promise<void> {
 }
 
 async function finish(id: string, state: TaskState, reason: string, tabId?: number): Promise<void> {
-  await changeTask(id, old => (old ? transition(old, { to: state, reason, patch: { attempts: old.attempts + 1 } }) : old));
+  const updated = await changeTask(id, old => (old ? transition(old, { to: state, reason, patch: { attempts: old.attempts + 1 } }) : old));
+  if (state === 'failed' && updated) {
+    await recordFailureAndCheckStreak(updated.campaignId);
+  }
   if (tabId !== undefined) await closeTab(tabId);
+}
+
+async function recordFailureAndCheckStreak(campaignId: string): Promise<void> {
+  const updated = await changeCampaign(campaignId, c => {
+    if (!c) return c;
+    const streak = (c.application.failureStreak ?? 0) + 1;
+    const shouldPause = streak >= FAILURE_STREAK_LIMIT && c.status === 'running';
+    return {
+      ...c,
+      updatedAt: Date.now(),
+      ...(shouldPause
+        ? {
+            status: 'paused' as const,
+            statusNote: `Paused automatically after ${FAILURE_STREAK_LIMIT} consecutive failures.`,
+          }
+        : {}),
+      application: {
+        ...c.application,
+        failureStreak: streak,
+      },
+    };
+  });
+  if (updated && (updated.application.failureStreak ?? 0) >= FAILURE_STREAK_LIMIT) {
+    notifyRunnerEvent(
+      'Application queue paused',
+      `Paused after ${FAILURE_STREAK_LIMIT} consecutive failures. Review Needs you before resuming.`,
+    );
+  }
+}
+
+async function resetFailureStreakAndPace(campaignId: string): Promise<void> {
+  const gap = nextRandomGapMs();
+  await changeCampaign(campaignId, c =>
+    c
+      ? {
+          ...c,
+          updatedAt: Date.now(),
+          application: {
+            ...c.application,
+            failureStreak: 0,
+            nextClaimAfter: Date.now() + gap,
+          },
+        }
+      : c,
+  );
+}
+
+function notifyRunnerEvent(title: string, message: string): void {
+  try {
+    chrome.notifications?.create?.(`rs-runner-${Date.now()}`, {
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title,
+      message,
+    });
+  } catch {
+    // Ignore outside extension runtime.
+  }
 }
 
 /* ---------- the loop ---------- */
@@ -405,14 +532,23 @@ export async function tick(): Promise<void> {
     }
 
     if (!mayClaim(campaign)) return;
+    if (campaign.application.mode === 'discover') return;
+    if (!withinActiveHoursWindow(campaign.application.activeHours ?? null)) return;
+    if (campaign.application.nextClaimAfter && Date.now() < campaign.application.nextClaimAfter) return;
+    if ((campaign.application.failureStreak ?? 0) >= FAILURE_STREAK_LIMIT) return;
     const since = startOfToday();
     const doneToday = tasks.filter(t => t.state === 'submitted' && t.updatedAt >= since).length;
+    const effectiveDailyTarget = Math.min(campaign.application.dailyTarget || 15, HARD_DAILY_CAP);
+    if (effectiveDailyTarget > 0 && doneToday >= effectiveDailyTarget) {
+      notifyRunnerEvent('Daily application cap reached', `Reached today's cap of ${effectiveDailyTarget} applications.`);
+      return;
+    }
     const fresh = await tasksFor(campaign.id);
     const next = nextEligible(fresh, {
       owner: OWNER,
       concurrency: campaign.application.concurrency,
       doneToday,
-      dailyTarget: campaign.application.dailyTarget,
+      dailyTarget: effectiveDailyTarget,
     });
     if (!next || workers.has(next.id)) return;
     startWorker(next, campaign);

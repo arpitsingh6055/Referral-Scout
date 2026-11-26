@@ -20,7 +20,12 @@ export function welcome(ctx: Ctx): HTMLElement {
   const w = ctx.workspace;
   if (!w)
     return div('stack', [
-      card('Your workspace is not ready', { body: [text('p', 'cell-muted', 'Reload the extension and open the dashboard again.')] }),
+      card('Your workspace is not ready', {
+        body: [
+          text('p', 'cell-muted', 'The background service did not respond yet. Try refreshing.'),
+          button('Retry', 'btn btn-primary', () => ctx.refresh()),
+        ],
+      }),
     ]);
 
   const linkedInReady = w.connections.linkedin;

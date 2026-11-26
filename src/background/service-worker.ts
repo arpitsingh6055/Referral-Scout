@@ -6,6 +6,7 @@ import { networkTick, updateNetwork } from './network';
 import { registerCampaignMessages, migrateAnswerBank } from './campaign';
 import { migrateV4ToV5 } from './migration-v5';
 import { migrateV5ToV6 } from './migration-v6';
+import { migrateV6ToV7 } from './migration-v7';
 import { registerGmailMessages } from './gmail';
 import {
   applySurfaceBehaviour,
@@ -70,6 +71,7 @@ async function start(): Promise<void> {
   await migrateAnswerBank().catch(() => undefined);
   await migrateV4ToV5().catch(() => undefined);
   await migrateV5ToV6().catch(() => undefined);
+  await migrateV6ToV7().catch(() => undefined);
   // LinkedIn/CV captures remain source evidence only. Candidate profile records are created only from an
   // explicitly approved ChatGPT reconciliation draft.
   await ensureRunnerAlarm();

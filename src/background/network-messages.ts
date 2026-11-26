@@ -1006,29 +1006,64 @@ export function registerNetworkMessages(): void {
             if (s.lastRun) s.lastRun = { ...s.lastRun, dismissedAt: Date.now() };
             return s;
           });
-        if (req.action === 'setStrategyOrder')
+        if (req.action === 'setStrategyOrder') {
           await updateNetwork(s => ({
             ...s,
             strategyOrder: req.order,
           }));
-        if (req.action === 'queueJobsForApply')
-          await updateNetwork(s => {
-            const existing = s.applyQueue ?? [];
-            const merged = [...existing];
-            for (const u of req.urls) {
-              if (!merged.includes(u)) merged.push(u);
+          const { activeCampaign, changeCampaign } = await import('../shared/persistence/campaign-store');
+          const camp = await activeCampaign().catch(() => undefined);
+          if (camp) {
+            await changeCampaign(camp.id, c =>
+              c ? { ...c, updatedAt: Date.now(), application: { ...c.application, strategyOrder: req.order } } : c,
+            ).catch(() => undefined);
+          }
+        }
+        if (req.action === 'queueJobsForApply') {
+          const { ensureDefaultCampaignFromNetwork, syncFromNetwork } = await import('./bridge');
+          const { enqueueJobs } = await import('./campaign');
+          await syncFromNetwork().catch(() => undefined);
+          const camp = await ensureDefaultCampaignFromNetwork().catch(() => null);
+          const net = await getNetwork().catch(() => null);
+          if (camp) {
+            const candidates = req.urls.map(url => {
+              const refJob = (net?.referralJobs ?? []).find(r => r.url === url);
+              const foundJob = net?.jobSearch?.found?.find(f => f.url === url);
+              return {
+                jobId: foundJob?.id ?? url,
+                url,
+                company: refJob?.company ?? foundJob?.company ?? 'Company',
+                title: refJob?.title ?? foundJob?.title ?? 'Job application',
+                location: refJob?.location ?? foundJob?.location ?? '',
+                fit: foundJob?.fit ?? 75,
+                route: 'unknown' as const,
+                source: 'LinkedIn Jobs',
+              };
+            });
+            await enqueueJobs(camp.id, candidates).catch(() => undefined);
+          }
+          await updateNetwork(s => ({
+            ...s,
+            applyQueue: [],
+            status: `${req.urls.length} ${req.urls.length === 1 ? 'job' : 'jobs'} added to the application queue.`,
+          }));
+        }
+        if (req.action === 'dequeueJobForApply') {
+          const { allTasks, changeTask } = await import('../shared/persistence/campaign-store');
+          const { transition } = await import('../shared/state-machines/application-task');
+          const tasks = await allTasks().catch(() => []);
+          for (const t of tasks) {
+            if (t.url === req.url && (t.state === 'queued' || t.state === 'needs-you')) {
+              await changeTask(t.id, old => (old ? transition(old, { to: 'skipped', reason: 'Removed from queue by you.' }) : old)).catch(
+                () => undefined,
+              );
             }
-            return {
-              ...s,
-              applyQueue: merged.slice(0, 20),
-              status: `${merged.length} ${merged.length === 1 ? 'job' : 'jobs'} queued for guided apply (one at a time, with your review).`,
-            };
-          });
-        if (req.action === 'dequeueJobForApply')
+          }
           await updateNetwork(s => ({
             ...s,
             applyQueue: (s.applyQueue ?? []).filter(u => u !== req.url),
           }));
+        }
         accepted = true;
         return statusView(await getNetwork());
       } finally {
