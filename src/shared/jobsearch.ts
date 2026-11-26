@@ -329,7 +329,7 @@ export function companyPlanPrompt(
     '',
     'Reply with ONLY one JSON object: {"companies":[ ... ]} with one entry per company above, in the same order, each exactly:',
     '{"company": the name exactly as given, "type": "enterprise" | "mid" | "scaleup" | "startup", "why": one short sentence on why these people, "searchTitles": 4 to 7 job titles to search for at this company, most valuable first, written as they appear in LinkedIn headlines, 1 to 3 words each, no company names, "avoid": up to 5 titles NOT to approach at this company as a stranger, "note": a connection note of at most 170 characters using {firstName}, {myFirstName}, {title}, {company}, "ask": a 40 to 70 word message to someone the seeker ALREADY knows there, using {firstName}, {myFirstName}, {title}, {company}, {jobUrl}, asking whether they would refer them or point them to the right person, "followUp": the same request for a stranger who has just accepted the connection request, opening with thanks for connecting}',
-    'Wording rules for note, ask and followUp: plain, warm, specific to the job; no flattery, no list of achievements, no invented facts, no links except {jobUrl}, no emails or phone numbers. Use the placeholders literally.',
+    'Wording rules for note, ask and followUp: plain, warm, specific to the job; never include parentheses, locations, remote/paid tags, accelerator batches (like YC W22), or job codes in role/company names; no flattery, no list of achievements, no invented facts, no links except {jobUrl}, no emails or phone numbers. Use the placeholders literally.',
   ].join('\n');
 }
 const strategyReply = z.object({
