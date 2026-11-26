@@ -332,7 +332,7 @@ async function syncApplyProgress(tabId: number, s: ApplySession): Promise<void> 
           : status === 'done'
             ? s.stage === 'submitted'
               ? 'Application submitted'
-              : 'Form filled — review & submit'
+              : 'Ready to submit — review & click Submit application'
             : s.stage === 'moving'
               ? s.message || `Step ${s.stepCount} filled — advancing…`
               : s.message || 'Filling application form…';
@@ -1092,6 +1092,18 @@ async function fillStep(
     const target = looks.find(r => r.result === 'opened');
     if (!target && looks.some(r => r.result === 'closed')) {
       await captureJob(tabId, url);
+      if (linkedin) {
+        const resumeState = await chrome.scripting
+          .executeScript({
+            target: { tabId, allFrames: true },
+            func: () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.ensureResumeSelected?.() ?? 'none',
+          })
+          .catch(() => []);
+        if (resumeState.some(r => r.result === 'selected')) {
+          frames = await scanAll(tabId, linkedin);
+          page = merge(frames, url, tab.title ?? '');
+        }
+      }
       await update(tabId, x => ({
         ...x,
         stage: 'error',
@@ -1103,6 +1115,18 @@ async function fillStep(
     if (!target && looks.some(r => r.result === 'applied')) {
       // Nothing to fill: the person already applied here. Offer the referral step instead of an error.
       await captureJob(tabId, url);
+      if (linkedin) {
+        const resumeState = await chrome.scripting
+          .executeScript({
+            target: { tabId, allFrames: true },
+            func: () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.ensureResumeSelected?.() ?? 'none',
+          })
+          .catch(() => []);
+        if (resumeState.some(r => r.result === 'selected')) {
+          frames = await scanAll(tabId, linkedin);
+          page = merge(frames, url, tab.title ?? '');
+        }
+      }
       const s0 = await loadSession(tabId);
       await update(tabId, x => ({
         ...x,
@@ -1160,6 +1184,18 @@ async function fillStep(
     );
   }
   await captureJob(tabId, url);
+  if (linkedin) {
+    const resumeState = await chrome.scripting
+      .executeScript({
+        target: { tabId, allFrames: true },
+        func: () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.ensureResumeSelected?.() ?? 'none',
+      })
+      .catch(() => []);
+    if (resumeState.some(r => r.result === 'selected')) {
+      frames = await scanAll(tabId, linkedin);
+      page = merge(frames, url, tab.title ?? '');
+    }
+  }
   const [bg, profile, photo, cv] = await Promise.all([background(), applyProfile(), photoFile(), cvFile()]);
   // "Mark this job as a top choice": ticked on every application while LinkedIn offers it, unless the person chose
   // to decide themselves. Ticking reveals a required message, which is written below with the rest of the step.
@@ -1921,7 +1957,11 @@ async function siteRefused(tabId: number): Promise<boolean> {
     .executeScript({
       target: { tabId, allFrames: true },
       func: () =>
-        [...document.querySelectorAll('[aria-invalid="true"], [role="alert"]')].some(
+        [
+          ...document.querySelectorAll(
+            '[aria-invalid="true"], [role="alert"], [data-test-form-element-error-messages], .artdeco-inline-feedback--error',
+          ),
+        ].some(
           e => e.getClientRects().length > 0 && (e.getAttribute('aria-invalid') === 'true' || (e.textContent ?? '').trim().length > 3),
         ),
     })
@@ -1945,6 +1985,19 @@ async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
       )
     : await inFrame(tabId, frame, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.next());
   if (!clicked?.clicked) throw new Error(clicked?.error ?? 'The page changed; press Fill again.');
+  const settled = await inFrame(
+    tabId,
+    via?.frame ?? frame,
+    () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.waitAfterNext?.(2500) ?? Promise.resolve('timeout'),
+  ).catch(() => 'timeout' as const);
+  if (settled === 'error') {
+    await update(tabId, x => ({
+      ...x,
+      stage: 'review',
+      message: 'The site highlighted a required field on this step. Fix it on the page, then press Next step.',
+    }));
+    return false;
+  }
   // Slow sites (Workday, company job sites) can take 20 seconds or more to show the next step: wait up to 25 seconds
   // for the step to change, and stop early only when the site has plainly refused (an error shown on the fields).
   const began = Date.now();

@@ -1605,4 +1605,38 @@ describe('ATS pre-form navigation, SPA form waiter, and stale tab recovery', () 
       (globalThis as { chrome?: unknown }).chrome = prevChrome;
     }
   });
+
+  it('dispatches full pointer/mouse sequence on Next, waits via MutationObserver, and selects LinkedIn resume card', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    Element.prototype.scrollIntoView = function () {};
+    document.body.innerHTML = `
+      <div class="jobs-easy-apply-modal" role="dialog">
+        <span>1/4 pages</span>
+        <div data-test-resume-card aria-checked="false"><input type="radio" name="resume" /> Resume.pdf</div>
+        <button type="button" aria-label="Continue to next step">Next</button>
+      </div>`;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+
+    expect(api.ensureResumeSelected()).toBe('selected');
+    expect((document.querySelector('input[type="radio"]') as HTMLInputElement).checked).toBe(true);
+
+    const btn = document.querySelector('button')!;
+    const events: string[] = [];
+    for (const ev of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      btn.addEventListener(ev, () => events.push(ev));
+    }
+    api.scan({ linkedin: true });
+    expect(api.next()).toEqual({ clicked: 'Continue to next step' });
+    expect(events).toEqual(['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']);
+
+    setTimeout(() => {
+      document.querySelector('span')!.textContent = '2/4 pages';
+    }, 30);
+    await expect(api.waitAfterNext(500)).resolves.toBe('mutated');
+  });
 });

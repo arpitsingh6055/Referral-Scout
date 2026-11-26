@@ -124,8 +124,12 @@ export interface ApplyApi {
   }): Promise<{ ok: boolean; note?: string }>;
   /** Watches for in-place SPA login completion and notifies background to resume filling. */
   watchLoginCompletion(): void;
+  /** Selects an existing LinkedIn Easy Apply resume card if unselected, or reports if upload is needed. */
+  ensureResumeSelected(): 'selected' | 'needs-upload' | 'none';
+  /** Waits up to timeoutMs via MutationObserver for modal/step mutation or inline validation errors after clicking Next. */
+  waitAfterNext(timeoutMs?: number): Promise<'mutated' | 'error' | 'timeout'>;
 }
-const VERSION = 14;
+const VERSION = 15;
 const scope = globalThis as typeof globalThis & { __referralScoutApply?: ApplyApi };
 
 /* ---------- reading the page ---------- */
@@ -514,7 +518,21 @@ function setNative(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElemen
   else el.value = value;
 }
 function fire(el: Element, ...types: string[]): void {
-  for (const t of types) el.dispatchEvent(new Event(t, { bubbles: true }));
+  for (const t of types) {
+    if (t === 'input' && typeof InputEvent === 'function') {
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
+    } else {
+      el.dispatchEvent(new Event(t, { bubbles: true, cancelable: true }));
+    }
+  }
+}
+function clickFull(el: HTMLElement): void {
+  const opts = { bubbles: true, cancelable: true };
+  if (typeof PointerEvent === 'function') el.dispatchEvent(new PointerEvent('pointerdown', opts));
+  el.dispatchEvent(new MouseEvent('mousedown', opts));
+  if (typeof PointerEvent === 'function') el.dispatchEvent(new PointerEvent('pointerup', opts));
+  el.dispatchEvent(new MouseEvent('mouseup', opts));
+  el.click();
 }
 const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, ' ').trim();
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -1256,7 +1274,8 @@ function create(): ApplyApi {
         return { error: 'This looks like the final review page: check it and submit it yourself.' };
       undo.splice(0);
       this.clear();
-      next.el.click();
+      next.el.scrollIntoView?.({ block: 'center' });
+      clickFull(next.el);
       return { clicked: next.label };
     },
     submitFinal() {
@@ -1765,6 +1784,62 @@ function create(): ApplyApi {
       });
       observer.observe(root, { childList: true, subtree: true, attributes: true });
       w.__rsLoginWatcher = observer;
+    },
+    ensureResumeSelected() {
+      const root = easyApplyDialog(document) ?? formRoot(document);
+      const cards = deepQueryAll<HTMLElement>(
+        root,
+        '[data-test-resume-card], .jobs-document-upload-redesign-card__container, [class*="resume-card" i]',
+      ).filter(visible);
+      if (cards.length) {
+        const already = cards.some(
+          c =>
+            c.getAttribute('aria-checked') === 'true' ||
+            c.classList.contains('jobs-document-upload-redesign-card__container--selected') ||
+            !!c.querySelector('input[type="radio"]:checked, [aria-checked="true"]'),
+        );
+        if (!already) {
+          const pick = cards[0]!.querySelector<HTMLElement>('input[type="radio"], [role="radio"], button, label') ?? cards[0]!;
+          clickFull(pick);
+        }
+        return 'selected';
+      }
+      const radios = deepQueryAll<HTMLInputElement>(root, 'input[type="radio"]').filter(r =>
+        /resume|cv|\.pdf|\.docx?/i.test(clean(r.closest('div, li, label')?.textContent)),
+      );
+      if (radios.length) {
+        if (!radios.some(r => r.checked)) clickFull(radios[0]!);
+        return 'selected';
+      }
+      const emptyFile = deepQueryAll<HTMLInputElement>(root, 'input[type="file"]').find(i => !i.disabled && !(i.files?.length ?? 0));
+      return emptyFile ? 'needs-upload' : 'none';
+    },
+    waitAfterNext(timeoutMs = 2500) {
+      const root = easyApplyDialog(document) ?? formRoot(document);
+      const errSel = '[data-test-form-element-error-messages], .artdeco-inline-feedback--error, [aria-invalid="true"]';
+      const hasErr = () =>
+        deepQueryAll(root, errSel).some(e => visible(e) && (e.getAttribute('aria-invalid') === 'true' || clean(e.textContent).length > 2));
+      const snap = () => clean(root.textContent).slice(0, 600);
+      const initial = snap();
+      return new Promise<'mutated' | 'error' | 'timeout'>(resolve => {
+        let settled = false;
+        const done = (res: 'mutated' | 'error' | 'timeout') => {
+          if (settled) return;
+          settled = true;
+          observer.disconnect();
+          clearInterval(poll);
+          clearTimeout(timer);
+          resolve(res);
+        };
+        const check = () => {
+          if (hasErr()) return done('error');
+          if (snap() !== initial) return done('mutated');
+        };
+        const observer = new MutationObserver(check);
+        observer.observe(root, { childList: true, subtree: true, characterData: true, attributes: true });
+        const poll = setInterval(check, 150);
+        const timer = setTimeout(() => done('timeout'), timeoutMs);
+      });
     },
   };
 }
