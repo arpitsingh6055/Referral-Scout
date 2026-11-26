@@ -2,6 +2,7 @@
 node_modules/
 .pnpm-store/
 dist/
+release/
 preview/
 preview-workbench.html
 coverage/

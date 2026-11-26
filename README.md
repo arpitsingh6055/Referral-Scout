@@ -8,10 +8,10 @@
 
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-5b5bd6)](manifest.json)
 [![Version](https://img.shields.io/badge/Version-0.58.2-10b981)](CHANGELOG.md)
-[![Vitest](https://img.shields.io/badge/Vitest-43%20suites%20%E2%80%A2%20713%20tests-0ea5e9)](#verification--packaging)
+[![Vitest](https://img.shields.io/badge/Vitest-44%20suites%20%E2%80%A2%20738%20tests-0ea5e9)](#verification--packaging)
 [![CSP Strict](https://img.shields.io/badge/Security-Local--First%20%7C%20Strict%20CSP-6366f1)](SECURITY.md)
 
-**[Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/referral-scout-jobs-and-/lhfibhgokebhefdagadklckepkbbljhc)** · **[Architecture](docs/architecture.md)** · **[Development Guide](docs/development.md)** · **[Privacy Policy](docs/privacy.md)** · **[Store Packet](docs/store-submission.md)**
+**[Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/referral-scout-jobs-and-/lhfibhgokebhefdagadklckepkbbljhc)** · **[Architecture](docs/architecture.md)** · **[Development Guide](docs/development.md)** · **[Privacy Policy](docs/privacy.md)** · **[Chrome & Edge Store Packet](docs/store-submission-chrome-edge.md)**
 
 </div>
 
@@ -30,7 +30,8 @@
 - **Smart CV & LinkedIn Reconciliation:** Parses PDF/DOCX resumes locally, compares your CV against your signed-in LinkedIn profile through ChatGPT, surfaces Before/After conflict diffs with 1-click **"Looks Good — Save All"** confirmation, and hydrates your Candidate Profile and Answer Bank atomically (`profileStorage.ts`).
 - **3-Tier Student-Friendly Answer Bank & Just-in-Time Learning:** Organizes questions into **Tier 1 Core Essentials** (1-click pill presets for authorization, availability, start date, relocation), **Tier 2 Role Preferences**, and a collapsible **Tier 3 Auto-Learned Accordion**. Detects **Student / Intern** profiles automatically to offer 1-click safe smart defaults (`Immediate`, `N/A (Student)` CTC).
 - **6-Stage Floating Progress HUD:** Cross-context persistent bottom HUD (`chrome.storage.local` + Closed-Shadow-DOM host overlays) that guides you cleanly across setup, CV review, campaign creation, LinkedIn job search, **Needs You** approvals, and active queue progress.
-- **Job Discovery, Company Ranking & Pin Priority:** Discovers LinkedIn roles, qualifies eligibility against your real profile, ranks target companies transparently (`rankCompanies()`), and supports 1-click **Pin company** boosts across **Jobs**, **Referrals**, and **People** so outreach budget prioritizes your favorite employers.
+- **Opportunity-Centred Workspace & Today's Priorities:** Unified 6-tab **Opportunity Workspace** (`Overview`, `Application`, `People`, `Conversations`, `Timeline`, `Outcome`) per vacancy with pre-flight application readiness checks, multi-role contact collision prevention, and a ranked **Today's Priorities** action feed.
+- **Company Ranking, Cross-Channel Conversations & Pin Priority:** Discovers LinkedIn roles, qualifies eligibility against your real profile, ranks target companies transparently (`rankCompanies()`), tracks LinkedIn + Gmail replies per opportunity, and supports 1-click **Pin company** boosts.
 - **Human-in-the-Loop Application Queue & Referrer Outreach:** Runs a lease-backed queue across LinkedIn Easy Apply and **27 ATS platforms** (Greenhouse, Lever, Workday, Ashby, Workable, Recruitee, Teamtailor, Naukri, Instahyre, Wellfound, Zoho Recruit, Keka, Darwinbox, and more). Automatically pauses in **Needs You** for logins, CAPTCHAs, unfamiliar questions, uncertain submissions, or final review—while healthy applications continue.
 
 ---

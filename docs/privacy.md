@@ -14,8 +14,8 @@ Referral Scout stores the following records locally inside your browser (`chrome
 
 - **Candidate Profile & Documents:** Uploaded PDF/DOCX CV files and extracted text, plus your structured identity (name, email, phone, location, LinkedIn/portfolio URLs), education history, work experience, projects, and skills.
 - **Answer Bank & Learned Application Responses:** Reusable factual answers (such as work authorization by country, notice period, start date, compensation expectations, and responses remembered when you answer an application prompt). Sensitive diversity/EEO disclosures (gender, disability, veteran, ethnicity) and legal signatures are never inferred from your CV.
-- **Job Discovery & Campaign Records:** Target roles, locations, discovered job listings, fit assessments, shortlisted roles, company priority pins, and queued/submitted application states.
-- **Referral Outreach State:** Publicly visible profile details of target referrers read from LinkedIn pages you visit/scan, draft outreach notes awaiting your approval, and invitation/follow-up timestamps.
+- **Job Discovery, Opportunity Workspaces & Campaign Records:** Target roles, locations, discovered job listings, fit assessments, shortlisted roles, company priority pins, pre-flight readiness checks, opportunity notes/outcomes, and queued/submitted application states.
+- **Referral Outreach & Cross-Channel Conversations:** Publicly visible profile details of target referrers read from LinkedIn pages you visit/scan, draft outreach notes awaiting your approval, invitation/follow-up timestamps, and locally matched LinkedIn/Gmail conversation thread metadata (`conversations` and `outreach` IndexedDB stores).
 
 **Retention & Deletion Controls:**  
 You retain full control of your data. In **Workbench → Settings**, you can export a local JSON backup (`Export data`, which deliberately excludes any optional OpenAI API key), delete your saved CV (`Delete CV`), suppress individual contacts permanently, or wipe all local extension data at once (`Delete everything`). Uninstalling the extension removes browser-managed storage.
