@@ -27,6 +27,26 @@ export interface FillResult {
   ok: boolean;
   note?: string;
 }
+export interface DistilledPage {
+  url: string;
+  title: string;
+  headings: string[];
+  pageIntent: 'LOGIN_REQUIRED' | 'CAPTCHA_REQUIRED' | 'SUBMITTED' | 'REVIEW_STEP' | 'FORM_STEP' | 'GUEST_CHOICE' | 'JD_LANDING';
+  errors: string[];
+  actions: {
+    uid: string;
+    label: string;
+    role: 'apply_cta' | 'guest_continue' | 'next_step' | 'submit_final' | 'login_trigger' | 'other';
+  }[];
+  fields: {
+    uid: string;
+    label: string;
+    type: string;
+    required: boolean;
+    value: string;
+    options?: string[];
+  }[];
+}
 export interface ApplyApi {
   version: number;
   /** linkedin: read only LinkedIn's Easy Apply window, never the rest of the page (search box, messaging, filters). */
@@ -94,8 +114,18 @@ export interface ApplyApi {
     type: string;
     data: string;
   }): Promise<{ ok: boolean; note?: string; how: 'input' | 'drop' | 'none' }>;
+  /** Semantic DOM snapshot with temporary `data-rs-uid` handles across modals and open Shadow DOMs. */
+  distillPageForAI(): DistilledPage;
+  /** Executes an AI-planned action (`CLICK`, `FILL`, `SELECT`, `UPLOAD_CV`) by `data-rs-uid`. */
+  executeUidAction(action: {
+    uid: string;
+    type: 'CLICK' | 'FILL' | 'SELECT' | 'UPLOAD_CV';
+    value?: string;
+  }): Promise<{ ok: boolean; note?: string }>;
+  /** Watches for in-place SPA login completion and notifies background to resume filling. */
+  watchLoginCompletion(): void;
 }
-const VERSION = 13;
+const VERSION = 14;
 const scope = globalThis as typeof globalThis & { __referralScoutApply?: ApplyApi };
 
 /* ---------- reading the page ---------- */
@@ -108,21 +138,29 @@ const visible = (el: Element): boolean => {
   if (style.display === 'none' || style.visibility === 'hidden') return false;
   return h.getClientRects().length > 0;
 };
-const textOfIds = (ids: string | null, doc: Document): string =>
-  clean(
+const rootOf = (el: Element): Document | ShadowRoot => {
+  const r = el.getRootNode();
+  return r instanceof ShadowRoot ? r : el.ownerDocument;
+};
+const textOfIds = (ids: string | null, el: Element): string => {
+  const doc = el.ownerDocument;
+  const root = rootOf(el);
+  return clean(
     (ids ?? '')
       .split(/\s+/)
-      .map(id => (id ? doc.getElementById(id)?.textContent : ''))
+      .map(id => (id ? (root.querySelector(`#${esc(id)}`) ?? doc.getElementById(id))?.textContent : ''))
       .join(' '),
   );
+};
 /** The question a control asks, in the words the person sees. */
 function labelOf(el: Element): string {
   const doc = el.ownerDocument;
-  const by = textOfIds(el.getAttribute('aria-labelledby'), doc);
+  const root = rootOf(el);
+  const by = textOfIds(el.getAttribute('aria-labelledby'), el);
   if (by) return by;
   const id = el.getAttribute('id');
   if (id) {
-    const l = doc.querySelector(`label[for="${esc(id)}"]`);
+    const l = root.querySelector(`label[for="${esc(id)}"]`) ?? doc.querySelector(`label[for="${esc(id)}"]`);
     if (l && clean(l.textContent)) return clean(l.textContent);
   }
   const wrap = el.closest('label');
@@ -157,11 +195,10 @@ function commonAncestor(els: Element[]): Element {
   return box ?? els[0]!.ownerDocument.body;
 }
 function groupLabel(el: Element, group: Element[] = [el]): string {
-  const doc = el.ownerDocument;
   const set = el.closest('fieldset, [role="radiogroup"], [role="group"]');
   if (set) {
     const legend = set.querySelector('legend');
-    const t = clean(legend?.textContent) || textOfIds(set.getAttribute('aria-labelledby'), doc) || clean(set.getAttribute('aria-label'));
+    const t = clean(legend?.textContent) || textOfIds(set.getAttribute('aria-labelledby'), set) || clean(set.getAttribute('aria-label'));
     if (t) return t;
   }
   // No fieldset: the question is the text just before the box that holds all the options (never an option's own label).
@@ -204,7 +241,7 @@ const optionLabel = (input: HTMLInputElement): string => {
   if (byFor) return byFor;
   const wrap = clean(input.closest('label')?.textContent);
   if (wrap) return wrap;
-  const by = textOfIds(input.getAttribute('aria-labelledby'), doc);
+  const by = textOfIds(input.getAttribute('aria-labelledby'), input);
   if (by) return by;
   // The largest box around this input that holds no other choice: its text is this choice's words.
   let best = '';
@@ -244,14 +281,27 @@ function sectionOf(el: Element): string {
 // LinkedIn's messaging pop-up. Not any "message" field: LinkedIn's top-choice box is labelled "Include a message...".
 const MESSAGING =
   '.msg-overlay-conversation-bubble, .msg-overlay-list-bubble, [class*="msg-overlay" i], [role="dialog"][aria-label^="Messaging" i]';
+function deepQueryAll<T extends Element>(root: ParentNode, selector: string, out: T[] = [], seen = new Set<Element>()): T[] {
+  for (const el of root.querySelectorAll<T>(selector)) {
+    if (!seen.has(el)) {
+      seen.add(el);
+      out.push(el);
+    }
+  }
+  for (const host of root.querySelectorAll('*')) {
+    if (host.shadowRoot) deepQueryAll(host.shadowRoot, selector, out, seen);
+  }
+  return out;
+}
 /** LinkedIn's Easy Apply window, when it is open: a dialog about applying, never the messaging pop-up. */
 function easyApplyDialog(doc: Document): Element | null {
-  const known = [
-    ...doc.querySelectorAll('.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"], [class*="easy-apply" i][role="dialog"]'),
-  ].find(visible);
+  const known = deepQueryAll(
+    doc,
+    '.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"], [class*="easy-apply" i][role="dialog"], [data-test-modal-container] [role="dialog"]',
+  ).find(visible);
   if (known) return known;
   return (
-    [...doc.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"]')]
+    deepQueryAll(doc, '[role="dialog"], dialog[open], [aria-modal="true"]')
       .filter(d => visible(d) && !d.matches(MESSAGING) && !d.closest(MESSAGING))
       .find(d =>
         /\b(apply to|easy apply|submit application|contact info|additional questions|work authori[sz]ation|resume|review your application)\b/i.test(
@@ -295,20 +345,20 @@ function searchForm(f: Element): boolean {
   return named || go;
 }
 function formRoot(doc: Document): Element {
-  const has = (e: Element) => [...e.querySelectorAll('input, select, textarea, [contenteditable="true"]')].some(visible);
+  const has = (e: Element) => deepQueryAll(e, 'input, select, textarea, [contenteditable="true"], [role="combobox"]').some(visible);
   const easy = easyApplyDialog(doc);
   if (easy && has(easy)) return easy;
-  const dialogs = [...doc.querySelectorAll('[role="dialog"], dialog[open], [aria-modal="true"]')].filter(
+  const dialogs = deepQueryAll(doc, '[role="dialog"], dialog[open], [aria-modal="true"]').filter(
     d => visible(d) && has(d) && !d.matches(MESSAGING) && !d.closest(MESSAGING),
   );
   if (dialogs.length) return dialogs.at(-1)!;
   // A form may hold no fields yet, only "Add a role" (an empty list): it is still the application. A footer form (a
   // newsletter sign-up) never is.
-  const forms = [...doc.querySelectorAll('form')].filter(
+  const forms = deepQueryAll(doc, 'form').filter(
     f => (has(f) || addButtons(f).length > 0) && !searchForm(f) && !f.closest('header, nav, footer, [role="search"], [role="contentinfo"]'),
   );
   if (forms.length) {
-    const count = (f: Element) => [...f.querySelectorAll('input, select, textarea')].filter(visible).length;
+    const count = (f: Element) => deepQueryAll(f, 'input, select, textarea, [role="combobox"]').filter(visible).length;
     return forms.sort((a, b) => count(b) - count(a))[0]!;
   }
   return doc.body;
@@ -945,7 +995,7 @@ function create(): ApplyApi {
         const id = idFor(el);
         entries.set(id, { kind, els, ...(options ? { options } : {}) });
         const near = kind === 'text' || kind === 'textarea' || kind === 'richtext' ? limitsNear(el) : { note: '' };
-        const help = [textOfIds(el.getAttribute('aria-describedby'), doc), near.note].filter(Boolean).join(' · ').slice(0, 200);
+        const help = [textOfIds(el.getAttribute('aria-describedby'), el), near.note].filter(Boolean).join(' · ').slice(0, 200);
         const sensitive = sensitivity({ kind, label, help, inputType: type, name: el.getAttribute('name') ?? '' });
         const max =
           input?.maxLength && input.maxLength > 0
@@ -1544,6 +1594,177 @@ function create(): ApplyApi {
       const mainText = clean(main.textContent).slice(0, 6000);
       if (/(?:not currently|no longer)\s+accepting\s+applications/i.test(mainText)) return 'closed';
       return /applied \d+\s*\w+ ago|applied on \w+|application submitted|\byou applied/i.test(mainText) ? 'applied' : 'none';
+    },
+    distillPageForAI() {
+      const root = formRoot(document);
+      let seq = 0;
+      const uidFor = (el: Element): string => {
+        const existing = el.getAttribute('data-rs-uid');
+        if (existing) return existing;
+        const uid = `rs-${++seq}`;
+        el.setAttribute('data-rs-uid', uid);
+        return uid;
+      };
+      const headings = deepQueryAll<HTMLElement>(root, 'h1, h2, h3')
+        .filter(visible)
+        .map(h => clean(h.textContent))
+        .filter(Boolean)
+        .slice(0, 6);
+      const errors = deepQueryAll<HTMLElement>(root, '[aria-invalid="true"], [role="alert"], .artdeco-inline-feedback--error')
+        .filter(visible)
+        .map(e => clean(e.textContent))
+        .filter(Boolean)
+        .slice(0, 6);
+      const rawControls = deepQueryAll<HTMLElement>(
+        root,
+        'button, a[href], [role="button"], input[type="button"], input[type="submit"]',
+      ).filter(b => visible(b) && !(b as HTMLButtonElement).disabled && !b.closest('header, nav, footer'));
+      const actions = rawControls.slice(0, 24).map(b => {
+        const label = (clean(b.getAttribute('aria-label')) || clean(b.textContent) || clean((b as HTMLInputElement).value)).slice(0, 100);
+        const role: DistilledPage['actions'][number]['role'] = /apply manually|continue as guest|guest/i.test(label)
+          ? 'guest_continue'
+          : /^apply(\s+(now|here|online|for\b|to\b))?/i.test(label)
+            ? 'apply_cta'
+            : /submit application|send application/i.test(label)
+              ? 'submit_final'
+              : /\b(next|continue|review|save & continue|save and continue)\b/i.test(label)
+                ? 'next_step'
+                : /\b(sign in|log in|create account)\b/i.test(label)
+                  ? 'login_trigger'
+                  : 'other';
+        return { uid: uidFor(b), label, role };
+      });
+      const rawFields = deepQueryAll<HTMLElement>(
+        root,
+        'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="image"]):not([type="reset"]), select, textarea, [role="combobox"], [contenteditable="true"]',
+      ).filter(visible);
+      const fields = rawFields.slice(0, 30).map(el => {
+        const type =
+          el instanceof HTMLSelectElement
+            ? 'select'
+            : el instanceof HTMLTextAreaElement
+              ? 'textarea'
+              : el instanceof HTMLInputElement
+                ? el.type || 'text'
+                : el.getAttribute('role') === 'combobox'
+                  ? 'combobox'
+                  : 'richtext';
+        const label = labelOf(el).slice(0, 140);
+        const options =
+          el instanceof HTMLSelectElement
+            ? [...el.options]
+                .map(o => clean(o.textContent))
+                .filter(Boolean)
+                .slice(0, 20)
+            : undefined;
+        const value =
+          el instanceof HTMLInputElement
+            ? el.type === 'file'
+              ? (el.files?.[0]?.name ?? '')
+              : el.type === 'checkbox' || el.type === 'radio'
+                ? el.checked
+                  ? 'true'
+                  : ''
+                : el.value
+            : el instanceof HTMLSelectElement
+              ? (el.selectedOptions[0]?.textContent?.trim() ?? '')
+              : el instanceof HTMLTextAreaElement
+                ? el.value
+                : clean(el.textContent);
+        return {
+          uid: uidFor(el),
+          label,
+          type,
+          required: isRequired(el, label),
+          value: value.slice(0, 200),
+          ...(options?.length ? { options } : {}),
+        };
+      });
+      const hasCaptcha = deepQueryAll(document, 'iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"]').some(
+        visible,
+      );
+      const pageIntent: DistilledPage['pageIntent'] = this.submitted()
+        ? 'SUBMITTED'
+        : hasCaptcha
+          ? 'CAPTCHA_REQUIRED'
+          : this.signIn()
+            ? 'LOGIN_REQUIRED'
+            : actions.some(a => a.role === 'guest_continue') && fields.length === 0
+              ? 'GUEST_CHOICE'
+              : actions.some(a => a.role === 'submit_final') && !actions.some(a => a.role === 'next_step')
+                ? 'REVIEW_STEP'
+                : fields.length >= 1
+                  ? 'FORM_STEP'
+                  : 'JD_LANDING';
+      return {
+        url: location.href,
+        title: document.title,
+        headings,
+        pageIntent,
+        errors,
+        actions,
+        fields,
+      };
+    },
+    async executeUidAction(action) {
+      const el = deepQueryAll<HTMLElement>(document, `[data-rs-uid="${esc(action.uid)}"]`)[0];
+      if (!el || !visible(el)) return { ok: false, note: 'Element is no longer visible on the page.' };
+      el.scrollIntoView({ block: 'center' });
+      if (action.type === 'CLICK') {
+        el.focus();
+        el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+        el.click();
+        return { ok: true };
+      }
+      const val = action.value ?? '';
+      if (action.type === 'SELECT' && el instanceof HTMLSelectElement) {
+        const match =
+          [...el.options].find(o => clean(o.textContent).toLowerCase() === val.toLowerCase()) ??
+          [...el.options].find(o => clean(o.textContent).toLowerCase().includes(val.toLowerCase()));
+        if (!match) return { ok: false, note: `Option "${val}" not found.` };
+        el.value = match.value;
+        fire(el, 'input', 'change', 'blur');
+        return { ok: true };
+      }
+      if (action.type === 'FILL' || action.type === 'SELECT') {
+        el.focus();
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+          setNative(el, val);
+          fire(el, 'input', 'change');
+          if (el.getAttribute('role') === 'combobox') {
+            await sleep(250);
+            el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+          }
+          fire(el, 'blur');
+          return { ok: true };
+        }
+        el.click();
+        await sleep(200);
+        return { ok: true };
+      }
+      return { ok: false, note: `Unsupported action type: ${action.type}` };
+    },
+    watchLoginCompletion() {
+      const w = globalThis as typeof globalThis & { __rsLoginWatcher?: MutationObserver };
+      if (w.__rsLoginWatcher) return;
+      const root = document.body ?? document.documentElement;
+      if (!root) return;
+      const observer = new MutationObserver(() => {
+        if (!this.signIn() && (this.openApplication(false) === 'form' || deepQueryAll(document, 'input, select, textarea').some(visible))) {
+          observer.disconnect();
+          delete w.__rsLoginWatcher;
+          try {
+            void (globalThis as { chrome?: typeof chrome }).chrome?.runtime?.sendMessage?.({
+              kind: 'apply',
+              action: 'resumeAfterLogin',
+            });
+          } catch {
+            // Ignore outside extension context.
+          }
+        }
+      });
+      observer.observe(root, { childList: true, subtree: true, attributes: true });
+      w.__rsLoginWatcher = observer;
     },
   };
 }

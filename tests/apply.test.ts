@@ -1531,4 +1531,78 @@ describe('ATS pre-form navigation, SPA form waiter, and stale tab recovery', () 
     expect(applyError('No tab with id: 1221493975.')).toContain('Retry fill');
     expect(applyError('No form fields were found on this page.')).toContain('Retry fill');
   });
+
+  it('finds LinkedIn Easy Apply modal inside Shadow DOM, distills fields with data-rs-uid, and executes UID actions', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    Element.prototype.scrollIntoView = function () {};
+    document.body.innerHTML = '<div id="sdui-host"></div>';
+    const host = document.getElementById('sdui-host')!;
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `
+      <div role="dialog" aria-modal="true">
+        <h2>Apply to Fykli</h2>
+        <label for="ea-email">Email*</label>
+        <input id="ea-email" type="email" required />
+        <label for="ea-code">Phone country code*</label>
+        <select id="ea-code" required>
+          <option value="IN">India (+91)</option>
+          <option value="US">United States (+1)</option>
+        </select>
+        <label for="ea-phone">Phone*</label>
+        <input id="ea-phone" type="tel" required />
+        <button type="button">Next</button>
+      </div>`;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+
+    expect(api.openEasyApply(false)).toBe('open');
+    const distilled = api.distillPageForAI();
+    expect(distilled.pageIntent).toBe('FORM_STEP');
+    expect(distilled.fields.map(f => f.label)).toEqual(expect.arrayContaining(['Email*', 'Phone country code*', 'Phone*']));
+    expect(distilled.actions.some(a => a.label === 'Next' && a.role === 'next_step')).toBe(true);
+
+    const emailUid = distilled.fields.find(f => f.label === 'Email*')!.uid;
+    const codeUid = distilled.fields.find(f => f.label === 'Phone country code*')!.uid;
+    await expect(api.executeUidAction({ uid: emailUid, type: 'FILL', value: 'user@example.com' })).resolves.toEqual({ ok: true });
+    await expect(api.executeUidAction({ uid: codeUid, type: 'SELECT', value: 'India (+91)' })).resolves.toEqual({ ok: true });
+    expect((shadow.querySelector('#ea-email') as HTMLInputElement).value).toBe('user@example.com');
+    expect((shadow.querySelector('#ea-code') as HTMLSelectElement).value).toBe('IN');
+  });
+
+  it('automatically notifies background to resume when SPA login wall transitions to application form', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    const prevChrome = (globalThis as { chrome?: unknown }).chrome;
+    const sendMessage = vi.fn().mockResolvedValue({});
+    (globalThis as { chrome: unknown }).chrome = { runtime: { sendMessage } };
+    try {
+      document.body.innerHTML = `
+        <main data-automation-id="signInContent">
+          <input type="email" name="user" />
+          <input type="password" name="pass" />
+        </main>`;
+      delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+      delete (globalThis as { __rsLoginWatcher?: unknown }).__rsLoginWatcher;
+      vi.resetModules();
+      await import('../src/content/apply');
+      const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+      api.watchLoginCompletion();
+
+      document.body.innerHTML = `
+        <form>
+          <input type="text" name="firstName" />
+          <input type="text" name="lastName" />
+          <input type="file" name="resume" />
+        </form>`;
+      await new Promise(r => setTimeout(r, 40));
+      expect(sendMessage).toHaveBeenCalledWith({ kind: 'apply', action: 'resumeAfterLogin' });
+    } finally {
+      (globalThis as { chrome?: unknown }).chrome = prevChrome;
+    }
+  });
 });

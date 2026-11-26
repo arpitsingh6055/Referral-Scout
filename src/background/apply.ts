@@ -333,7 +333,9 @@ async function syncApplyProgress(tabId: number, s: ApplySession): Promise<void> 
             ? s.stage === 'submitted'
               ? 'Application submitted'
               : 'Form filled — review & submit'
-            : s.message || 'Filling application form…';
+            : s.stage === 'moving'
+              ? s.message || `Step ${s.stepCount} filled — advancing…`
+              : s.message || 'Filling application form…';
 
   const payload = {
     kind: 'rs.applyHud' as const,
@@ -1516,6 +1518,9 @@ async function waitForSignIn(tabId: number): Promise<void> {
     waitSignIn: true,
     message: `${host} asks you to sign in or create an account before applying. Do that in this tab (Referral Scout never types passwords); filling carries on by itself once the application form shows.`,
   }));
+  await inFrames(tabId, () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.watchLoginCompletion?.()).catch(
+    () => undefined,
+  );
 }
 /** Watches a tab for a new tab it opens while one action runs, so a form opened elsewhere is followed. */
 async function watchNewTab<T>(tabId: number, signal: AbortSignal, act: () => Promise<T>): Promise<{ result: T; spawned?: number }> {
@@ -2149,6 +2154,7 @@ export const applyRequest = z.discriminatedUnion('action', [
   }),
   z.object({ kind: z.literal('apply'), action: z.literal('undo') }),
   z.object({ kind: z.literal('apply'), action: z.literal('stop') }),
+  z.object({ kind: z.literal('apply'), action: z.literal('resumeAfterLogin') }),
   z.object({
     kind: z.literal('apply'),
     action: z.literal('answer'),
@@ -2309,6 +2315,10 @@ export function registerApplyMessages(): void {
           }));
         }
         return detect(targetTabId);
+      }
+      if (req.action === 'resumeAfterLogin') {
+        const target = sender.tab?.id ?? tabId;
+        if (target >= 0) await resumeAfterSignIn(target).catch(() => undefined);
       }
       if (req.action === 'next') await nextStep(tabId);
       if (req.action === 'nextJob') {
