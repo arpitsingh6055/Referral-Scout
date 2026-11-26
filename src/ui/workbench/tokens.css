@@ -164,11 +164,15 @@
 
     --text-primary: #eef1f8;
     --text-secondary: #c5cde0;
-    --text-muted: #8b96b0;
+    --text-muted: #97a2bb; /* also readable on the opaque status tints: 4.96:1 worst case */
 
-    --accent-primary: #8f7dff; /* as text on its own tint: 4.55:1 */
-    --accent-hover: #a596ff;
-    --accent-tint: rgb(143 125 255 / 16%);
+    /*
+     * A tint is translucent, so its real contrast depends on the surface under it. These values are checked against
+     * the darkest case the UI puts them on, --bg-elevated inside a grouped card, not only against --bg-surface.
+     */
+    --accent-primary: #9b8bff; /* on its tint over --bg-elevated: 4.62:1 */
+    --accent-hover: #b0a2ff;
+    --accent-tint: #2c2e4d; /* opaque: a translucent tint let whatever sat behind it change the contrast */
     --accent-solid: #6149e8; /* white on it: 5.79:1 */
     --on-accent: #ffffff;
     --on-success: #090b10; /* white on mint green is 1.9:1; the canvas ink is 10.2:1 */
@@ -177,14 +181,14 @@
     --on-info: #090b10;
 
     --success: #34d399;
-    --success-tint: rgb(52 211 153 / 14%);
+    --success-tint: #193738;
     --warning: #fbbf24;
-    --warning-tint: rgb(251 191 36 / 14%);
-    --destructive: #f87171;
-    --destructive-hover: #ef4444;
-    --destructive-tint: rgb(248 113 113 / 16%);
+    --warning-tint: #393426;
+    --destructive: #fb8c8c; /* on its tint over --bg-elevated: 5.49:1 */
+    --destructive-hover: #ff9d9d;
+    --destructive-tint: #3e2e38;
     --info: #60a5fa;
-    --info-tint: rgb(96 165 250 / 15%);
+    --info-tint: #21314a;
 
     --shadow-xs: 0 1px 2px rgb(0 0 0 / 32%);
     --shadow-float: 0 16px 40px rgb(0 0 0 / 55%), 0 2px 8px rgb(0 0 0 / 35%);
@@ -210,11 +214,15 @@
 
   --text-primary: #eef1f8;
   --text-secondary: #c5cde0;
-  --text-muted: #8b96b0;
+  --text-muted: #97a2bb; /* also readable on the opaque status tints: 4.96:1 worst case */
 
-  --accent-primary: #8f7dff; /* as text on its own tint: 4.55:1 */
-  --accent-hover: #a596ff;
-  --accent-tint: rgb(143 125 255 / 16%);
+  /*
+   * A tint is translucent, so its real contrast depends on the surface under it. These values are checked against
+   * the darkest case the UI puts them on, --bg-elevated inside a grouped card, not only against --bg-surface.
+   */
+  --accent-primary: #9b8bff; /* on its tint over --bg-elevated: 4.62:1 */
+  --accent-hover: #b0a2ff;
+  --accent-tint: #2c2e4d; /* opaque: a translucent tint let whatever sat behind it change the contrast */
   --accent-solid: #6149e8; /* white on it: 5.79:1 */
   --on-accent: #ffffff;
   --on-success: #090b10; /* white on mint green is 1.9:1; the canvas ink is 10.2:1 */
@@ -223,14 +231,14 @@
   --on-info: #090b10;
 
   --success: #34d399;
-  --success-tint: rgb(52 211 153 / 14%);
+  --success-tint: #193738;
   --warning: #fbbf24;
-  --warning-tint: rgb(251 191 36 / 14%);
-  --destructive: #f87171;
-  --destructive-hover: #ef4444;
-  --destructive-tint: rgb(248 113 113 / 16%);
+  --warning-tint: #393426;
+  --destructive: #fb8c8c; /* on its tint over --bg-elevated: 5.49:1 */
+  --destructive-hover: #ff9d9d;
+  --destructive-tint: #3e2e38;
   --info: #60a5fa;
-  --info-tint: rgb(96 165 250 / 15%);
+  --info-tint: #21314a;
 
   --shadow-xs: 0 1px 2px rgb(0 0 0 / 32%);
   --shadow-float: 0 16px 40px rgb(0 0 0 / 55%), 0 2px 8px rgb(0 0 0 / 35%);

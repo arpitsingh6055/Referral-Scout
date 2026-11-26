@@ -352,7 +352,7 @@ function rail(ctx: Ctx): { aside: HTMLElement; backdrop: HTMLElement } {
                     : 'dot dot-ready',
             }),
             running
-              ? 'Engine running'
+              ? 'Working now'
               : ctx.view.inboxCounts.open
                 ? 'Needs you'
                 : c.status === 'paused'

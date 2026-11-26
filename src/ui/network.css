@@ -51,22 +51,22 @@
   --border: #22293d;
   --border-strong: #5a6684; /* 3.18:1 on the dark surface */
   --text: #eef1f8;
-  --muted: #98a3bc;
+  --muted: #9fabc4; /* also readable on the opaque status tints */
   --faint: #758099;
-  --primary: #8f7dff; /* as text on --primary-soft: 4.55:1 */
-  --primary-hover: #a596ff;
-  --primary-soft: rgb(143 125 255 / 16%);
+  --primary: #9b8bff; /* on its tint over the elevated surface: 4.62:1 */
+  --primary-hover: #b0a2ff;
+  --primary-soft: #2c2e4d; /* opaque: a translucent tint let whatever sat behind it change the contrast */
   --primary-solid: #6149e8; /* white on it: 5.79:1 */
   --on-primary: #ffffff;
   --on-ok: #090b10; /* white on mint green is 1.9:1; the canvas ink is 10.2:1 */
   --on-warn: #090b10;
   --on-bad: #090b10;
   --ok: #34d399;
-  --ok-soft: rgb(52 211 153 / 14%);
+  --ok-soft: #193738;
   --warn: #fbbf24;
-  --warn-soft: rgb(251 191 36 / 14%);
-  --bad: #f87171;
-  --bad-soft: rgb(248 113 113 / 16%);
+  --warn-soft: #393426;
+  --bad: #fb8c8c; /* on its tint over the elevated surface: 5.49:1 */
+  --bad-soft: #3e2e38;
   --hero-a: #432fb8;
   --hero-b: #6f59f7;
   --shadow: 0 1px 2px rgb(0 0 0 / 32%);
@@ -84,22 +84,22 @@
     --border: #22293d;
     --border-strong: #5a6684; /* 3.18:1 on the dark surface */
     --text: #eef1f8;
-    --muted: #98a3bc;
+    --muted: #9fabc4; /* also readable on the opaque status tints */
     --faint: #758099;
-    --primary: #8f7dff; /* as text on --primary-soft: 4.55:1 */
-    --primary-hover: #a596ff;
-    --primary-soft: rgb(143 125 255 / 16%);
+    --primary: #9b8bff; /* on its tint over the elevated surface: 4.62:1 */
+    --primary-hover: #b0a2ff;
+    --primary-soft: #2c2e4d; /* opaque: a translucent tint let whatever sat behind it change the contrast */
     --primary-solid: #6149e8; /* white on it: 5.79:1 */
     --on-primary: #ffffff;
     --on-ok: #090b10; /* white on mint green is 1.9:1; the canvas ink is 10.2:1 */
     --on-warn: #090b10;
     --on-bad: #090b10;
     --ok: #34d399;
-    --ok-soft: rgb(52 211 153 / 14%);
+    --ok-soft: #193738;
     --warn: #fbbf24;
-    --warn-soft: rgb(251 191 36 / 14%);
-    --bad: #f87171;
-    --bad-soft: rgb(248 113 113 / 16%);
+    --warn-soft: #393426;
+    --bad: #fb8c8c; /* on its tint over the elevated surface: 5.49:1 */
+    --bad-soft: #3e2e38;
     --hero-a: #432fb8;
     --hero-b: #6f59f7;
     --shadow: 0 1px 2px rgb(0 0 0 / 32%);
@@ -121,6 +121,13 @@ body {
   margin: 0 auto;
   padding: 0 14px calc(var(--nav-h) + 104px + env(safe-area-inset-bottom, 0px));
 }
+
+/* The tab bar and the HUD float over the panel; nothing focused or scrolled to may stop underneath them. */
+html {
+  scroll-padding-bottom: calc(var(--nav-h) + 104px);
+  scroll-padding-top: 56px;
+}
+
 h1,
 h2,
 h3,
@@ -252,6 +259,12 @@ a:hover {
 .view-head {
   padding: 6px 2px 14px;
 }
+.view-greeting {
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
 .view-title {
   font-size: 24px;
   line-height: 1.2;
@@ -365,7 +378,12 @@ a:hover {
   list-style: none;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /*
+   * Five steps are rendered (Discover, Shortlist, Referrers, Reach out, Apply). With four tracks the fifth
+   * wrapped onto a second row, where its connector — drawn at left: calc(-50% + 15px) — ran off the panel's
+   * left edge to nothing, and its label sat beside its dot instead of under it.
+   */
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin-bottom: 16px;
 }
 .journey li {
@@ -378,6 +396,10 @@ a:hover {
   font-weight: 600;
   color: rgba(255, 255, 255, 0.62);
   text-align: center;
+  /* Five labels in a 300px panel: each wraps inside its own track rather than widening it. */
+  min-width: 0;
+  hyphens: auto;
+  overflow-wrap: anywhere;
 }
 .journey li + li::before {
   content: '';
@@ -2424,7 +2446,12 @@ button.pill:focus-visible {
 }
 .sp-hud-pct {
   position: absolute;
-  font-size: 8.5px;
+  /* Read against the panel's own surface rather than the coloured ring stroke it sits on. */
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 0 3px;
+  line-height: 1.2;
+  font-size: 10px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--text);

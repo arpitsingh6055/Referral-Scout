@@ -4,6 +4,20 @@ import type { RunSummary } from '../shared/run-summary';
 import { node, icon, pad, button, link, act, openDashboard } from './core';
 
 /* ---------- derived status ---------- */
+/**
+ * A status line written for the panel rather than for a log: no nested brackets, no repetition of the state the
+ * pill beside it already names, and short enough to read at a glance in a 300px column.
+ */
+function tidyStatus(raw: string | undefined): string {
+  const flat = (raw ?? '')
+    .replace(/\s*\([^()]*\)/g, '')
+    .replace(/^\s*(paused|stopped|idle)[.:]\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!flat) return '';
+  return flat.length > 120 ? `${flat.slice(0, 117).trimEnd()}…` : flat;
+}
+
 export function runStatus(s: NetworkState): { tone: 'ok' | 'warn' | 'idle'; pill: string; title: string; sub: string } {
   const settings = s.settings ?? defaultSettings,
     openJobs = (s.referralJobs ?? []).filter(j => j.finishedAt === undefined);
@@ -21,13 +35,18 @@ export function runStatus(s: NetworkState): { tone: 'ok' | 'warn' | 'idle'; pill
       title: 'One question before we continue',
       sub: 'Answer under “Needs you” below, then the search carries on.',
     };
-  if (s.paused)
+  if (s.paused) {
+    // A card headed "Paused" under a pill reading "Paused" repeats itself. The heading says why it stopped, and
+    // a stop that followed a failure is not dressed in the brand colour as though it had gone well.
+    const why = tidyStatus(s.status);
+    const trouble = /could not|failed|error|too long|blocked|refused|unable/i.test(why);
     return {
-      tone: 'idle',
+      tone: trouble ? 'warn' : 'idle',
       pill: 'Paused',
-      title: 'Paused',
-      sub: s.status || 'Nothing is running. Press Resume to continue where you stopped.',
+      title: trouble ? 'Stopped early' : why ? 'Paused by you' : 'Nothing running',
+      sub: why || 'Press Resume to carry on where you stopped.',
     };
+  }
   if (s.active && !withinActiveHours(settings))
     return {
       tone: 'warn',

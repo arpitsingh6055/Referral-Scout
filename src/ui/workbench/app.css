@@ -288,6 +288,16 @@
   flex-direction: column;
 }
 
+/*
+ * Two bars float over this page: a sticky header at narrow widths and the progress HUD at the bottom. The padding
+ * lets the last card scroll clear of the HUD; the scroll padding keeps anything focused or scrolled to from
+ * stopping underneath either of them.
+ */
+html {
+  scroll-padding-top: 62px;
+  scroll-padding-bottom: 124px;
+}
+
 .page {
   padding: var(--sp-6) var(--sp-8) calc(120px + env(safe-area-inset-bottom, 0px));
   width: 100%;
@@ -510,9 +520,14 @@
   justify-content: space-between;
   gap: var(--sp-3);
   margin-bottom: var(--sp-4);
+  /* The actions beside a card's title keep their intrinsic width, so without wrapping they squeezed the
+     subtitle under them to a few characters a line. Past that point they take their own row. */
+  flex-wrap: wrap;
 }
 
 .card-head-copy {
+  /* min-width: 0 alone lets this shrink to nothing; prose needs a floor before the actions wrap away. */
+  flex: 1 1 240px;
   min-width: 0;
 }
 
@@ -705,7 +720,20 @@
   display: flex;
   align-items: flex-start;
   gap: var(--sp-3);
-  flex: none;
+  /* `flex: none` pushed this 125px past the panel edge at 360px. It may shrink; its text ellipsises. */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.stage-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The group header above already names the company; printing it again 40px below says nothing new. */
+.company-group .row-company {
+  display: none;
 }
 
 .stage-dot {
@@ -767,6 +795,16 @@
 
 .row-queue {
   grid-template-columns: minmax(0, 2.4fr) 110px minmax(0, 1.2fr) 124px auto;
+}
+
+/*
+ * The action column takes its buttons' width first, so a row with one extra button clipped its job title to a
+ * few characters while the window still had room. Where there is room, the title gets a floor.
+ */
+@media (min-width: 1100px) {
+  .row-queue {
+    grid-template-columns: minmax(260px, 2.4fr) 110px minmax(0, 1.2fr) 124px auto;
+  }
 }
 
 .row-compact {
@@ -1194,6 +1232,32 @@ details .inline input[type='checkbox'] {
   border-top: 1px solid var(--border-subtle);
 }
 
+/*
+ * An `auto` action column takes its buttons' full width before the text column gets any, so a narrow window
+ * squeezed the explanation beside it to a few pixels and printed it one word per line, under the buttons.
+ * Below this width the two stack, which is what they would do on paper.
+ */
+@media (max-width: 760px) {
+  .rule-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rule-row > .inline {
+    justify-content: flex-start;
+  }
+}
+
+/* Nothing in a row may be narrower than it can read: prose never collapses to a column of single words. */
+.rule-row > *,
+.row > *,
+.between > * {
+  min-width: 0;
+}
+
+.rule-note {
+  text-wrap: pretty;
+}
+
 .rule-row:first-of-type {
   border-top: 0;
 }
@@ -1396,10 +1460,22 @@ details .inline input[type='checkbox'] {
 }
 
 .row-title .cell-strong,
-.row-title .cell-muted {
+.row-title .cell-muted,
+.row .cell-link,
+.row-title .cell-link {
+  /* An inline <a> ignores text-overflow, which is why a long job title printed straight over the source pill
+     in the next column instead of ellipsising. As a block it clips inside its own grid track. */
+  display: block;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+
+/* A long job title used to run under the source pill beside it. The title takes what is left, and no more. */
+.row-queue > .row-title {
+  overflow: hidden;
 }
 
 .row-company {
@@ -2370,7 +2446,13 @@ details .inline input[type='checkbox'] {
 
 .hud-pct {
   position: absolute;
-  font-size: 9.5px;
+  /* The number sits inside the ring, over its coloured stroke. On its own it measured 3.36:1 in light and 2.44:1
+     in dark, so it carries the HUD's own surface with it and is read against that instead. */
+  background: var(--bg-surface);
+  border-radius: var(--radius-pill);
+  padding: 0 3px;
+  line-height: 1.2;
+  font-size: 10px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
@@ -2848,6 +2930,13 @@ details .inline input[type='checkbox'] {
 .quick-fill-list {
   display: grid;
   gap: var(--sp-2);
+}
+
+@media (max-width: 760px) {
+  .quick-fill-row,
+  .smart-answer-input-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .quick-fill-row {

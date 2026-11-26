@@ -240,7 +240,7 @@ export function applications(ctx: Ctx): HTMLElement {
 
   const running = campaign.status === 'running' || campaign.status === 'stopping';
   const side = div('stack', [
-    card('Runner', {
+    card('Queue health', {
       body: [
         div('spread', [
           text('div', 'rule-name', 'Active workers'),

@@ -236,7 +236,8 @@ function render(s: NetworkState): void {
       setTab('home');
       (document.querySelector('.home-turn') ?? document.querySelector('.todos'))?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
     });
-    const dashboard = node('button', 'Expand in Full Workbench →', 'dashboard-link');
+    // Short enough that the wordmark beside it is not clipped to "Ref…" at the panel's narrowest.
+    const dashboard = node('button', 'Open workbench →', 'dashboard-link');
     dashboard.type = 'button';
     dashboard.addEventListener('click', () => {
       void openDashboard(cachedMission.activeRoute || 'overview').catch(e => notify('error', errorText(e)));
@@ -264,7 +265,11 @@ function render(s: NetworkState): void {
     );
     if (s.location) targetText.append(node('span', `in ${s.location}`, 'target-place'));
     target.append(targetText, change);
-    hello.append(node('h1', `Hi ${s.profile.name.split(/\s+/)[0] ?? ''}`, 'view-title'), target);
+    // The greeting carried the least information on the screen and had the largest type, two cards below the
+    // controls it was introducing. It stays, small and above, and the heading is now what the person is here for.
+    const firstName = s.profile.name.split(/\s+/)[0] ?? '';
+    if (firstName) hello.append(node('p', `Hi ${firstName}`, 'view-greeting'));
+    hello.append(node('h1', 'Your search', 'view-title'), target);
 
     const run = node('section', '', `card run ${status.tone}`),
       stage = journey(s),

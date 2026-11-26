@@ -57,7 +57,11 @@ export function settings(ctx: Ctx): HTMLElement {
     );
 
   const page = div('stack');
-  const privacyChoice = input('', { type: 'checkbox', ...(w.usageReporting ? { checked: true } : {}) });
+  const privacyChoice = input('', {
+    type: 'checkbox',
+    'aria-label': 'Send anonymous usage counts',
+    ...(w.usageReporting ? { checked: true } : {}),
+  });
 
   /* Sign-in and profile actions live here, even though authentication itself happens on each provider's website. */
   const linkedinActions = w.connections.linkedin
@@ -416,7 +420,9 @@ export function settings(ctx: Ctx): HTMLElement {
             { disabled: ctx.busyAction === 'workspace:clear', 'aria-busy': ctx.busyAction === 'workspace:clear' },
           ),
         ]),
-        div('note note-violet', [text('p', '', 'The backup carries its schema version. Your OpenAI API key is deliberately excluded.')]),
+        div('note note-violet', [
+          text('p', '', 'The backup records which version of Referral Scout wrote it. Your OpenAI API key is deliberately left out.'),
+        ]),
         div('note note-amber', [
           text(
             'p',

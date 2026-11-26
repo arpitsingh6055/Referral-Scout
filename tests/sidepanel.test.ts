@@ -198,7 +198,10 @@ it('when paused, Resume is the main action and the live tracker is hidden; while
     status: 'Paused. Your saved people and progress are kept.',
     jobSearch: { status: 'finding', cursor: 0, found: [], startedAt: Date.now() },
   });
-  expect($('.run-title')!.textContent).toBe('Paused');
+  // The card heading says why it stopped; the pill beside it already says "Paused", and one word twice is noise.
+  expect($('.run-pill')?.textContent ?? 'Paused').toBe('Paused');
+  expect($('.run-title')!.textContent).toBe('Paused by you');
+  expect($('.run-sub')!.textContent).toBe('Your saved people and progress are kept.');
   expect(byText('button.primary', 'Resume')).toBeTruthy();
   expect($('.live')).toBeNull();
   await open({ active: false, jobSearch: { status: 'finding', cursor: 0, found: [], startedAt: Date.now() } });
@@ -531,9 +534,9 @@ it('does not block the extension when optional usage reporting is off', async ()
   expect(byText('button', 'Accept and continue')).toBeFalsy();
 });
 
-it('exposes Expand in Full Workbench button in the Side Panel header that deep-links to the Workbench', async () => {
+it('exposes the workbench link in the Side Panel header, short enough not to clip the wordmark beside it', async () => {
   await open();
-  const expandBtn = byText('button', 'Expand in Full Workbench →')!;
+  const expandBtn = byText('button', 'Open workbench →')!;
   expect(expandBtn).toBeTruthy();
   expandBtn.click();
   await vi.waitFor(() => expect(sent.some(r => r.action === 'open-tab')).toBe(true));
