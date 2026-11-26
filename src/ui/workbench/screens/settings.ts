@@ -1,7 +1,40 @@
 /** Settings — connections, launch behaviour, privacy and recoverable data controls. */
 import { exportData, sendGmail, testChatGpt } from '../api';
-import { ago, button, card, confirmModal, div, emptyState, field, input, metric, pill, setFieldError, text } from '../dom';
+import { ago, button, card, confirmModal, div, errorStateWithRetry, field, input, metric, pill, setFieldError, text } from '../dom';
 import type { Ctx } from '../shell';
+
+/** Produces a non-PII diagnostics snapshot suitable for pasting into a bug report. */
+export function buildDiagnosticsSummary(ctx: Ctx): string {
+  const manifestVersion = (globalThis as { chrome?: typeof chrome }).chrome?.runtime?.getManifest?.().version ?? 'unknown';
+  const w = ctx.workspace;
+  const counts = ctx.view.counts;
+  return JSON.stringify(
+    {
+      version: manifestVersion,
+      theme: ctx.theme,
+      connections: w
+        ? {
+            linkedin: w.connections.linkedin,
+            gmail: w.connections.gmail,
+            customApiKey: w.connections.ai,
+            cvUploaded: w.connections.cv || w.cv.hasText,
+          }
+        : null,
+      counts: {
+        jobs: w?.jobs.length ?? 0,
+        contacts: w?.contacts.length ?? 0,
+        events: ctx.view.events?.length ?? 0,
+        queueTotal: counts.total,
+        queueSubmitted: counts.submitted,
+        queueNeedsYou: counts.needsYou,
+        queueFailed: counts.failed,
+      },
+      campaignStatus: ctx.view.campaign?.status ?? 'none',
+    },
+    null,
+    2,
+  );
+}
 
 function connection(
   name: string,
@@ -19,11 +52,9 @@ function connection(
 export function settings(ctx: Ctx): HTMLElement {
   const w = ctx.workspace;
   if (!w)
-    return emptyState({
-      icon: 'gear',
-      title: 'Settings could not be loaded',
-      description: 'The message above says why. Reload the extension, then reopen this page.',
-    });
+    return errorStateWithRetry('Could not load settings', 'Your local settings store did not respond. Retry to refresh.', () =>
+      ctx.refresh(),
+    );
 
   const page = div('stack');
   const privacyChoice = input('', { type: 'checkbox', ...(w.usageReporting ? { checked: true } : {}) });
@@ -311,6 +342,11 @@ export function settings(ctx: Ctx): HTMLElement {
           metric('activity', 'Events', counts.events),
         ]),
         div('inline', [
+          button('Copy diagnostics (no personal data)', 'btn', async () => {
+            const report = buildDiagnosticsSummary(ctx);
+            await navigator.clipboard?.writeText(report);
+            ctx.inform('Diagnostics copied (no personal data included).');
+          }),
           button(
             'Export a backup',
             'btn',

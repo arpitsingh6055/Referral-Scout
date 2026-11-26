@@ -81,6 +81,32 @@
   margin-top: 2px;
 }
 
+.cell-link {
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  display: inline-block;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+.cell-link:hover,
+.cell-link:focus-visible {
+  color: var(--accent-primary);
+  border-bottom-color: var(--accent-primary);
+  outline: none;
+}
+
+.pager-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+
 .nav {
   display: flex;
   flex-direction: column;

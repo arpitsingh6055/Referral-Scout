@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Referral Scout — Jobs, Referrals & Autofill",
   "short_name": "Ref Scout",
-  "version": "0.59.0",
+  "version": "0.60.0",
   "description": "Find jobs matching your CV, rank referrers, draft outreach, and autofill applications—always under your review.",
   "homepage_url": "https://referral-scout.vercel.app",
   "minimum_chrome_version": "120",

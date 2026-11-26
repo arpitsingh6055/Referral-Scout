@@ -547,3 +547,85 @@ export function restoreForm(root: ParentNode, snap: FormSnapshot): void {
   }
   if (snap.scrollY) window.scrollTo({ top: snap.scrollY });
 }
+
+function safeHttpUrl(rawUrl: string | undefined | null): { href: string; host: string } | null {
+  if (!rawUrl) return null;
+  if (typeof URL === 'function') {
+    try {
+      const u = new URL(rawUrl);
+      if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+      return { href: u.href, host: u.hostname };
+    } catch {
+      return null;
+    }
+  }
+  const m = /^(https?:\/\/([^/?#\s]+)\S*)$/i.exec(rawUrl.trim());
+  return m ? { href: m[1]!, host: m[2]! } : null;
+}
+
+/** Validated external link opening in a new tab with rel="noopener noreferrer", or plain text if URL is missing/invalid. */
+export function externalLink(label: string, rawUrl: string | undefined | null, className = 'cell-link'): HTMLElement {
+  const parsed = safeHttpUrl(rawUrl);
+  if (!parsed) return text('span', className, label);
+  return el(
+    'a',
+    {
+      href: parsed.href,
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      class: className,
+      title: `${label} (${parsed.host})`,
+    },
+    [label],
+  );
+}
+
+/** One-click copy-link button with accessible status feedback. */
+export function copyLinkButton(rawUrl: string | undefined | null, label = 'Copy link'): HTMLElement | null {
+  const parsed = safeHttpUrl(rawUrl);
+  if (!parsed) return null;
+  const b = el(
+    'button',
+    { type: 'button', class: 'btn btn-sm btn-ghost', title: `Copy ${parsed.href}`, 'aria-label': `${label}: ${parsed.href}` },
+    [label],
+  );
+  b.addEventListener('click', () => {
+    void navigator.clipboard?.writeText(parsed.href).then(
+      () => {
+        b.textContent = 'Copied ✓';
+        setTimeout(() => {
+          b.textContent = label;
+        }, 1800);
+      },
+      () => undefined,
+    );
+  });
+  return b;
+}
+
+/** Recoverable error state replacing dead-end "reload the extension" messages. */
+export function errorStateWithRetry(title: string, detail: string, onRetry: () => void | Promise<void>): HTMLElement {
+  return el('div', { class: 'empty', role: 'status' }, [
+    icon('alert', 24),
+    text('h3', 'empty-title', title),
+    text('p', 'empty-desc', detail || 'Something interrupted loading this view. Try again to refresh your local data.'),
+    button('Retry', 'btn btn-primary', onRetry),
+  ]);
+}
+
+/** Accessible pagination bar for large datasets (1,000+ rows). */
+export function paginateControls(total: number, page: number, pageSize: number, onChange: (nextPage: number) => void): HTMLElement | null {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (totalPages <= 1) return null;
+  const safePage = Math.max(1, Math.min(page, totalPages));
+  const start = (safePage - 1) * pageSize + 1;
+  const end = Math.min(total, safePage * pageSize);
+  return div('pager-bar', [
+    text('span', 'cell-muted', `Showing ${start}–${end} of ${total}`),
+    div('inline', [
+      button('Previous', 'btn btn-sm', () => onChange(safePage - 1), { disabled: safePage <= 1 }),
+      text('span', 'cell-muted', `Page ${safePage} of ${totalPages}`),
+      button('Next', 'btn btn-sm', () => onChange(safePage + 1), { disabled: safePage >= totalPages }),
+    ]),
+  ]);
+}

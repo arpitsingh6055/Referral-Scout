@@ -11,13 +11,33 @@
 
 import { canonicalCompany } from '../../../shared/domain/job';
 import { opportunityWorkspace } from '../components/opportunity-workspace';
-import { ago, button, card, div, el, emptyState, icon, metric, pill, plural, searchBar, text } from '../dom';
+import {
+  ago,
+  button,
+  card,
+  copyLinkButton,
+  div,
+  el,
+  emptyState,
+  externalLink,
+  icon,
+  metric,
+  paginateControls,
+  pill,
+  plural,
+  searchBar,
+  text,
+} from '../dom';
 import type { Ctx } from '../shell';
 import type { JobRow } from '../../../background/workspace';
 
 type Filter = 'strong' | 'possible' | 'blocked' | 'shortlisted' | 'all';
+type SortBy = 'fit' | 'newest' | 'company';
 
 let filter: Filter = 'all';
+let sortBy: SortBy = 'fit';
+let currentPage = 1;
+const PAGE_SIZE = 50;
 let userSelectedFilter = false;
 let query = '';
 let openJob: string | null = null;
@@ -44,8 +64,13 @@ function row(job: JobRow, ctx: Ctx, queuedRefs: Set<string>, pinnedSet: Set<stri
   return div('row row-queue', [
     div('row-title', [
       div('inline', [text('span', 'row-company', job.company), companyPinned ? pill('Pinned', 'violet') : null]),
-      Object.assign(text('div', 'cell-strong', job.title), { title: job.title }),
-      text('div', 'cell-muted', `${job.location}${job.evidence.length ? ` · ${met} of ${job.evidence.length} requirements matched` : ''}`),
+      externalLink(job.title, job.url, 'cell-strong cell-link'),
+      text(
+        'div',
+        'cell-muted',
+        `${job.location || 'Location unknown'}${job.applyType && job.applyType !== 'unknown' ? ` · ${job.applyType}` : ''}${job.evidence.length ? ` · ${met}/${job.evidence.length} matched` : ''}`,
+      ),
+      job.aiWhy ? text('div', 'cell-muted', `Why: ${job.aiWhy}`) : null,
     ]),
     div('col-hide', [pill(job.source.replace(/ Jobs$/, ''), 'grey')]),
     div('', [pill(job.tier === 'blocked' ? 'Not eligible' : `Fit ${job.fit}`, TIER_TONE[job.tier] ?? 'grey')]),
@@ -71,6 +96,7 @@ function row(job: JobRow, ctx: Ctx, queuedRefs: Set<string>, pinnedSet: Set<stri
               }),
           )
         : null,
+      copyLinkButton(job.url, 'Copy'),
       button(openJob === job.id ? 'Hide' : 'Why?', 'btn btn-sm', () => {
         openJob = openJob === job.id ? null : job.id;
         ctx.redraw();
@@ -252,17 +278,22 @@ export function jobs(ctx: Ctx): HTMLElement {
     const shown = all
       .filter(MATCH[filter])
       .filter(matchesQuery)
-      .sort(
-        (a, b) =>
-          Number(pinnedSet.has(canonicalCompany(b.company))) - Number(pinnedSet.has(canonicalCompany(a.company))) || b.rank - a.rank,
-      );
+      .sort((a, b) => {
+        if (sortBy === 'company') return a.company.localeCompare(b.company) || b.fit - a.fit;
+        if (sortBy === 'newest') return (b.postedAt ?? 0) - (a.postedAt ?? 0) || b.fit - a.fit;
+        return Number(pinnedSet.has(canonicalCompany(b.company))) - Number(pinnedSet.has(canonicalCompany(a.company))) || b.rank - a.rank;
+      });
     if (!shown.length) {
       rowsHost.replaceChildren(text('p', 'cell-muted', 'No matching jobs in this view.'));
       return;
     }
 
+    const totalPages = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+    if (currentPage > totalPages) currentPage = totalPages;
+    const paged = shown.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
     const groups = new Map<string, { key: string; name: string; items: JobRow[]; topFit: number }>();
-    for (const j of shown) {
+    for (const j of paged) {
       const key = canonicalCompany(j.company) || j.company.toLowerCase();
       const prev = groups.get(key) ?? { key, name: j.company, items: [], topFit: 0 };
       prev.items.push(j);
@@ -310,27 +341,67 @@ export function jobs(ctx: Ctx): HTMLElement {
         ]);
       });
 
-    rowsHost.replaceChildren(...cards);
+    const pager = paginateControls(shown.length, currentPage, PAGE_SIZE, next => {
+      currentPage = next;
+      drawRows();
+    });
+    rowsHost.replaceChildren(...cards, ...(pager ? [pager] : []));
   };
   drawRows();
   const selected = openJob ? all.find(j => j.id === openJob) : undefined;
 
+  const sortSelect = el('select', { class: 'btn btn-sm', 'aria-label': 'Sort jobs' }, [
+    el('option', { value: 'fit', text: 'Sort: Best fit' }),
+    el('option', { value: 'newest', text: 'Sort: Newest' }),
+    el('option', { value: 'company', text: 'Sort: Company' }),
+  ]) as HTMLSelectElement;
+  sortSelect.value = sortBy;
+  sortSelect.addEventListener('change', () => {
+    sortBy = sortSelect.value as SortBy;
+    currentPage = 1;
+    drawRows();
+  });
+
   const filterBar = div('filter-bar', [
     tabs,
+    sortSelect,
     searchBar({
       placeholder: 'Filter by role, company, location…',
       value: query,
       ariaLabel: 'Filter discovered jobs',
       onInput: val => {
         query = val;
+        currentPage = 1;
         drawRows();
       },
     }),
   ]);
 
+  const exportCsv = (): void => {
+    const header = ['Company', 'Title', 'Location', 'Fit', 'Status', 'URL'];
+    const lines = [
+      header.join(','),
+      ...all.map(j =>
+        [j.company, j.title, j.location, String(j.fit), j.judgement || 'discovered', j.url]
+          .map(v => `"${String(v).replace(/"/g, '""')}"`)
+          .join(','),
+      ),
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `referral-scout-jobs-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    ctx.inform(`Exported ${all.length} jobs to CSV.`);
+  };
+
   const list = card('Discovered jobs', {
-    sub: 'Eligibility first, then how well your evidence matches. Effort only separates jobs that are otherwise equal.',
-    link: button('Re-check against my profile', 'btn-link', () => ctx.run({ kind: 'workspace', action: 'requalify' })),
+    sub: 'Eligibility first, then how well your evidence matches. Click any title to open the posting.',
+    link: div('inline', [
+      button('Export CSV', 'btn-link', exportCsv),
+      button('Re-check against my profile', 'btn-link', () => ctx.run({ kind: 'workspace', action: 'requalify' })),
+    ]),
     body: [filterBar, rowsHost],
   });
 

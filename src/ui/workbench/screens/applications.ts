@@ -6,7 +6,22 @@
  * uncertain submission is never retried. Those two promises are the ones that earn the right to run unattended.
  */
 
-import { ago, button, card, div, emptyState, metric, pill, plural, progress, searchBar, text } from '../dom';
+import {
+  ago,
+  button,
+  card,
+  copyLinkButton,
+  div,
+  emptyState,
+  externalLink,
+  metric,
+  paginateControls,
+  pill,
+  plural,
+  progress,
+  searchBar,
+  text,
+} from '../dom';
 import type { Ctx } from '../shell';
 import type { QueueRow } from '../../../background/campaign';
 
@@ -39,9 +54,13 @@ const TONE: Record<string, 'violet' | 'green' | 'amber' | 'red' | 'grey' | 'blue
 
 let filter: Filter = 'all';
 let query = '';
+let currentPage = 1;
+const PAGE_SIZE = 50;
 
 function rowFor(row: QueueRow, ctx: Ctx): HTMLElement {
   const actions = div('inline', []);
+  const copyBtn = copyLinkButton(row.url, 'Copy');
+  if (copyBtn) actions.append(copyBtn);
   if (row.state === 'uncertain') {
     // Never a Retry here. The decision itself lives in Needs you, where both answers are spelled out and the
     // consequence of each is written next to it; a bare pair of buttons in a table row invites a misclick.
@@ -63,7 +82,7 @@ function rowFor(row: QueueRow, ctx: Ctx): HTMLElement {
   return div('row row-queue', [
     div('row-title', [
       text('div', 'row-company', row.company),
-      Object.assign(text('div', 'cell-strong', row.title), { title: row.title }),
+      externalLink(row.title, row.url, 'cell-strong cell-link'),
       Object.assign(text('div', 'cell-muted', row.note || row.stateLabel), { title: row.note || row.stateLabel }),
     ]),
     div('col-hide', [pill(row.ats || row.source || 'direct', 'grey')]),
@@ -147,8 +166,17 @@ export function applications(ctx: Ctx): HTMLElement {
   const drawRows = (): void => {
     const q = query.trim().toLowerCase();
     const filtered = queue.filter(MATCH[filter]).filter(r => !q || `${r.company} ${r.title} ${r.ats} ${r.note}`.toLowerCase().includes(q));
+    const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    if (currentPage > totalPages) currentPage = totalPages;
+    const paged = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+    const pager = paginateControls(filtered.length, currentPage, PAGE_SIZE, next => {
+      currentPage = next;
+      drawRows();
+    });
     rowsHost.replaceChildren(
-      ...(filtered.length ? filtered.map(r => rowFor(r, ctx)) : [text('p', 'cell-muted', 'No applications match this view.')]),
+      ...(paged.length
+        ? [...paged.map(r => rowFor(r, ctx)), ...(pager ? [pager] : [])]
+        : [text('p', 'cell-muted', 'No applications match this view.')]),
     );
   };
   drawRows();
@@ -160,6 +188,7 @@ export function applications(ctx: Ctx): HTMLElement {
       ariaLabel: 'Filter application queue',
       onInput: val => {
         query = val;
+        currentPage = 1;
         drawRows();
       },
     }),

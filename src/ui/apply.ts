@@ -53,6 +53,9 @@ async function activeTabId(): Promise<number | undefined> {
 }
 export async function refreshCard(force = false): Promise<void> {
   clearTimeout(timer);
+  if (!force && typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+    return;
+  }
   try {
     const tabId = await activeTabId();
     const d = await applyRequest({ kind: 'apply', action: 'detect', ...(tabId !== undefined ? { tabId } : {}) });

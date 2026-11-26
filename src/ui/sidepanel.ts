@@ -758,8 +758,14 @@ const panelSkeleton = (): HTMLElement => {
 if (!flags.last) page.replaceChildren(panelSkeleton());
 void refresh().catch(showLoadError);
 const timer = setInterval(() => {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
   void refresh().catch(showLoadError);
 }, 2500);
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void refresh().catch(showLoadError);
+  });
+}
 addEventListener('pagehide', () => clearInterval(timer), { once: true });
 
 void readActiveMission()

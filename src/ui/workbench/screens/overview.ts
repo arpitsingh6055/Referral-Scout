@@ -7,7 +7,7 @@
  */
 
 import { canonicalCompany } from '../../../shared/domain/job';
-import { ago, button, card, div, emptyState, icon, metric, pill, plural, progress, text } from '../dom';
+import { ago, button, card, div, emptyState, externalLink, icon, metric, pill, plural, progress, text } from '../dom';
 import type { Ctx } from '../shell';
 
 function buildTodayPriorities(ctx: Ctx): HTMLElement | null {
@@ -75,7 +75,7 @@ function buildCommandCenter(ctx: Ctx): HTMLElement | null {
   const queueUrls = new Set(queue.flatMap(q => [q.jobId, q.url].filter((v): v is string => !!v)));
   const companies = new Map<
     string,
-    { key: string; name: string; roles: number; shortlisted: number; queued: number; topFit: number; pinned: boolean }
+    { key: string; name: string; roles: number; shortlisted: number; queued: number; topFit: number; pinned: boolean; url?: string }
   >();
 
   for (const j of jobs) {
@@ -89,17 +89,19 @@ function buildCommandCenter(ctx: Ctx): HTMLElement | null {
       queued: 0,
       topFit: 0,
       pinned: pinned.has(key),
+      url: j.url,
     };
     prev.roles += 1;
     if (j.judgement === 'shortlisted') prev.shortlisted += 1;
     if (queueUrls.has(j.id) || queueUrls.has(j.url)) prev.queued += 1;
     prev.topFit = Math.max(prev.topFit, j.fit);
+    if (!prev.url && j.url) prev.url = j.url;
     companies.set(key, prev);
   }
 
   const ranked = [...companies.values()]
     .sort((a, b) => Number(b.pinned) - Number(a.pinned) || Number(b.shortlisted > 0) - Number(a.shortlisted > 0) || b.topFit - a.topFit)
-    .slice(0, 5);
+    .slice(0, 12);
   if (!ranked.length) return null;
 
   return card('Shortlisted & Target Companies', {
@@ -115,13 +117,13 @@ function buildCommandCenter(ctx: Ctx): HTMLElement | null {
             co.shortlisted > 0 && co.queued < co.shortlisted
               ? button('Queue Roles', 'btn btn-sm btn-primary', () => ctx.run({ kind: 'workspace', action: 'enqueueShortlisted' }))
               : refs > 0
-                ? button('View Referrers', 'btn btn-sm btn-primary', () => ctx.go('referrals'))
-                : button('Find Referrers', 'btn btn-sm btn-primary', () => ctx.openPanel('https://www.linkedin.com/jobs/'));
+                ? button('View Referrers', 'btn btn-sm btn-primary', () => ctx.go('people'))
+                : button('Find Referrers', 'btn btn-sm btn-primary', () => ctx.openPanel(co.url || 'https://www.linkedin.com/jobs/'));
           return div('company-cmd-row', [
             div('company-monogram', [monogram]),
             div('row-title', [
               div('inline', [
-                text('span', 'cell-strong', co.name),
+                externalLink(co.name, co.url, 'cell-strong cell-link'),
                 pill(`#${idx + 1} · ${co.topFit}/100`, co.topFit >= 80 ? 'green' : 'violet'),
                 co.pinned ? pill('Pinned', 'violet') : null,
               ]),

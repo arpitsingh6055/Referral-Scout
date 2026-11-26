@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.60.0: Unified Side-Panel-First Architecture, Clickable Links, Companion Dashboard Rebuild & Diagnostics
+- **Unified Data Bridge & Migration (`bridge.ts`, `migration-v6.ts`, `service-worker.ts`):** Extended `importJobs()` to sync `referralJobs` (including `applied` status) alongside `jobSearch.found`, added `ensureDefaultCampaignFromNetwork()` so the companion dashboard never shows false `"No campaign yet"` states when active data exists, and added idempotent `migrateV5ToV6()` on startup.
+- **Dashboard Rebuild (`shell.ts`, `dom.ts`, `jobs.ts`, `people.ts`, `applications.ts`, `overview.ts`, `settings.ts`, `activity.ts`):**
+  - Streamlined navigation from 11 destinations to 7 (`Overview`, `Jobs`, `People`, `Pipeline`, `Needs you`, `Profile & Answers`, `Settings & Help`) while preserving legacy route compatibility.
+  - Added validated `<a href target="_blank" rel="noopener noreferrer">` links (`externalLink`) and 1-click `Copy` buttons (`copyLinkButton`) across Jobs, People, Applications, and Overview.
+  - Added pagination (`paginateControls`, 50/page) for 1,000+ row performance, job sorting (`Fit`, `Newest`, `Company`), CSV export, recoverable `errorStateWithRetry` views, and a non-PII `Copy diagnostics` button in Settings.
+- **Side Panel Power & Polling Hygiene (`ui/sidepanel.ts`, `ui/apply.ts`):** Paused background polling timers while the side panel is hidden (`document.visibilityState === 'hidden'`) and refreshed immediately on return.
+
 ## 0.59.0: Persistent Discovery Run Summary, 5-Step Arc & Integrated Apply Workflow
 - **Persistent Run Summary (`run-summary.ts`, `live.ts`, `network.ts`, `sidepanel.ts`):** Replaced the volatile in-memory `ui.done` card with a persisted `NetworkState.lastRun` summary that survives panel closes and MV3 service-worker restarts, displays the full 5-step arc (`Discover -> Shortlist -> Referrers -> Reach out -> Apply`), highlights top matches with "Why this job" explanations, provides concrete recovery tips on empty/error runs, and collapses cleanly into a re-entry chip on dismissal.
 - **First-Class Apply Action & Unified Status (`apply-status.ts`, `jobs.ts`, `apply.ts`, `pipeline.ts`):** Added `Apply with Referral Scout` and batch-safe `Queue` controls directly on every job card, added `startForJob` tab-launch & autofill handoff, unified `ReferralJob.applied`, `apply-history`, and active `ApplySession` into one status resolver (`resolveJobApplyStatus`), and added a user-overridable strategy order selector (`referral-first` default).

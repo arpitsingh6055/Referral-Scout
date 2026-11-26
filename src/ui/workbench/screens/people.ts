@@ -7,7 +7,22 @@
  */
 
 import { canonicalCompany } from '../../../shared/domain/job';
-import { button, card, confirmModal, div, emptyState, metric, pill, plural, searchBar, text } from '../dom';
+import {
+  button,
+  card,
+  confirmModal,
+  copyLinkButton,
+  div,
+  emptyState,
+  errorStateWithRetry,
+  externalLink,
+  metric,
+  paginateControls,
+  pill,
+  plural,
+  searchBar,
+  text,
+} from '../dom';
 import type { Ctx } from '../shell';
 import type { ContactRow } from '../../../background/workspace';
 
@@ -31,6 +46,8 @@ const CATEGORY: Record<string, string> = {
 
 let viewMode: 'active' | 'conversations' | 'suppressed' = 'active';
 let query = '';
+let currentPage = 1;
+const PAGE_SIZE = 50;
 
 function row(contact: ContactRow, ctx: Ctx, pinnedSet: Set<string>): HTMLElement {
   const confident = contact.confidence >= 0.8;
@@ -38,7 +55,7 @@ function row(contact: ContactRow, ctx: Ctx, pinnedSet: Set<string>): HTMLElement
   return div('row row-queue', [
     div('row-title', [
       div('inline', [text('span', 'row-company', contact.company ?? ''), companyPinned ? pill('Pinned', 'violet') : null]),
-      text('div', 'cell-strong', contact.name),
+      externalLink(contact.name, contact.profileUrl, 'cell-strong cell-link'),
       text('div', 'cell-muted', `${contact.role ?? 'Role unknown'} · ${RELATIONSHIP[contact.relationship] ?? contact.relationship}`),
     ]),
     div('col-hide', [pill(CATEGORY[contact.category] ?? contact.category, contact.category === 'unknown' ? 'grey' : 'violet')]),
@@ -57,11 +74,7 @@ function row(contact: ContactRow, ctx: Ctx, pinnedSet: Set<string>): HTMLElement
             ctx.run({ kind: 'campaign', action: 'pinCompany', company: contact.company!, pinned: !companyPinned }),
           )
         : null,
-      contact.profileUrl
-        ? button('Open profile', 'btn btn-sm', () => {
-            ctx.openExternal(contact.profileUrl!);
-          })
-        : null,
+      copyLinkButton(contact.profileUrl, 'Copy'),
       contact.suppressed
         ? pill('Suppressed', 'red')
         : button('Never contact', 'btn btn-sm btn-danger', async () => {
@@ -82,11 +95,9 @@ function row(contact: ContactRow, ctx: Ctx, pinnedSet: Set<string>): HTMLElement
 export function people(ctx: Ctx): HTMLElement {
   const w = ctx.workspace;
   if (!w)
-    return emptyState({
-      icon: 'alert',
-      title: 'Your contacts could not be loaded',
-      description: 'The message above says why. Reload the extension, then reopen this page.',
-    });
+    return errorStateWithRetry('Could not load contacts', 'Your local contacts database did not respond. Retry to refresh.', () =>
+      ctx.refresh(),
+    );
   const all = w.contacts;
 
   if (!all.length)
@@ -101,6 +112,7 @@ export function people(ctx: Ctx): HTMLElement {
   const active = all.filter(c => !c.suppressed);
   const suppressed = all.filter(c => c.suppressed);
   const convs = ctx.view.conversations ?? [];
+  if (viewMode === 'conversations' && !convs.length && active.length) viewMode = 'active';
   const shown = viewMode === 'suppressed' ? suppressed : active;
 
   const page = div('stack');
@@ -150,7 +162,7 @@ export function people(ctx: Ctx): HTMLElement {
                       c.companyName ? text('span', 'row-company', c.companyName) : null,
                       pill(c.channel === 'gmail' ? 'Gmail' : 'LinkedIn', 'blue'),
                       pill(
-                        c.attributionState === 'confirmed' ? 'Role confirmed' : 'Confirm role',
+                        c.attributionState === 'confirmed' ? 'Matched to job' : 'Match to job',
                         c.attributionState === 'confirmed' ? 'green' : 'amber',
                       ),
                     ]),
@@ -193,9 +205,16 @@ export function people(ctx: Ctx): HTMLElement {
           Number(pinnedSet.has(canonicalCompany(b.company ?? ''))) - Number(pinnedSet.has(canonicalCompany(a.company ?? ''))) ||
           b.confidence - a.confidence,
       );
+    const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+    if (currentPage > totalPages) currentPage = totalPages;
+    const paged = list.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+    const pager = paginateControls(list.length, currentPage, PAGE_SIZE, next => {
+      currentPage = next;
+      drawRows();
+    });
     rowsHost.replaceChildren(
-      ...(list.length
-        ? list.map(c => row(c, ctx, pinnedSet))
+      ...(paged.length
+        ? [...paged.map(c => row(c, ctx, pinnedSet)), ...(pager ? [pager] : [])]
         : [text('p', 'cell-muted', viewMode === 'suppressed' ? 'Nobody is suppressed.' : 'No matching contacts.')]),
     );
   };

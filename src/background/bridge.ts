@@ -19,9 +19,11 @@ import {
   allJobs,
   getProfile,
   resolveCompany,
+  saveCampaign,
   saveContacts,
   saveJobs,
 } from '../shared/persistence/campaign-store';
+import { newCampaign, type Campaign } from '../shared/domain/campaign';
 import { canonicalJobUrl, dedupeKey, normalizeTitle, qualify, type Availability, type Job } from '../shared/domain/job';
 import { personKeyOf, type Contact, type ContactCategory, type Relationship } from '../shared/domain/outreach';
 import { requirementsFrom } from '../shared/domain/profile';
@@ -75,15 +77,53 @@ export interface BridgeReport {
   contactsAdded: number;
 }
 
+export async function ensureDefaultCampaignFromNetwork(now = Date.now()): Promise<Campaign | null> {
+  const existing = await activeCampaign().catch(() => undefined);
+  if (existing) return existing;
+  const network = await getNetwork().catch(() => null);
+  if (!network) return null;
+  const hasActivity = !!(network.profile || network.referralJobs?.length || network.jobSearch?.found?.length || network.targetSet);
+  if (!hasActivity) return null;
+  const roles = network.settings?.roles?.length ? network.settings.roles : [network.target || 'Target role'];
+  const created = newCampaign({
+    name: `${roles[0] ?? 'Job Search'}`,
+    targetRoles: roles,
+    location: network.location || 'India',
+    employmentType: network.settings?.employmentType ?? 'any',
+    now,
+  });
+  await saveCampaign(created);
+  return created;
+}
+
 /**
- * Brings the side panel's search results across as canonical jobs and qualifies them against the profile.
+ * Brings the side panel's search results AND referral jobs across as canonical jobs and qualifies them against the profile.
  *
- * A job already here keeps its own record: the person may have shortlisted or rejected it, and a re-import must
+ * A job already here keeps its own record: the person may have shortlisted, applied or rejected it, and a re-import must
  * not quietly undo that. Only the ranking and the qualification are refreshed.
  */
 export async function importJobs(now = Date.now()): Promise<{ added: number; updated: number }> {
   const network = await getNetwork().catch(() => null);
-  const found = network?.jobSearch?.found ?? [];
+  const searchFound = network?.jobSearch?.found ?? [];
+  const referralJobs = network?.referralJobs ?? [];
+  const seenUrls = new Set(searchFound.map(j => canonicalJobUrl(j.url) ?? j.url));
+  const extraFromReferrals: (FoundJob & { applied?: number })[] = referralJobs
+    .filter(r => !seenUrls.has(canonicalJobUrl(r.url) ?? r.url))
+    .map(r => ({
+      id: hashText(r.url),
+      url: r.url,
+      title: r.title,
+      company: r.company,
+      location: r.location,
+      insight: '',
+      term: r.title,
+      score: 75,
+      picked: true,
+      ...(r.fitNote ? { why: r.fitNote } : {}),
+      ...(r.applied ? { applied: r.applied } : {}),
+    }));
+  const appliedByUrl = new Map(referralJobs.filter(r => !!r.applied).map(r => [canonicalJobUrl(r.url) ?? r.url, r.applied!]));
+  const found: (FoundJob & { applied?: number })[] = [...searchFound, ...extraFromReferrals];
   if (!found.length) return { added: 0, updated: 0 };
 
   const [existing, profile] = await Promise.all([allJobs(), getProfile()]);
@@ -99,18 +139,22 @@ export async function importJobs(now = Date.now()): Promise<{ added: number; upd
     const key = canonicalJobUrl(raw.url) ?? raw.url;
     const previous = byUrl.get(key);
     const fresh = toJob(raw, now, profile.profileVersion);
+    const isApplied = !!(raw.applied || appliedByUrl.get(key));
     const job: Job = previous
       ? {
           ...previous,
-          // The person's own call always wins over whatever the search thinks this time.
-          userJudgement:
-            previous.userJudgement && previous.userJudgement !== 'none' ? previous.userJudgement : (fresh.userJudgement ?? 'none'),
+          // Applied wins; otherwise the person's own call wins over whatever the search thinks this time.
+          userJudgement: isApplied
+            ? 'applied'
+            : previous.userJudgement && previous.userJudgement !== 'none'
+              ? previous.userJudgement
+              : (fresh.userJudgement ?? 'none'),
           ...(fresh.description ? { description: fresh.description, descriptionHash: fresh.descriptionHash } : {}),
           requirements: fresh.requirements.length ? fresh.requirements : previous.requirements,
           observedAt: now,
           updatedAt: now,
         }
-      : fresh;
+      : { ...fresh, ...(isApplied ? { userJudgement: 'applied' as const } : {}) };
     job.qualification = qualify(job, reqs, now);
     // The AI ranking has read the full CV, LinkedIn background and job description. Preserve that assessment;
     // the local keyword matcher is only a fallback when the ChatGPT session is unavailable.
@@ -205,6 +249,7 @@ export async function importContacts(now = Date.now()): Promise<number> {
  * whatever the side panel has found without the person having to press anything.
  */
 export async function syncFromNetwork(now = Date.now()): Promise<BridgeReport> {
+  await ensureDefaultCampaignFromNetwork(now).catch(() => null);
   const [jobs, contactsAdded] = await Promise.all([
     importJobs(now).catch(() => ({ added: 0, updated: 0 })),
     importContacts(now).catch(() => 0),

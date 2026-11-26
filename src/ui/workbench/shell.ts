@@ -96,20 +96,16 @@ export interface Ctx {
   aiError?: string;
 }
 
-const EXTRA_ROUTES: Route[] = ['welcome'];
+const EXTRA_ROUTES: Route[] = ['welcome', 'referrals', 'activity', 'answers', 'setup'];
 
 const NAV: { route: Route; label: string; icon: string; section: 'Workspace' | 'Candidate' | 'System' }[] = [
   { route: 'overview', label: 'Overview', icon: 'home', section: 'Workspace' },
   { route: 'jobs', label: 'Jobs', icon: 'briefcase', section: 'Workspace' },
-  { route: 'applications', label: 'Applications', icon: 'list', section: 'Workspace' },
-  { route: 'needs-you', label: 'Needs you', icon: 'bell', section: 'Workspace' },
-  { route: 'referrals', label: 'Referrals', icon: 'target', section: 'Workspace' },
   { route: 'people', label: 'People', icon: 'people', section: 'Workspace' },
-  { route: 'activity', label: 'Outcomes', icon: 'activity', section: 'Workspace' },
-  { route: 'profile', label: 'Profile', icon: 'person', section: 'Candidate' },
-  { route: 'answers', label: 'Answer Bank', icon: 'check', section: 'Candidate' },
-  { route: 'setup', label: 'Campaign', icon: 'target', section: 'System' },
-  { route: 'settings', label: 'Settings', icon: 'gear', section: 'System' },
+  { route: 'applications', label: 'Pipeline', icon: 'list', section: 'Workspace' },
+  { route: 'needs-you', label: 'Needs you', icon: 'bell', section: 'Workspace' },
+  { route: 'profile', label: 'Profile & Answers', icon: 'person', section: 'Candidate' },
+  { route: 'settings', label: 'Settings & Help', icon: 'gear', section: 'System' },
 ];
 
 let current: Route = 'overview';

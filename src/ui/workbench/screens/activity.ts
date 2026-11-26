@@ -70,7 +70,7 @@ export function activity(ctx: Ctx): HTMLElement {
         text(
           'p',
           '',
-          `Weekly North Star: ${analytics.weeklyProgressedOpportunities} opportunity milestone(s) progressed this week · ${analytics.activated ? 'Workspace activated ✓' : 'Shortlist or queue 1 role to activate'}${analytics.sampleReliable ? '' : ' · Needs ≥ 10 opportunities for reliable conversion rates.'}`,
+          `This week: ${plural(analytics.weeklyProgressedOpportunities, 'opportunity')} moved forward${analytics.activated ? '' : ' · Shortlist or apply to 1 role to get started.'}`,
         ),
       ]),
     );

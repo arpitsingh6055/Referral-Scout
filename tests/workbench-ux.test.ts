@@ -1244,9 +1244,24 @@ it('Master Interactive Controls Sweep: welcome CV id, settings export/theme, job
   await vi.waitFor(() => expect(ctx.openExternal).toHaveBeenCalledWith('https://www.linkedin.com/jobs/view/10/'));
 
   document.body.replaceChildren(people(ctx));
-  const openPersonBtn = [...document.querySelectorAll('button')].find(b => b.textContent === 'Open profile')!;
-  openPersonBtn.click();
-  await vi.waitFor(() => expect(ctx.openExternal).toHaveBeenCalledWith('https://www.linkedin.com/in/neha-rao/'));
+  const contactsTab = [...document.querySelectorAll<HTMLButtonElement>('button[role="tab"]')].find(b =>
+    b.textContent?.startsWith('Contacts'),
+  );
+  if (contactsTab && contactsTab.getAttribute('aria-selected') !== 'true') {
+    contactsTab.click();
+    await new Promise(r => setTimeout(r, 10));
+    document.body.replaceChildren(people(ctx));
+  }
+  const peopleSearch = document.querySelector<HTMLInputElement>('input[aria-label="Search people"]');
+  if (peopleSearch && peopleSearch.value) {
+    peopleSearch.value = '';
+    peopleSearch.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  expect(document.body.textContent).toContain('Neha Rao');
+  const personLink = document.querySelector<HTMLAnchorElement>('a[href="https://www.linkedin.com/in/neha-rao/"]');
+  expect(personLink).toBeTruthy();
+  expect(personLink?.getAttribute('target')).toBe('_blank');
+  expect(personLink?.getAttribute('rel')).toBe('noopener noreferrer');
 
   // 4. Smoke render all remaining screens without throwing.
   for (const renderScreen of [overview, referrals, applications, needsYou, answers, activity, setup, profile]) {
