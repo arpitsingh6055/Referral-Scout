@@ -2516,3 +2516,94 @@ button.pill:focus-visible {
 .sp-hud.is-error .sp-hud-bar > span {
   background: var(--bad);
 }
+
+/* ---------- Persistent Run Summary, Triage & Unified Apply ---------- */
+.run-summary.empty {
+  border-color: var(--warn);
+}
+.run-summary.error {
+  border-color: var(--bad);
+}
+.run-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+.run-stat {
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  padding: 8px 6px;
+  text-align: center;
+}
+.run-stat b {
+  display: block;
+  font-size: 16px;
+  color: var(--text);
+}
+.run-stat span {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+.run-highlights {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.run-highlight {
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+}
+.run-highlight-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.run-highlight p {
+  margin: 4px 0 0;
+}
+.run-tips {
+  margin: 8px 0 12px;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.run-tips li + li {
+  margin-top: 4px;
+}
+.run-chip {
+  padding: 8px 12px;
+}
+.run-chip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.triage-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.strategy-bar,
+.queue-bar {
+  padding: 12px 14px;
+}
+.strategy-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.strategy-row select {
+  flex: 1;
+  min-width: 0;
+}
+.queue-bar p {
+  margin: 4px 0 10px;
+}

@@ -12,7 +12,9 @@ import {
 } from '../shared/network';
 import { referralAsk, referralNote, referralPlan } from '../shared/referral';
 import { fill, type JobSearch } from '../shared/jobsearch';
+import { resolveJobApplyStatus, STRATEGY_ORDER_LABELS, type StrategyOrder } from '../shared/apply-status';
 import { node, link, button, act, kit, accordion, flags, ui, stateLabels, confirmPanelAction } from './core';
+import { latestApplyDetect, startApplyForJob } from './apply';
 import { personCard } from './people';
 
 /* People and jobs remembered with the button on LinkedIn pages: reminders, job progress and old requests. */
@@ -219,14 +221,41 @@ export function jobChooser(search: JobSearch): HTMLElement {
   };
   const caution = node('p', '', 'callout');
   card.append(
-    node('p', 'Step 2 of 4 · your turn', 'eyebrow'),
-    node('h2', 'Choose companies', 'card-title'),
+    node('p', 'Step 2 of 5 · your turn', 'eyebrow'),
+    node('h2', 'Shortlist your jobs', 'card-title'),
     node(
       'p',
-      'One job per company, best match first. Companies where you already have a way in are ranked higher. Untick any you do not want. Click a title to open the job on LinkedIn.',
+      'One job per company, best match first. Keep the ones you want to pursue for referrals and applying; skip the rest.',
       'card-sub',
     ),
   );
+  const triageBar = node('div', '', 'triage-bar');
+  triageBar.append(
+    button(
+      'Keep top matches',
+      async () => {
+        search.found.forEach((j, idx) => chosen.set(j.id, idx < 10 && (!!j.prioritized || j.score > 0)));
+        list.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((b, idx) => {
+          const j = search.found[idx];
+          if (j) b.checked = chosen.get(j.id) ?? false;
+        });
+        count();
+      },
+      'btn sm',
+    ),
+    button(
+      'Clear all',
+      async () => {
+        search.found.forEach(j => chosen.set(j.id, false));
+        list.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach(b => {
+          b.checked = false;
+        });
+        count();
+      },
+      'btn sm ghost',
+    ),
+  );
+  card.append(triageBar);
   for (const job of search.found) {
     const row = node('label', '', 'job-row'),
       box = node('input'),
@@ -322,8 +351,55 @@ export function buildReferrals(s: NetworkState): HTMLElement {
       choosing && jobs.length ? accordion('progress', `Already in progress: ${jobs.length} ${jobs.length === 1 ? 'job' : 'jobs'}`) : null,
     target = rest ? rest.body : panel;
   if (rest) panel.append(rest.box);
-  const pipeline = board(s, kit);
+  const applyDetect = latestApplyDetect();
+  const applyHistory = applyDetect?.history ?? [];
+  const applySession = applyDetect?.session ?? null;
+  const pipeline = board(s, kit, applyHistory);
   if (pipeline) target.append(pipeline);
+
+  // Recommended workflow order (referral-first by default, user-overridable)
+  if (jobs.length) {
+    const order: StrategyOrder = s.strategyOrder ?? 'referral-first';
+    const orderBox = node('div', '', 'card strategy-bar');
+    const orderRow = node('div', '', 'strategy-row');
+    const orderSelect = node('select');
+    for (const [val, meta] of Object.entries(STRATEGY_ORDER_LABELS) as [StrategyOrder, { label: string; hint: string }][]) {
+      const o = node('option', meta.label);
+      o.value = val;
+      orderSelect.append(o);
+    }
+    orderSelect.value = order;
+    orderSelect.setAttribute('aria-label', 'Application and referral order');
+    orderSelect.addEventListener('change', () => {
+      void act({ kind: 'network', action: 'setStrategyOrder', order: orderSelect.value as StrategyOrder });
+    });
+    orderRow.append(node('span', 'Order', 'eyebrow'), orderSelect);
+    orderBox.append(orderRow, node('p', STRATEGY_ORDER_LABELS[order].hint, 'muted small'));
+    target.append(orderBox);
+  }
+
+  // Batch-safe Apply Queue (one job at a time, always stops for human review)
+  const queuedUrls = s.applyQueue ?? [];
+  if (queuedUrls.length) {
+    const nextUrl = queuedUrls[0]!;
+    const nextJob = jobs.find(j => j.url === nextUrl);
+    const qBox = node('section', '', 'card queue-bar');
+    qBox.append(
+      node('b', `${queuedUrls.length} ${queuedUrls.length === 1 ? 'job' : 'jobs'} queued for guided apply`),
+      node('p', 'Processed one at a time. Referral Scout always stops at the final review so you press Submit.', 'muted small'),
+      button(
+        nextJob ? `Apply next: ${nextJob.company}` : 'Apply next in queue',
+        () =>
+          startApplyForJob({
+            url: nextUrl,
+            ...(nextJob ? { title: nextJob.title, company: nextJob.company, location: nextJob.location } : {}),
+          }),
+        'btn sm primary',
+        'Opening…',
+      ),
+    );
+    target.append(qBox);
+  }
   if (s.plan) {
     const d = node('details', '', 'inline');
     d.append(
@@ -358,8 +434,17 @@ export function buildReferrals(s: NetworkState): HTMLElement {
       `${job.title} · ${job.company}`,
       job.finishedAt ? String(people.length) : 'searching…',
     );
+    const applyStatus = resolveJobApplyStatus(job, { history: applyHistory, session: applySession });
     const meta = node('div', '', 'meta');
-    meta.append(link('View job ↗', job.url, 'job-open'), node('span', job.mode === 'referral' ? 'Reaching out' : 'Listing only', 'chip'));
+    meta.append(
+      link('View job ↗', job.url, 'job-open'),
+      node('span', job.mode === 'referral' ? 'Referrals' : 'Listing only', 'chip'),
+      node(
+        'span',
+        `Apply: ${applyStatus.label}`,
+        `badge ${applyStatus.stage === 'applied' || applyStatus.stage === 'submitted' ? 'connected' : applyStatus.stage === 'needs-review' || applyStatus.stage === 'filling' ? 'review' : applyStatus.stage === 'failed' ? 'attention' : ''}`,
+      ),
+    );
     const steps = referralPlan(job).length;
     if (!job.finishedAt)
       meta.append(
@@ -534,13 +619,42 @@ export function buildReferrals(s: NetworkState): HTMLElement {
         button('Stop asking here', () => act({ kind: 'network', action: 'stopCompany', url: job.url }), 'btn sm ghost danger'),
       );
     if (control.childElementCount) body.append(control);
-    body.append(
+    const applyActions = node('div', '', 'person-actions');
+    const isQueued = queuedUrls.includes(job.url);
+    if (applyStatus.stage !== 'applied' && applyStatus.stage !== 'submitted') {
+      const applyLabel =
+        applyStatus.stage === 'needs-review'
+          ? 'Resume review'
+          : applyStatus.stage === 'failed'
+            ? 'Retry fill'
+            : 'Apply with Referral Scout';
+      applyActions.append(
+        button(
+          applyLabel,
+          () => startApplyForJob({ url: job.url, title: job.title, company: job.company, location: job.location }),
+          'btn sm primary',
+          'Opening…',
+        ),
+        button(
+          isQueued ? 'Queued ✓' : 'Queue',
+          () =>
+            act(
+              isQueued
+                ? { kind: 'network', action: 'dequeueJobForApply', url: job.url }
+                : { kind: 'network', action: 'queueJobsForApply', urls: [job.url] },
+            ),
+          `btn sm${isQueued ? ' choice on' : ''}`,
+        ),
+      );
+    }
+    applyActions.append(
       button(
-        job.applied ? 'Applied ✓ (undo)' : 'I applied',
-        () => act({ kind: 'network', action: 'jobApplied', url: job.url, applied: !job.applied }),
-        job.applied ? 'btn sm' : 'btn sm primary',
+        applyStatus.stage === 'applied' ? 'Applied ✓ (undo)' : 'Mark applied',
+        () => act({ kind: 'network', action: 'jobApplied', url: job.url, applied: applyStatus.stage !== 'applied' }),
+        applyStatus.stage === 'applied' ? 'btn sm' : 'btn sm ghost',
       ),
     );
+    body.append(applyActions);
     body.append(
       button(
         'Remove this job',

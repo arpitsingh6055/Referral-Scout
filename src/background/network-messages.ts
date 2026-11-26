@@ -1001,6 +1001,34 @@ export function registerNetworkMessages(): void {
         if (req.action === 'clear') {
           await clearAllLocalData();
         }
+        if (req.action === 'dismissRunSummary')
+          await updateNetwork(s => {
+            if (s.lastRun) s.lastRun = { ...s.lastRun, dismissedAt: Date.now() };
+            return s;
+          });
+        if (req.action === 'setStrategyOrder')
+          await updateNetwork(s => ({
+            ...s,
+            strategyOrder: req.order,
+          }));
+        if (req.action === 'queueJobsForApply')
+          await updateNetwork(s => {
+            const existing = s.applyQueue ?? [];
+            const merged = [...existing];
+            for (const u of req.urls) {
+              if (!merged.includes(u)) merged.push(u);
+            }
+            return {
+              ...s,
+              applyQueue: merged.slice(0, 20),
+              status: `${merged.length} ${merged.length === 1 ? 'job' : 'jobs'} queued for guided apply (one at a time, with your review).`,
+            };
+          });
+        if (req.action === 'dequeueJobForApply')
+          await updateNetwork(s => ({
+            ...s,
+            applyQueue: (s.applyQueue ?? []).filter(u => u !== req.url),
+          }));
         accepted = true;
         return statusView(await getNetwork());
       } finally {

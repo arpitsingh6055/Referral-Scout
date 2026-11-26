@@ -23,6 +23,7 @@ import {
   dueReminders,
 } from '../shared/network';
 import { classify, geoFor, normalizeCompany, planSearch, companyOf } from '../shared/targeting';
+import { deriveRunSummary } from '../shared/run-summary';
 import { companyFromCurrent } from '../parsers/network';
 import { read, write, mutate } from '../storage/state';
 import { acquire, release, renew } from './lease';
@@ -195,12 +196,48 @@ export async function updateNetwork(fn: (s: NetworkState) => NetworkState): Prom
               : ('info' as const),
         },
       ].slice(-500);
+    const derived = deriveRunSummary(next);
+    if (derived) next.lastRun = derived;
     return next;
   });
   void showTurn(state);
   void syncMissionFromNetwork(state);
+  void notifyRunMilestone(previous, state);
   announceImportantStatus(previous?.status, state.status);
   return state;
+}
+
+function notifyRunMilestone(prev: NetworkState | undefined, curr: NetworkState): void {
+  if (typeof chrome === 'undefined' || !chrome.notifications?.create) return;
+  if (prev?.jobSearch?.status === 'finding' && curr.jobSearch?.status === 'choosing') {
+    const count = curr.jobSearch.found.length;
+    void chrome.notifications
+      .create('rs-discovery-complete', {
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: count ? `Found ${count} matching ${count === 1 ? 'company' : 'companies'}` : 'Job search finished',
+        message: count
+          ? 'Open Referral Scout to review your shortlist and pick where to ask for referrals or apply.'
+          : 'No matching jobs were found this time. Open Referral Scout to adjust your titles or location.',
+      })
+      .catch(() => undefined);
+    return;
+  }
+  const prevOpen = (prev?.referralJobs ?? []).filter(j => j.finishedAt === undefined).length;
+  const currOpen = (curr.referralJobs ?? []).filter(j => j.finishedAt === undefined).length;
+  if (prev && prevOpen > 0 && currOpen === 0 && (curr.referralJobs ?? []).length > 0) {
+    const people = curr.contacts.filter(p => !!p.referralJob && ['shortlisted', 'review', 'connected'].includes(p.state)).length;
+    void chrome.notifications
+      .create('rs-referrers-complete', {
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: people ? `${people} ${people === 1 ? 'referrer' : 'referrers'} ready` : 'Referrer search finished',
+        message: people
+          ? 'Review drafts or apply to your shortlisted jobs in Referral Scout.'
+          : 'You can still apply directly to your shortlisted jobs in Referral Scout.',
+      })
+      .catch(() => undefined);
+  }
 }
 
 function syncMissionFromNetwork(s: NetworkState): Promise<unknown> {

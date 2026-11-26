@@ -28,12 +28,12 @@ import {
   accordion,
   openDashboard,
 } from './core';
-import { runStatus, usage, journey, meter, tick, live, readyToContact } from './live';
+import { runStatus, usage, journey, meter, tick, live, readyToContact, runSummaryCard } from './live';
 import { welcome, buildSetup } from './setup';
 import { buildSaved, buildReferrals, jobChooser } from './jobs';
 import { buildPeople } from './people';
 import { buildActivity } from './activity';
-import { applyHome, refreshCard } from './apply';
+import { applyHome, refreshCard, latestApplyDetect, startApplyForJob } from './apply';
 import { renderCampaignCard } from './side-panel/campaign-card';
 import { computePanelHudState, createSidePanelHud, type PanelHudAction } from './side-panel/floating-hud';
 import type { CampaignView } from '../background/campaign';
@@ -259,7 +259,8 @@ function render(s: NetworkState): void {
   const run = node('section', '', `card run ${status.tone}`),
     stage = journey(s),
     stepper = node('ol', '', 'journey');
-  ['Find jobs', 'Choose', 'Find people', 'Reach out'].forEach((label, i) => {
+  run.setAttribute('aria-live', 'polite');
+  ['Discover', 'Shortlist', 'Referrers', 'Reach out', 'Apply'].forEach((label, i) => {
     const li = node('li', '', i < stage ? 'done' : i === stage ? 'now' : ''),
       dot = node('i');
     if (i < stage) dot.append(icon('check'));
@@ -485,7 +486,7 @@ function render(s: NetworkState): void {
 
   // The whole way to a referral in six numbers: each opens the list behind it.
   const kpis = node('div', '', 'kpis'),
-    counts = stageCounts(referralPeople(s), jobs);
+    counts = stageCounts(referralPeople(s), jobs, latestApplyDetect()?.history ?? []);
   const opens = [
     () => openPeople('all'),
     () => openPeople('connected'),
@@ -521,58 +522,14 @@ function render(s: NetworkState): void {
     );
     home.append(bar);
   }
-  if (ui.done && !s.paused) {
-    // The moment the search for people is over: say what came of it and where to look.
-    const done = node('section', '', 'card done'),
-      actions = node('div', '', 'todo-actions');
-    done.append(
-      node('h3', 'Search finished', 'card-title'),
-      node(
-        'p',
-        ui.done.people
-          ? `${ui.done.people} ${ui.done.people === 1 ? 'person is' : 'people are'} lined up at ${ui.done.companies} ${ui.done.companies === 1 ? 'company' : 'companies'}. ${s.active ? 'They are being contacted one at a time.' : 'Nobody is contacted until you start reaching out.'}`
-          : `No suitable people were found at ${ui.done.companies === 1 ? 'that company' : `those ${ui.done.companies} companies`}. Try other roles or companies.`,
-        'card-sub',
-      ),
-    );
-    const seen = (): void => {
-      ui.done = null;
-    };
-    if (ui.done.people)
-      actions.append(
-        button(
-          'See who',
-          async () => {
-            seen();
-            setTab('referrals', true);
-          },
-          'btn sm primary',
-        ),
-      );
-    if (ui.done.people && !s.active)
-      actions.append(
-        button(
-          'Start reaching out',
-          async () => {
-            seen();
-            await act({ kind: 'network', action: 'resume' });
-          },
-          'btn sm',
-        ),
-      );
-    actions.append(
-      button(
-        'OK',
-        async () => {
-          seen();
-          render(s);
-        },
-        'btn sm ghost',
-      ),
-    );
-    done.append(actions);
-    home.append(done);
-  }
+  const summaryCard = runSummaryCard(s, {
+    onOpenJobs: () => setTab('referrals', true),
+    onApplyTop: async job => {
+      await startApplyForJob(job);
+      notify('info', `Opening ${job.company} to fill your application…`);
+    },
+  });
+  if (summaryCard) home.append(summaryCard);
   // Suggestions that make the results better, shown on Home instead of sending a new user into Settings.
   const openSetting = (key: string, title: string): void => {
     ui.open.add(key);
@@ -761,13 +718,6 @@ async function refresh(): Promise<void> {
     );
   const open = (x: NetworkState | null): number => (x?.referralJobs ?? []).filter(j => j.finishedAt === undefined).length;
   if (before && open(before) > 0 && open(current) === 0 && (current.referralJobs ?? []).length) {
-    const jobUrls = new Set((before.referralJobs ?? []).filter(j => j.finishedAt === undefined).map(j => j.url));
-    ui.done = {
-      companies: jobUrls.size,
-      people: current.contacts.filter(
-        p => !!p.referralJob && jobUrls.has(p.referralJob) && ['shortlisted', 'review', 'connected'].includes(p.state),
-      ).length,
-    };
     ui.tab = 'home';
     document.scrollingElement?.scrollTo({ top: 0 });
   }

@@ -137,7 +137,7 @@ it('shows where the person is on the way to a referral, and answers the per-comp
       },
     ],
   });
-  expect([...document.querySelectorAll('.journey li')].map(li => li.className)).toEqual(['done', 'done', 'now', '']);
+  expect([...document.querySelectorAll('.journey li')].map(li => li.className)).toEqual(['done', 'done', 'now', '', '']);
   byText('.todo button', 'Only them')!.click();
   await vi.waitFor(() => expect(sent.find(r => r.action === 'referralDecision')).toMatchObject({ widen: false }));
 });
@@ -189,7 +189,7 @@ it('shows a live tracker while jobs are searched: the plan done, the title being
   });
   expect([...document.querySelectorAll('.live-steps li')].map(li => li.className)).toEqual(['done', 'done', 'now', 'later', 'later']);
   expect($('.live-clock')!.textContent).toMatch(/^1:0\d$/);
-  expect($('.live-expect')!.textContent).toMatch(/Usually 2 to 4 minutes/);
+  expect($('.live-expect')!.textContent).toMatch(/Reading LinkedIn job results/);
 });
 
 it('when paused, Resume is the main action and the live tracker is hidden; while a search runs, Pause is offered even if sending is off', async () => {
@@ -246,7 +246,7 @@ it('tracks outcomes: a pipeline row per company, one-press marks on a person, an
   ]);
   byText('.tab', 'Jobs')!.click();
   expect([...document.querySelectorAll('.board-cell')].map(c => c.textContent)).toEqual(['2', '1', '1', '1', '·']);
-  byText('button', 'I applied')!.click();
+  byText('button', 'Mark applied')!.click();
   await vi.waitFor(() => expect(sent.find(r => r.action === 'jobApplied')).toMatchObject({ url: jobUrl, applied: true }));
   await new Promise(r => setTimeout(r, 30)); // the first press finishes before the next
   byText('.outcome button', 'They replied')!.click();
@@ -332,7 +332,7 @@ it('says when it is the person’s turn, and takes them to the company list the 
   // The list appears on Home itself, right under the status, with no button to notice first.
   await vi.waitFor(() => expect($<HTMLElement>('.tab[aria-selected=true]')!.textContent).toContain('Home'));
   const home = [...document.querySelectorAll<HTMLElement>('.home-turn')].find(el => el.offsetParent !== null || !el.closest('[hidden]'));
-  expect(home?.textContent).toContain('Choose companies');
+  expect(home?.textContent).toContain('Shortlist your jobs');
   expect(home?.textContent).toContain('Ops Intern');
   expect($('.run-title')!.textContent).toBe('Choose your companies');
   expect($('.pill')!.textContent).toBe('Your turn');
@@ -469,11 +469,27 @@ it('says so when the search for people is over, with where to go next, and offer
   });
   const contacts = [person('a', 'shortlisted', { referralJob: job(true).url }), person('b', 'shortlisted', { referralJob: job(true).url })];
   await open({ active: false, referralJobs: [job(false)], contacts });
-  state = { ...state, referralJobs: [job(true)], undo: { label: 'Stopped asking at Stripe', at: Date.now(), people: [], jobs: [] } };
+  state = {
+    ...state,
+    referralJobs: [job(true)],
+    undo: { label: 'Stopped asking at Stripe', at: Date.now(), people: [], jobs: [] },
+    lastRun: {
+      id: 'run-1',
+      startedAt: 1,
+      updatedAt: 10,
+      finishedAt: 10,
+      phase: 'outreach',
+      outcome: 'success',
+      jobsRead: 1,
+      companiesFound: 1,
+      strongMatches: 1,
+      referrersFound: 2,
+      appliedCount: 0,
+    },
+  };
   await vi.advanceTimersByTimeAsync(2600);
-  await vi.waitFor(() => expect(byText('.done', 'Search finished')).toBeTruthy());
-  expect(byText('.done', '2 people are lined up at 1 company. Nobody is contacted until you start reaching out.')).toBeTruthy();
-  expect(byText('.done button', 'Start reaching out')).toBeTruthy();
+  await vi.waitFor(() => expect(byText('.run-summary', '2 referrers ready across 1 company')).toBeTruthy());
+  expect(byText('.run-summary button', 'Start reaching out')).toBeTruthy();
   byText('.undo button', 'Undo')!.click();
   await vi.waitFor(() => expect(sent.map(r => r.action)).toContain('undo'));
 });

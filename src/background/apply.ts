@@ -46,7 +46,7 @@ import { all, remove } from '../storage/database';
 import { trustedExtension } from '../validators/security';
 import { AI_HEALTH_KEY, askChatGpt, type AiHealth } from './network-ai';
 import { openManagedTab } from './network-browser';
-import { getNetwork, queueReferral } from './network';
+import { getNetwork, queueReferral, updateNetwork } from './network';
 import { referralJobInput } from '../shared/referral';
 import { clearProgressTask, publishProgressTask } from '../shared/progress-store';
 import type { ApplyApi, FillResult } from '../content/apply';
@@ -647,7 +647,15 @@ async function markSent(tabId: number): Promise<void> {
   const now = Date.now();
   const job = s.job;
   const history = (await read<{ title: string; company: string; url: string; at: number }[]>(HISTORY_KEY)) ?? [];
-  if (job) await write(HISTORY_KEY, [{ title: job.title, company: job.company, url: job.url, at: now }, ...history].slice(0, 5000));
+  if (job) {
+    await write(HISTORY_KEY, [{ title: job.title, company: job.company, url: job.url, at: now }, ...history].slice(0, 5000));
+    await updateNetwork(net => {
+      const target = (net.referralJobs ?? []).find(j => j.url === job.url);
+      if (target && !target.applied) target.applied = now;
+      if (net.applyQueue?.length) net.applyQueue = net.applyQueue.filter(u => u !== job.url);
+      return net;
+    }).catch(() => undefined);
+  }
   const profile = await applyProfile();
   let sent: NonNullable<ApplySession['sent']>;
   if ((profile.afterApply ?? 'referrals') === 'nothing') sent = { at: now, referral: 'off', message: '' };
@@ -1995,6 +2003,14 @@ export const applyRequest = z.discriminatedUnion('action', [
   z.object({ kind: z.literal('apply'), action: z.literal('capturePhoto') }),
   z.object({ kind: z.literal('apply'), action: z.literal('savePhoto'), file }),
   z.object({ kind: z.literal('apply'), action: z.literal('deletePhoto') }),
+  z.object({
+    kind: z.literal('apply'),
+    action: z.literal('startForJob'),
+    url: z.string().url().max(500),
+    title: z.string().trim().min(1).max(200).optional(),
+    company: z.string().trim().min(1).max(200).optional(),
+    location: z.string().max(200).optional(),
+  }),
 ]);
 export type ApplyRequest = z.infer<typeof applyRequest>;
 export function registerApplyMessages(): void {
@@ -2051,6 +2067,48 @@ export function registerApplyMessages(): void {
           throw new Error('Upload your CV in Candidate profile in the dashboard first; applications need the file itself.');
         const old = await loadSession(tabId);
         await start(req.tabId, req.again && old?.tabId === req.tabId ? 2 + Math.floor(Math.random() * 1000) : 1);
+      }
+      if (req.action === 'startForJob') {
+        const s = await getNetwork();
+        if (!s.profile) throw new Error('Set up Referral Scout with your LinkedIn profile first.');
+        if (!(await cvFile()))
+          throw new Error('Upload your CV in Candidate profile in the dashboard first; applications need the file itself.');
+        const tabs = await chrome.tabs.query({}).catch(() => []);
+        const existing = tabs.find(t => t.id !== undefined && t.url && sameApplication(t.url, req.url));
+        let targetTabId = existing?.id;
+        if (targetTabId !== undefined) {
+          await chrome.tabs.update(targetTabId, { active: true }).catch(() => undefined);
+        } else {
+          const created = await chrome.tabs.create({ url: req.url, active: true });
+          targetTabId = created.id;
+          if (targetTabId !== undefined) {
+            await new Promise<void>(resolve => {
+              const timeout = setTimeout(resolve, 4000);
+              const onUpd = (id: number, info: chrome.tabs.OnUpdatedInfo): void => {
+                if (id === targetTabId && info.status === 'complete') {
+                  clearTimeout(timeout);
+                  chrome.tabs.onUpdated.removeListener(onUpd);
+                  resolve();
+                }
+              };
+              chrome.tabs.onUpdated.addListener(onUpd);
+            });
+          }
+        }
+        if (targetTabId === undefined) throw new Error('Could not open the job tab.');
+        await start(targetTabId, 1);
+        if (req.title || req.company) {
+          await update(targetTabId, x => ({
+            ...x,
+            job: {
+              title: x.job?.title || req.title || '',
+              company: x.job?.company || req.company || '',
+              location: x.job?.location || req.location || '',
+              url: req.url,
+            },
+          }));
+        }
+        return detect(targetTabId);
       }
       if (req.action === 'next') await nextStep(tabId);
       if (req.action === 'nextJob') {

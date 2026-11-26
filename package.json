@@ -1,6 +1,6 @@
 {
   "name": "referral-scout",
-  "version": "0.58.2",
+  "version": "0.59.0",
   "private": true,
   "type": "module",
   "description": "Referral Scout: local-first MV3 extension for CV-ranked job discovery, referrer outreach, and application autofill",

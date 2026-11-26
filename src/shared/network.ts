@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { classify, suggestTarget } from './targeting';
 import type { ReferralJob } from './referral';
 import type { JobSearch, SearchPlan } from './jobsearch';
+import type { RunSummary } from './run-summary';
+import type { StrategyOrder } from './apply-status';
 export const DAY = 86400000;
 export const networkKey = 'network-v1'; // Retain old state for lossless migration; mirror entities in v2 stores.
 export function profileUrl(value: string): string | null {
@@ -223,6 +225,12 @@ export interface NetworkState {
   /** 'referrals' = only people from Referrals jobs are contacted; general searching and outreach stay off. */
   scope?: 'all' | 'referrals';
   referralJobs?: ReferralJob[];
+  /** Persistent summary of the current or most recent job-discovery / referral run. */
+  lastRun?: RunSummary;
+  /** User preference for sequencing referrals vs applying ('referral-first' by default). */
+  strategyOrder?: StrategyOrder;
+  /** Ordered job URLs queued for one-at-a-time human-gated apply. */
+  applyQueue?: string[];
   saved?: SavedItem[];
   aiDefaultV3?: boolean;
   noteV2?: boolean;
@@ -492,6 +500,14 @@ export const networkRequest = z.discriminatedUnion('action', [
   z.object({ kind: z.literal('network'), action: z.literal('editDraft'), url: z.string(), text: z.string().trim().min(1).max(2000) }),
   z.object({ kind: z.literal('network'), action: z.literal('templateDraft'), url: z.string() }),
   z.object({ kind: z.literal('network'), action: z.literal('removeContact'), url: z.string() }),
+  z.object({ kind: z.literal('network'), action: z.literal('dismissRunSummary') }),
+  z.object({
+    kind: z.literal('network'),
+    action: z.literal('setStrategyOrder'),
+    order: z.enum(['referral-first', 'apply-first', 'parallel']),
+  }),
+  z.object({ kind: z.literal('network'), action: z.literal('queueJobsForApply'), urls: z.array(z.string().max(500)).min(1).max(20) }),
+  z.object({ kind: z.literal('network'), action: z.literal('dequeueJobForApply'), url: z.string().max(500) }),
 ]);
 export type NetworkRequest = z.infer<typeof networkRequest>;
 export const networkPageCommand = z.object({

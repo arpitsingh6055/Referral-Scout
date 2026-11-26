@@ -5,6 +5,7 @@
  */
 import type { NetworkContact, NetworkRequest, NetworkState } from '../shared/network';
 import type { ReferralJob } from '../shared/referral';
+import { resolveJobApplyStatus, type ApplyHistoryEntry } from '../shared/apply-status';
 
 export interface Kit {
   node: <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string) => HTMLElementTagNameMap[K];
@@ -19,19 +20,19 @@ export const wasAsked = (p: NetworkContact): boolean =>
 export const hasAccepted = (p: NetworkContact): boolean => !!p.acceptedAt || (!!p.direct && p.messagedAt > 0);
 
 /** Counts for one set of people and jobs, in the order of STAGES. */
-export function stageCounts(people: NetworkContact[], jobs: ReferralJob[]): number[] {
+export function stageCounts(people: NetworkContact[], jobs: ReferralJob[], history: readonly ApplyHistoryEntry[] = []): number[] {
   return [
     people.filter(wasAsked).length,
     people.filter(hasAccepted).length,
     people.filter(p => p.outcome).length,
     people.filter(p => p.outcome === 'referred').length,
-    jobs.filter(j => j.applied).length,
+    jobs.filter(j => resolveJobApplyStatus(j, { history }).stage === 'applied').length,
   ];
 }
 export const referralPeople = (s: NetworkState): NetworkContact[] => s.contacts.filter(p => p.referralJob);
 
 /** One row per company: how many people are at each stage, and whether the job has been applied for. */
-export function board(s: NetworkState, kit: Kit): HTMLElement | null {
+export function board(s: NetworkState, kit: Kit, history: readonly ApplyHistoryEntry[] = []): HTMLElement | null {
   const jobs = s.referralJobs ?? [];
   if (!jobs.length) return null;
   const { node } = kit,
@@ -39,7 +40,11 @@ export function board(s: NetworkState, kit: Kit): HTMLElement | null {
     grid = node('div', '', 'board-grid');
   card.append(
     node('h2', 'Pipeline', 'card-title'),
-    node('p', 'How far each company has got. Mark replies and referrals on the person, and “I applied” on the job.', 'card-sub'),
+    node(
+      'p',
+      'How far each company has got. Mark replies and referrals on the person, and track applications automatically or by hand.',
+      'card-sub',
+    ),
   );
   const seen = new Set<string>();
   for (const job of jobs) {
@@ -51,6 +56,7 @@ export function board(s: NetworkState, kit: Kit): HTMLElement | null {
     const counts = stageCounts(
       s.contacts.filter(p => !!p.referralJob && urls.has(p.referralJob)),
       same,
+      history,
     );
     // The company on its own line, the five stages under it: readable in a narrow panel.
     const row = node('div', '', 'board-row'),

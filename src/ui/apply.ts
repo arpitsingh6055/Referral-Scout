@@ -36,6 +36,7 @@ const historyBox = node('div');
 const homeBox = node('div');
 homeBox.append(card, historyBox);
 let last: Detect | null = null;
+export const latestApplyDetect = (): Detect | null => last;
 let signature = '';
 let timer: ReturnType<typeof setTimeout> | undefined;
 const BUSY: ApplySession['stage'][] = ['reading', 'opening', 'thinking', 'filling', 'moving'];
@@ -84,22 +85,33 @@ async function startFill(d: Detect, again = false): Promise<void> {
   flags.spoke = true;
   void refreshCard(true);
 }
-const SETUP_SKIP = 'rs-apply-setup-skipped';
+export async function startApplyForJob(job: { url: string; title?: string; company?: string; location?: string }): Promise<void> {
+  const d = await applyRequest({ kind: 'apply', action: 'startForJob', ...job });
+  draw(d);
+  flags.spoke = true;
+  void refreshCard(true);
+}
+const SETUP_SNOOZE = 'rs-apply-setup-snoozed-at';
+const SETUP_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 const setupSkipped = (): boolean => {
   try {
-    return localStorage.getItem(SETUP_SKIP) === '1';
+    const raw = localStorage.getItem(SETUP_SNOOZE);
+    if (!raw) return false;
+    const at = Number(raw);
+    return Number.isFinite(at) && Date.now() - at < SETUP_SNOOZE_MS;
   } catch {
     return false;
   }
 };
-/** The details most forms ask for, asked once before the first fill. Skippable; editable later in Settings. */
+/** The details most forms ask for, asked once before the first fill. Snoozable for 7 days; pre-filled from profile. */
 function setupBox(d: Detect): HTMLElement {
   const box = node('div', '', 'apply-ask');
   box.append(
     node('h4', 'Before your first application', 'group-title'),
-    node('p', 'Most forms ask these. Answer once and they are filled for you every time (change them later in Settings).', 'fine'),
+    node('p', 'Most forms ask these. Pre-filled where possible; answer once and change anytime in Settings.', 'fine'),
   );
   const det = d.profile.details;
+  const inferredCity = det.city || flags.last?.profile?.location?.split(',')[0]?.trim() || '';
   const f = {
     noticePeriod: field({ label: 'Notice period', value: det.noticePeriod ?? '', help: 'For example "Immediate" or "30 days".' }),
     expectedCtc: field({
@@ -108,7 +120,7 @@ function setupBox(d: Detect): HTMLElement {
       help: 'As you would write it, for example "6 LPA" or "₹25,000/month".',
     }),
     workAuthorization: field({ label: 'Work authorization', value: det.workAuthorization ?? '', help: 'For example "Indian citizen".' }),
-    city: field({ label: 'Current city', value: det.city ?? '' }),
+    city: field({ label: 'Current city', value: inferredCity }),
   };
   for (const x of Object.values(f)) box.append(x.wrap);
   const row = node('div', '', 'row');
@@ -129,10 +141,10 @@ function setupBox(d: Detect): HTMLElement {
       'Saved. Filling…',
     ),
     button(
-      'Skip',
+      'Ask me later',
       async () => {
         try {
-          localStorage.setItem(SETUP_SKIP, '1');
+          localStorage.setItem(SETUP_SNOOZE, String(Date.now()));
         } catch {
           /* storage unavailable: the box simply shows again next time */
         }

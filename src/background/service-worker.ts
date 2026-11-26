@@ -4,6 +4,7 @@ import { registerNetworkMessages } from './network-messages';
 import { registerApplyMessages } from './apply';
 import { networkTick, updateNetwork } from './network';
 import { registerCampaignMessages, migrateAnswerBank } from './campaign';
+import { migrateV4ToV5 } from './migration-v5';
 import { registerGmailMessages } from './gmail';
 import {
   applySurfaceBehaviour,
@@ -66,6 +67,7 @@ async function start(): Promise<void> {
   // back before the runner claims anything new, so a restart can never leave two workers on one application.
   await recoverQueue().catch(() => undefined);
   await migrateAnswerBank().catch(() => undefined);
+  await migrateV4ToV5().catch(() => undefined);
   // LinkedIn/CV captures remain source evidence only. Candidate profile records are created only from an
   // explicitly approved ChatGPT reconciliation draft.
   await ensureRunnerAlarm();

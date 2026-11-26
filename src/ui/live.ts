@@ -1,6 +1,7 @@
 /** Home status: what is running, how far it has got, and the live step-by-step tracker. */
-import { DAY, defaultSettings, withinActiveHours, type NetworkState } from '../shared/network';
-import { node, icon, pad } from './core';
+import { DAY, defaultSettings, withinActiveHours, type NetworkRequest, type NetworkState } from '../shared/network';
+import type { RunSummary } from '../shared/run-summary';
+import { node, icon, pad, button, link, act, openDashboard } from './core';
 
 /* ---------- derived status ---------- */
 export function runStatus(s: NetworkState): { tone: 'ok' | 'warn' | 'idle'; pill: string; title: string; sub: string } {
@@ -84,13 +85,14 @@ export function usage(s: NetworkState): { today: number; week: number; next: str
   }
   return { today: sent(DAY), week: sent(7 * DAY), next };
 }
-/* Where the person is on the way from a job search to a referral: 0 finding jobs, 1 choosing, 2 finding people, 3 reaching out. */
+/* Where the person is on the 5-step arc: 0 Discover, 1 Shortlist, 2 Referrers, 3 Reach out, 4 Apply. */
 export function journey(s: NetworkState): number {
   const jobs = s.referralJobs ?? [];
   if (s.jobSearch?.status === 'finding') return 0;
   if (s.jobSearch?.status === 'choosing' && s.jobSearch.found.length) return 1;
   if (jobs.some(j => !j.finishedAt)) return 2;
-  return jobs.length || s.contacts.some(p => p.referralJob) ? 3 : -1;
+  if (readyToContact(s) > 0 || (s.active && s.contacts.some(p => p.referralJob))) return 3;
+  return jobs.length || s.contacts.some(p => p.referralJob) ? 4 : -1;
 }
 export function meter(label: string, used: number, cap: number | null): HTMLElement {
   const m = node('div', '', 'meter'),
@@ -135,9 +137,9 @@ export function live(s: NetworkState, stage: number): HTMLElement | null {
     since = 0;
   if (stage === 0 && search) {
     const terms = s.plan?.terms ?? [];
-    title = 'Searching LinkedIn for jobs';
+    title = 'Discovering matching jobs';
     since = search.startedAt;
-    expect = 'Usually 2 to 4 minutes (~15s per job title).';
+    expect = 'Reading LinkedIn job results in the background. You can close this panel anytime.';
     steps.push([
       terms.length ? 'done' : 'now',
       'Plan the search',
@@ -162,7 +164,7 @@ export function live(s: NetworkState, stage: number): HTMLElement | null {
       current = open.find(j => !j.waiting);
     title = 'Finding who can refer you';
     since = Math.min(...open.map(j => j.addedAt));
-    expect = '1–2 min per company (~5 people searches at a safe pace).';
+    expect = 'Scanning companies at a safe pace.';
     if (open.some(j => j.mode === 'referral' && !j.strategy && !j.strategyTried))
       steps.push(['now', 'Ask ChatGPT who is worth approaching at each company', s.status]);
     for (const job of jobs.slice(0, 10)) {
@@ -198,6 +200,7 @@ export function live(s: NetworkState, stage: number): HTMLElement | null {
     list = node('ol', '', 'live-steps'),
     foot = node('p', '', 'live-foot'),
     ago = node('span');
+  card.setAttribute('aria-live', 'polite');
   const blockedOnly = steps.some(st => st[0] === 'you') && !steps.some(st => st[0] === 'now');
   head.append(
     node('span', '', blockedOnly ? 'spinner waiting' : 'spinner'),
@@ -235,5 +238,142 @@ export function live(s: NetworkState, stage: number): HTMLElement | null {
   ago.dataset.ago = String((s.log ?? []).at(-1)?.at ?? Date.now());
   foot.append(ago);
   card.append(head, list, node('p', expect, 'live-expect'), foot);
+  return card;
+}
+
+/**
+ * Persistent Run Summary card: survives panel close and service-worker restarts.
+ * Shows "What happened · What needs you · What is next" with 1 primary action + at most 2 secondary actions.
+ */
+export function runSummaryCard(
+  s: NetworkState,
+  actions: {
+    onOpenJobs: () => void;
+    onApplyTop: (job: { url: string; title: string; company: string }) => Promise<void>;
+  },
+): HTMLElement | null {
+  const run: RunSummary | undefined = s.lastRun;
+  if (!run || s.jobSearch?.status === 'finding') return null;
+
+  // Dismissed summaries collapse into a compact persistent re-entry chip so nothing is ever lost.
+  if (run.dismissedAt) {
+    const chip = node('section', '', 'card run-chip');
+    const summaryText =
+      run.outcome === 'empty'
+        ? 'Last run: no matching jobs found'
+        : `Last run: ${run.jobsRead} jobs · ${run.companiesFound} companies · ${run.referrersFound} referrers`;
+    const row = node('div', '', 'run-chip-row');
+    row.append(
+      node('span', summaryText, 'muted small'),
+      button('View jobs', async () => actions.onOpenJobs(), 'btn sm ghost'),
+    );
+    chip.append(row);
+    return chip;
+  }
+
+  const card = node('section', '', `card done run-summary ${run.outcome}`);
+  card.setAttribute('aria-live', 'polite');
+
+  let headline = 'Run complete';
+  let sub = '';
+  if (run.outcome === 'empty') {
+    headline = 'No matching jobs found this time';
+    sub = 'Nothing was sent. Try one of these quick adjustments and run again:';
+  } else if (run.outcome === 'paused') {
+    headline = 'Run paused — progress saved';
+    sub = `${run.jobsRead} jobs read · ${run.companiesFound} companies · ${run.referrersFound} referrers lined up.`;
+  } else if (run.outcome === 'error') {
+    headline = 'Search stopped early';
+    sub = run.error || 'A LinkedIn page did not respond. Your progress so far is saved.';
+  } else if (run.phase === 'shortlist') {
+    headline = `We read ${run.jobsRead} jobs across ${run.companiesFound} ${run.companiesFound === 1 ? 'company' : 'companies'}`;
+    sub = run.strongMatches
+      ? `${run.strongMatches} strong ${run.strongMatches === 1 ? 'match' : 'matches'} ranked at the top. Review your shortlist below.`
+      : 'Review your shortlist below, then pick where to find referrers or apply.';
+  } else {
+    headline = run.referrersFound
+      ? `${run.referrersFound} ${run.referrersFound === 1 ? 'referrer' : 'referrers'} ready across ${run.companiesFound} ${run.companiesFound === 1 ? 'company' : 'companies'}`
+      : `Finished scanning ${run.companiesFound} ${run.companiesFound === 1 ? 'company' : 'companies'}`;
+    sub = run.referrersFound
+      ? s.active
+        ? 'Outreach is running at a safe pace. You can also apply to your top matches right from Jobs.'
+        : 'Nobody is contacted until you press Reach out, or you can apply directly first.'
+      : 'No new referrers were found here, but you can still apply directly to your shortlisted jobs.';
+  }
+
+  card.append(node('p', 'Run summary', 'eyebrow'), node('h3', headline, 'card-title'), node('p', sub, 'card-sub'));
+
+  // Key metrics strip
+  if (run.outcome !== 'empty') {
+    const stats = node('div', '', 'run-stats');
+    for (const [val, label] of [
+      [run.jobsRead, 'Jobs read'],
+      [run.companiesFound, 'Companies'],
+      [run.strongMatches, 'Strong matches'],
+      [run.referrersFound, 'Referrers'],
+    ] as const) {
+      const cell = node('div', '', 'run-stat');
+      cell.append(node('b', String(val)), node('span', label));
+      stats.append(cell);
+    }
+    card.append(stats);
+  }
+
+  // Top matches with "Why this job"
+  if (run.topMatches?.length && run.outcome !== 'empty') {
+    const list = node('div', '', 'run-highlights');
+    for (const m of run.topMatches.slice(0, 2)) {
+      const item = node('div', '', 'run-highlight');
+      const headLine = node('div', '', 'run-highlight-head');
+      headLine.append(link(`${m.title} · ${m.company}`, m.url, 'job-title'));
+      if (m.fit !== undefined) headLine.append(node('span', `${m.fit}% fit`, 'badge review'));
+      item.append(headLine);
+      if (m.why) item.append(node('p', `Why: ${m.why}`, 'muted small'));
+      list.append(item);
+    }
+    card.append(list);
+  }
+
+  // Concrete suggestions when empty or error
+  if (run.suggestions?.length) {
+    const ul = node('ul', '', 'run-tips');
+    for (const tip of run.suggestions) ul.append(node('li', tip));
+    card.append(ul);
+  }
+
+  // One primary action + at most two secondary actions
+  const actionBar = node('div', '', 'todo-actions');
+  if (run.outcome === 'empty' || run.outcome === 'error') {
+    actionBar.append(
+      button('Edit campaign', () => openDashboard('setup'), 'btn sm primary'),
+      button('Search again', () => act({ kind: 'network', action: 'findJobs' } as NetworkRequest, 'Job search started.'), 'btn sm'),
+    );
+  } else if (run.phase === 'shortlist') {
+    const scrollShortlist = async (): Promise<void> => {
+      document.querySelector('.home-turn')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    };
+    actionBar.append(button('Review shortlist', scrollShortlist, 'btn sm primary'));
+    if (run.topMatches?.[0]) {
+      const top = run.topMatches[0];
+      actionBar.append(button('Apply to top match', () => actions.onApplyTop(top), 'btn sm'));
+    }
+  } else {
+    const ready = readyToContact(s);
+    if (ready && !s.active) {
+      actionBar.append(
+        button(
+          'Start reaching out',
+          () => act({ kind: 'network', action: 'resume' } as NetworkRequest, 'Reaching out at a safe pace.'),
+          'btn sm primary',
+        ),
+        button('Review & apply in Jobs', async () => actions.onOpenJobs(), 'btn sm'),
+      );
+    } else {
+      actionBar.append(button('Open Jobs & Apply', async () => actions.onOpenJobs(), 'btn sm primary'));
+    }
+  }
+
+  actionBar.append(button('Dismiss', () => act({ kind: 'network', action: 'dismissRunSummary' } as NetworkRequest), 'btn sm ghost'));
+  card.append(actionBar);
   return card;
 }
