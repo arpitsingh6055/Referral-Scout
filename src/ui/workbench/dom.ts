@@ -613,6 +613,8 @@ export function errorStateWithRetry(title: string, detail: string, onRetry: () =
   ]);
 }
 
+export { preserveViewportState, shouldSkipRenderWhileEditing } from '../render';
+
 /** Accessible pagination bar for large datasets (1,000+ rows). */
 export function paginateControls(total: number, page: number, pageSize: number, onChange: (nextPage: number) => void): HTMLElement | null {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));

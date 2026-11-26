@@ -354,6 +354,19 @@ export function createFloatingHud(host: HTMLElement): FloatingHudController {
     element.className = `floating-hud is-${state.mode}${state.tone === 'amber' ? ' is-amber' : ''}${collapsed ? ' is-collapsed' : ''}`;
 
     if (collapsed) {
+      const existingChip = element.querySelector<HTMLButtonElement>('.hud-chip-expand');
+      if (existingChip) {
+        const ringFill = existingChip.querySelector<SVGCircleElement>('.hud-ring-fill');
+        if (ringFill)
+          ringFill.setAttribute(
+            'stroke-dashoffset',
+            (RING_CIRCUMFERENCE * (1 - Math.max(0, Math.min(100, state.percent)) / 100)).toFixed(2),
+          );
+        existingChip.setAttribute('aria-label', `${state.title}. Expand progress tracker.`);
+        const textNode = [...existingChip.childNodes].find(n => n.nodeType === Node.TEXT_NODE);
+        if (textNode) textNode.textContent = `${state.percent}% · Next`;
+        return;
+      }
       const expandBtn = button(`${state.percent}% · Next`, 'hud-chip-expand', () => {
         collapsed = false;
         paint();
@@ -363,6 +376,35 @@ export function createFloatingHud(host: HTMLElement): FloatingHudController {
       expandBtn.setAttribute('aria-label', `${state.title}. Expand progress tracker.`);
       element.replaceChildren(expandBtn);
       return;
+    }
+
+    const existingBody = element.querySelector<HTMLElement>('.hud-inner');
+    if (existingBody && !element.querySelector('.hud-chip-expand')) {
+      const pctEl = existingBody.querySelector<HTMLElement>('.hud-pct');
+      if (pctEl) pctEl.textContent = `${state.percent}%`;
+      const ringEl = existingBody.querySelector<SVGCircleElement>('.hud-ring-fill');
+      if (ringEl) {
+        ringEl.setAttribute('stroke-dashoffset', (RING_CIRCUMFERENCE * (1 - Math.max(0, Math.min(100, state.percent)) / 100)).toFixed(2));
+      }
+      const ringSvg = existingBody.querySelector<SVGSVGElement>('.hud-ring');
+      if (ringSvg) ringSvg.setAttribute('class', `hud-ring${state.mode === 'processing' ? ' is-spinning' : ''}`);
+      const titleEl = existingBody.querySelector<HTMLElement>('.hud-title');
+      if (titleEl) titleEl.textContent = state.title;
+      const detailEl = existingBody.querySelector<HTMLElement>('.hud-detail');
+      if (detailEl) {
+        detailEl.className = state.mode === 'processing' ? 'hud-detail hud-ticker' : 'hud-detail';
+        detailEl.textContent = state.detail;
+      }
+      const track = element.querySelector<HTMLElement>('.hud-progress-track');
+      if (track) track.className = state.mode === 'processing' ? 'hud-progress-track is-running' : 'hud-progress-track';
+      const fill = element.querySelector<HTMLElement>('.hud-progress-fill');
+      if (fill) fill.style.width = `${state.percent}%`;
+      const ctaEl = existingBody.querySelector<HTMLButtonElement>('.hud-actions .btn');
+      if (ctaEl) {
+        ctaEl.textContent = state.ctaLabel;
+        ctaEl.onclick = () => onNavigate(state);
+        return;
+      }
     }
 
     const collapseBtn = button(

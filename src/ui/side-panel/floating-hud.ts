@@ -222,6 +222,14 @@ export function createSidePanelHud(host: HTMLElement): SidePanelHudController {
     element.className = `sp-hud is-${s.mode}${collapsed ? ' is-collapsed' : ''}`;
 
     if (collapsed) {
+      const existingChip = element.querySelector<HTMLButtonElement>('.sp-hud-chip');
+      if (existingChip) {
+        const ringFill = existingChip.querySelector<SVGCircleElement>('.sp-hud-fill');
+        if (ringFill) ringFill.setAttribute('stroke-dashoffset', (C * (1 - Math.max(0, Math.min(100, s.percent)) / 100)).toFixed(2));
+        const textNode = [...existingChip.childNodes].find(n => n.nodeType === Node.TEXT_NODE);
+        if (textNode) textNode.textContent = `${s.percent}% · Progress`;
+        return;
+      }
       const expand = document.createElement('button');
       expand.type = 'button';
       expand.className = 'sp-hud-chip';
@@ -234,6 +242,28 @@ export function createSidePanelHud(host: HTMLElement): SidePanelHudController {
       });
       element.replaceChildren(expand);
       return;
+    }
+
+    const existingRow = element.querySelector<HTMLElement>('.sp-hud-row');
+    if (existingRow && !element.querySelector('.sp-hud-chip')) {
+      const pctEl = existingRow.querySelector<HTMLElement>('.sp-hud-pct');
+      if (pctEl) pctEl.textContent = `${s.percent}%`;
+      const ringFill = existingRow.querySelector<SVGCircleElement>('.sp-hud-fill');
+      if (ringFill) ringFill.setAttribute('stroke-dashoffset', (C * (1 - Math.max(0, Math.min(100, s.percent)) / 100)).toFixed(2));
+      const titleEl = existingRow.querySelector<HTMLElement>('.sp-hud-title');
+      if (titleEl) titleEl.textContent = s.title;
+      const detailEl = existingRow.querySelector<HTMLElement>('.sp-hud-detail');
+      if (detailEl) detailEl.textContent = s.detail;
+      const bar = element.querySelector<HTMLElement>('.sp-hud-bar');
+      if (bar) bar.className = s.mode === 'processing' ? 'sp-hud-bar is-running' : 'sp-hud-bar';
+      const fill = element.querySelector<HTMLElement>('.sp-hud-bar > span');
+      if (fill) fill.style.width = `${s.percent}%`;
+      const ctaEl = existingRow.querySelector<HTMLButtonElement>('.btn');
+      if (ctaEl) {
+        ctaEl.textContent = s.ctaLabel;
+        ctaEl.onclick = () => onAction(s.action);
+        return;
+      }
     }
 
     const row = document.createElement('div');

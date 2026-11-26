@@ -10,7 +10,18 @@ import * as api from './api';
 import { send, sendNetwork, sendWorkspace, view, workspace, type CampaignView, type Request, type WorkspaceView } from './api';
 import { isProfileApproved, isProfilePendingReview } from '../../shared/domain/profile';
 import type { NetworkRequest } from '../../shared/network';
-import { button, div, el, icon, isEditing, pageSkeleton, restoreForm, snapshotForm, text } from './dom';
+import {
+  button,
+  div,
+  el,
+  icon,
+  pageSkeleton,
+  preserveViewportState,
+  restoreForm,
+  shouldSkipRenderWhileEditing,
+  snapshotForm,
+  text,
+} from './dom';
 import { computeHudState, createFloatingHud, type HudState } from './components/floating-hud';
 import { getReviewProgressSnapshot, resetReviewSession } from './components/guided-review';
 import {
@@ -122,6 +133,7 @@ let persistedTasks: Partial<Record<ProcessId, ProgressTask>> = getCachedProgress
 let cachedMission: ActiveMissionState = getCachedActiveMission();
 let drawn = '';
 let deferred: { view: CampaignView; workspace: WorkspaceView | null } | null = null;
+let lastSyncFloatingHud: (() => void) | null = null;
 let mobileDrawerOpen = false;
 let cachedWindowId: number | undefined;
 let cachedLinkedInTabId: number | undefined;
@@ -847,7 +859,10 @@ function render(force = false): void {
   ]);
 
   const { aside, backdrop } = rail(ctx);
-  root.replaceChildren(div('app', [aside, backdrop, div('page-wrap', [mobileBar, page])]));
+  lastSyncFloatingHud = syncFloatingHud;
+  preserveViewportState(root, () => {
+    root.replaceChildren(div('app', [aside, backdrop, div('page-wrap', [mobileBar, page])]));
+  });
   restoreForm(root, snap);
   syncFloatingHud();
 }
@@ -867,7 +882,7 @@ function routeFromHash(): void {
 }
 
 function flushDeferred(): void {
-  if (!deferred || isEditing(root)) return;
+  if (!deferred || shouldSkipRenderWhileEditing(root)) return;
   state = deferred.view;
   shop = deferred.workspace;
   deferred = null;
@@ -914,7 +929,7 @@ export async function mount(): Promise<void> {
     if (document.visibilityState !== 'visible') return;
     void Promise.all([view(), workspace().catch(() => shop)])
       .then(([a, b]) => {
-        if (isEditing(root)) {
+        if (shouldSkipRenderWhileEditing(root)) {
           deferred = { view: a, workspace: b };
           return;
         }
@@ -985,7 +1000,7 @@ export async function mount(): Promise<void> {
       label: detail.label ?? '',
       startedAt: detail.active ? (cvProgress.active ? cvProgress.startedAt : Date.now()) : 0,
     };
-    render(true);
+    if (state) lastSyncFloatingHud?.();
   });
 
   addEventListener('referral-scout-review-change', () => {
@@ -994,12 +1009,12 @@ export async function mount(): Promise<void> {
 
   subscribeProgressTasks(tasks => {
     persistedTasks = tasks;
-    if (state) render(true);
+    if (state) lastSyncFloatingHud?.();
   });
 
   subscribeActiveMission(mission => {
     cachedMission = mission;
-    if (state) render(true);
+    if (state) lastSyncFloatingHud?.();
   });
 
   addEventListener('referral-scout-action-error', event => {
@@ -1066,7 +1081,8 @@ export async function mount(): Promise<void> {
     busyMessage = payload.message;
     const copy = root.querySelector<HTMLElement>('.banner-progress .progress-copy');
     if (copy) copy.textContent = busyMessage;
-    render(true);
+    else replaceTransientBanner('progress', busyMessage);
+    if (state) lastSyncFloatingHud?.();
     sendResponse({ shown: document.visibilityState === 'visible' });
     return false;
   });

@@ -24,11 +24,17 @@ export function condenseToastMessage(raw: string, maxLen = 64): string {
 }
 
 export function createToaster(host: HTMLElement): Toaster {
-  const region = document.createElement('div');
-  region.className = 'toasts';
-  region.setAttribute('role', 'region');
-  region.setAttribute('aria-label', 'Notifications');
-  host.append(region);
+  let found = host.querySelector<HTMLDivElement>('#rs-toast-root');
+  if (!found) {
+    found = document.createElement('div');
+    found.id = 'rs-toast-root';
+    found.className = 'toasts';
+    found.setAttribute('role', 'region');
+    found.setAttribute('aria-label', 'Notifications');
+    found.setAttribute('aria-live', 'polite');
+    host.append(found);
+  }
+  const region = found;
 
   const activeByKey = new Map<string, { box: HTMLDivElement; apply: (next: ToastKind, text: string) => void; close: () => void }>();
 
