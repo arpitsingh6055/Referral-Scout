@@ -22,8 +22,8 @@
   --rail-muted: #9aa5c4;
 
   /* Borders */
-  --border-subtle: #e4e7f0;
-  --border-strong: #c8cfdf;
+  --border-subtle: #e4e7f0; /* decoration only: dividers and card edges */
+  --border-strong: #858fa8; /* the edge of a control the person must find: 3.23:1 on white */
 
   /* Typography colors */
   --text-primary: #111827;
@@ -35,7 +35,7 @@
   --accent-hover: #4e35db;
   --accent-tint: #eeebff;
 
-  --success: #0f8a5f;
+  --success: #0b7a52;
   --success-tint: #e7f7f0;
   --warning: #b45309;
   --warning-tint: #fef5e7;
@@ -44,6 +44,19 @@
   --destructive-tint: #fdf0f1;
   --info: #2563eb;
   --info-tint: #eff6ff;
+
+  /*
+   * Fill colours and the text that sits on them, kept apart from the text colours above. A hue that reads well as
+   * 14px text on a pale tint is rarely the same hue that carries white text on a solid button, and in dark mode the
+   * readable text on a bright fill is the near-black canvas, not white. Measured against WCAG 1.4.3 (4.5:1 for text)
+   * and 1.4.11 (3:1 for the boundary of a control).
+   */
+  --accent-solid: #5e43f3; /* white on it: 5.88:1 */
+  --on-accent: #ffffff;
+  --on-success: #ffffff; /* on --success: 5.36:1 */
+  --on-warning: #ffffff; /* 5.02:1 */
+  --on-destructive: #ffffff; /* 5.27:1 */
+  --on-info: #ffffff; /* 5.17:1 */
 
   /* Elevation: crisp hairline surfaces by default, shadows reserved for floating layers */
   --shadow-xs: 0 1px 2px rgb(15 23 42 / 4%);
@@ -89,6 +102,7 @@
   --navy-soft: var(--rail-surface);
   --navy-line: var(--rail-border);
   --violet: var(--accent-primary);
+  --violet-solid: var(--accent-solid);
   --violet-hi: var(--accent-hover);
   --violet-tint: var(--accent-tint);
   --canvas: var(--bg-canvas);
@@ -118,8 +132,16 @@
   --font: var(--font-sans);
 }
 
-:root[data-theme='dark'],
+/*
+ * "System" follows the operating system. It must not declare `color-scheme: dark`: the custom properties below only
+ * turn dark inside `prefers-color-scheme: dark`, so forcing the scheme gave anyone on a light desktop a light page
+ * with dark scrollbars, dark native dropdowns and dark form controls.
+ */
 :root[data-theme='system'] {
+  color-scheme: light dark;
+}
+
+:root[data-theme='dark'] {
   color-scheme: dark;
 }
 
@@ -138,15 +160,21 @@
     --rail-muted: #8b96b5;
 
     --border-subtle: #22293d;
-    --border-strong: #343e59;
+    --border-strong: #5a6684; /* 3.18:1 on the dark surface */
 
     --text-primary: #eef1f8;
     --text-secondary: #c5cde0;
     --text-muted: #8b96b0;
 
-    --accent-primary: #7c66ff;
-    --accent-hover: #9380ff;
-    --accent-tint: rgb(124 102 255 / 16%);
+    --accent-primary: #8f7dff; /* as text on its own tint: 4.55:1 */
+    --accent-hover: #a596ff;
+    --accent-tint: rgb(143 125 255 / 16%);
+    --accent-solid: #6149e8; /* white on it: 5.79:1 */
+    --on-accent: #ffffff;
+    --on-success: #090b10; /* white on mint green is 1.9:1; the canvas ink is 10.2:1 */
+    --on-warning: #090b10;
+    --on-destructive: #090b10;
+    --on-info: #090b10;
 
     --success: #34d399;
     --success-tint: rgb(52 211 153 / 14%);
@@ -164,6 +192,7 @@
 }
 
 :root[data-theme='dark'] {
+  color-scheme: dark;
   --bg-canvas: #090b10;
   --bg-surface: #111520;
   --bg-elevated: #181e2e;
@@ -177,15 +206,21 @@
   --rail-muted: #8b96b5;
 
   --border-subtle: #22293d;
-  --border-strong: #343e59;
+  --border-strong: #5a6684; /* 3.18:1 on the dark surface */
 
   --text-primary: #eef1f8;
   --text-secondary: #c5cde0;
   --text-muted: #8b96b0;
 
-  --accent-primary: #7c66ff;
-  --accent-hover: #9380ff;
-  --accent-tint: rgb(124 102 255 / 16%);
+  --accent-primary: #8f7dff; /* as text on its own tint: 4.55:1 */
+  --accent-hover: #a596ff;
+  --accent-tint: rgb(143 125 255 / 16%);
+  --accent-solid: #6149e8; /* white on it: 5.79:1 */
+  --on-accent: #ffffff;
+  --on-success: #090b10; /* white on mint green is 1.9:1; the canvas ink is 10.2:1 */
+  --on-warning: #090b10;
+  --on-destructive: #090b10;
+  --on-info: #090b10;
 
   --success: #34d399;
   --success-tint: rgb(52 211 153 / 14%);

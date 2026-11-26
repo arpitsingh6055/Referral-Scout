@@ -36,3 +36,7 @@ captures/
 *.sqlite3
 *.db
 *.docx
+
+# Chat-delivered files
+Claude outputs/
+_rs_transfer_old/

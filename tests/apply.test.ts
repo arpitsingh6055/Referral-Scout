@@ -25,6 +25,7 @@ import {
   detailKeyFor,
   BAD_NEXT,
   type FormField,
+  refusalSentence,
 } from '../src/shared/apply';
 import type { ApplyApi } from '../src/content/apply';
 
@@ -647,7 +648,29 @@ describe('plain-English errors', () => {
     expect(applyError('Cannot access contents of url "chrome://extensions"')).toMatch(/does not allow extensions/);
     expect(applyError('Extension context invalidated.')).toMatch(/was just updated/);
     expect(applyError('Upload your CV in Settings first.')).toBe('Upload your CV in Settings first.');
-    expect(applyError('TypeError: x is undefined at {foo}')).toMatch(/^Autofill paused before finishing\./);
+    // An unclassified fault keeps its cause: a message that hides what broke leaves the person pressing Retry on a
+    // fill that will fail the same way every time.
+    const opaque = applyError('TypeError: x is undefined at {foo}');
+    expect(opaque).toMatch(/^Autofill stopped before finishing: /);
+    expect(opaque).toContain('x is undefined at {foo}');
+    expect(opaque).not.toContain('TypeError:');
+    expect(applyError('   ')).toBe('Autofill stopped before finishing. Click Retry fill to reload the form.');
+  });
+  it('reports what the site itself refused, in the site\u2019s own words', () => {
+    expect(refusalSentence([])).toBe('');
+    const one = refusalSentence([{ label: 'Mobile phone number', message: 'Please enter a valid phone number' }]);
+    expect(one).toContain('Please enter a valid phone number');
+    expect(one).toMatch(/press Next step\.$/);
+    // The label is dropped when the site already names the field in its message.
+    expect(refusalSentence([{ label: 'Phone number', message: 'Phone number is required' }])).not.toMatch(/Phone number: Phone number/);
+    // Several complaints are joined, and the sentence stays short enough to read in the panel.
+    const many = refusalSentence([
+      { label: 'A', message: 'First thing is required' },
+      { label: 'B', message: 'Second thing is required' },
+    ]);
+    expect(many).toContain('First thing is required');
+    expect(many).toContain('Second thing is required');
+    expect(many.length).toBeLessThan(300);
   });
   it('asks for a shorter answer within the same facts-only rules', () => {
     const field = { id: 'q1', kind: 'textarea', label: 'Why us?', required: true, maxLength: 300 } as unknown as FormField;

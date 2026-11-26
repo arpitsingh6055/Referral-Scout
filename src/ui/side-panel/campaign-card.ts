@@ -77,9 +77,15 @@ export async function renderCampaignCard(host: HTMLElement, force = false): Prom
   const head = el('div', 'rs-campaign-head');
   const state = el('span', `rs-campaign-state ${running ? 'is-running' : inboxCounts.open ? 'is-attention' : 'is-paused'}`);
   state.textContent = running ? `Running · ${modeLabel}` : inboxCounts.open ? `Needs you · ${modeLabel}` : `Paused · ${modeLabel}`;
-  head.append(el('span', 'rs-campaign-name', campaign.name), state);
+  const name = el('span', 'rs-campaign-name', campaign.name);
+  // The panel is narrow enough that most campaign names are clipped, so the full one stays reachable.
+  name.title = campaign.name;
+  head.append(name, state);
 
   // Stacked chips rather than a row of metric cards: at this width a row wraps into something unreadable.
+  // A count of zero is not news. Four chips reading 0 above a line that already says "Nothing left in the queue"
+  // said the same nothing five times and pushed the two buttons that actually start work out of the eye's path,
+  // so a chip appears only once it has something to report.
   const chips = el('div', 'rs-campaign-chips');
   for (const [label, value] of [
     ['Queued', counts.queued],
@@ -87,7 +93,8 @@ export async function renderCampaignCard(host: HTMLElement, force = false): Prom
     ['Submitted', counts.submitted],
     ['Needs you', inboxCounts.open],
   ] as const) {
-    const chip = el('span', value && label === 'Needs you' ? 'rs-chip rs-chip-amber' : 'rs-chip');
+    if (!value) continue;
+    const chip = el('span', label === 'Needs you' ? 'rs-chip rs-chip-amber' : 'rs-chip');
     chip.append(el('b', '', String(value)), el('span', '', label));
     chips.append(chip);
   }
@@ -148,6 +155,6 @@ export async function renderCampaignCard(host: HTMLElement, force = false): Prom
   open.addEventListener('click', () => openWorkbench('setup'));
 
   actions.append(primary, open);
-  card.append(head, chips, line, actions);
+  card.append(head, ...(chips.childElementCount ? [chips] : []), line, actions);
   host.replaceChildren(card);
 }

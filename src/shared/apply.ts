@@ -874,7 +874,32 @@ export function applyError(raw: string): string {
   if (/Extension context invalidated|Receiving end does not exist/i.test(m))
     return 'Referral Scout was just updated. Refresh this page and press Fill again.';
   if (/^[A-Z][^{}[\]<>]{0,280}[.!?]$/.test(m)) return m; // already a plain sentence written for the person
-  return 'Autofill paused before finishing. Click Retry fill to reload the form.';
+  // Anything else is a fault nobody wrote for the person to read. Say so plainly and keep the reason: a message that
+  // hides what went wrong leaves them pressing Retry on a fill that will fail the same way every time.
+  const detail = m
+    .replace(/^(Error|TypeError|DOMException):\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 140)
+    .trim();
+  return detail
+    ? `Autofill stopped before finishing: ${detail}${/[.!?]$/.test(detail) ? '' : '.'} Click Retry fill to reload the form.`
+    : 'Autofill stopped before finishing. Click Retry fill to reload the form.';
+}
+
+/**
+ * The site's own complaints as one sentence for the panel. Its words, not the extension's guess: "The site stayed on
+ * this step" tells the person nothing they cannot already see, while "Please enter a valid phone number" tells them
+ * exactly what to fix.
+ */
+export function refusalSentence(errors: { label: string; message: string }[]): string {
+  if (!errors.length) return '';
+  const parts = errors.map(e => {
+    const msg = e.message.replace(/\s+/g, ' ').trim();
+    const named = e.label && !msg.toLowerCase().includes(e.label.toLowerCase().slice(0, 12));
+    return named ? `${e.label}: ${msg}` : msg;
+  });
+  const said = parts.join(' ').slice(0, 200);
+  return `The site will not move on: ${said}${/[.!?]$/.test(said) ? '' : '.'} Fix it on the page, then press Next step.`;
 }
 
 /** One written answer redone on request: afresh, or shorter. The same facts-only rules as the full fill. */

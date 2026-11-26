@@ -38,6 +38,7 @@ import {
   type PageAction,
   type PageKind,
   type PageSnapshot,
+  refusalSentence,
 } from '../shared/apply';
 import { seekerEvidence } from '../shared/seeker';
 import { extractJson } from '../parsers/json';
@@ -317,10 +318,17 @@ async function syncApplyProgress(tabId: number, s: ApplySession): Promise<void> 
           : s.stage === 'permission'
             ? ('waiting' as const)
             : ('running' as const);
+  // A stalled fill has made no progress, so it reports the last figure it reached rather than creeping on. The two
+  // numbers people saw side by side ("Step 1 · 25% complete" from the site's own bar, "28%" from this one) measure
+  // different things; the site's counter now wins the step line, and this figure stays on the HUD alone.
   const percent = isLoginWait ? 35 : s.stage === 'error' ? Math.min(85, Math.max(15, s.lastPercent ?? 25)) : (stagePct[s.stage] ?? 50);
   const label =
     s.stage === 'error'
-      ? s.message || 'Autofill paused'
+      ? // The panel already carries the full sentence. Repeating it in the HUD put the same words on screen twice at
+        // once, so the HUD names the job and leaves the explanation to the one place that can show it in full.
+        s.job
+        ? `Autofill needs you \u00b7 ${s.job.title}`
+        : 'Autofill needs you'
       : isLoginWait
         ? 'Sign in on this ATS page, then click Resume Fill'
         : status === 'waiting'
@@ -1952,21 +1960,24 @@ async function start(tabId: number, attempt = 1, fallbackUrl?: string): Promise<
 }
 /** Presses the site's Next / Continue / Review and waits for the next step. False when the site stayed put. */
 /** True when the page shows the site's own validation errors (fields marked invalid, an alert with text). */
-async function siteRefused(tabId: number): Promise<boolean> {
+/**
+ * What the site is complaining about on this step, in its own words, read from every frame. The page script knows
+ * where each site puts its messages; the panel only ever shows the words the person can see on the page.
+ */
+async function siteProblems(tabId: number): Promise<{ label: string; message: string }[]> {
   const r = await chrome.scripting
     .executeScript({
       target: { tabId, allFrames: true },
-      func: () =>
-        [
-          ...document.querySelectorAll(
-            '[aria-invalid="true"], [role="alert"], [data-test-form-element-error-messages], .artdeco-inline-feedback--error',
-          ),
-        ].some(
-          e => e.getClientRects().length > 0 && (e.getAttribute('aria-invalid') === 'true' || (e.textContent ?? '').trim().length > 3),
-        ),
+      func: () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.fieldErrors?.() ?? [],
     })
     .catch(() => []);
-  return r.some(x => x.result === true);
+  const out: { label: string; message: string }[] = [];
+  for (const frame of r)
+    for (const e of Array.isArray(frame.result) ? frame.result : []) if (!out.some(o => o.message === e.message)) out.push(e);
+  return out.slice(0, 4);
+}
+async function siteRefused(tabId: number): Promise<boolean> {
+  return (await siteProblems(tabId)).length > 0;
 }
 async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
   const s = await loadSession(tabId);
@@ -1991,10 +2002,11 @@ async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
     () => (globalThis as { __referralScoutApply?: ApplyApi }).__referralScoutApply?.waitAfterNext?.(2500) ?? Promise.resolve('timeout'),
   ).catch(() => 'timeout' as const);
   if (settled === 'error') {
+    const said = refusalSentence(await siteProblems(tabId));
     await update(tabId, x => ({
       ...x,
       stage: 'review',
-      message: 'The site highlighted a required field on this step. Fix it on the page, then press Next step.',
+      message: said || 'The site highlighted a required field on this step. Fix it on the page, then press Next step.',
     }));
     return false;
   }
@@ -2032,10 +2044,11 @@ async function pressNext(tabId: number, signal: AbortSignal): Promise<boolean> {
     }
     if (Date.now() - began > 5000 && (await siteRefused(tabId))) break;
   }
+  const said = refusalSentence(await siteProblems(tabId));
   await update(tabId, x => ({
     ...x,
     stage: 'review',
-    message: 'The site stayed on this step. It usually marks what is missing in red: fix it on the page, then press Next step.',
+    message: said || 'The site stayed on this step. It usually marks what is missing in red: fix it on the page, then press Next step.',
   }));
   return false;
 }

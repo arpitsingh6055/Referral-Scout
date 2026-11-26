@@ -6,16 +6,20 @@
   --surface: #ffffff;
   --surface-2: #eff1f7;
   --border: #e4e7f0;
-  --border-strong: #c8cfdf;
+  --border-strong: #858fa8; /* the edge of a control, 3.23:1 on white (WCAG 1.4.11) */
   --text: #111827;
   --muted: #5b6478;
   --faint: #7b8499;
   --primary: #5e43f3;
   --primary-hover: #4e35db;
   --primary-soft: #eeebff;
+  --primary-solid: #5e43f3; /* white on it: 5.88:1 */
   --on-primary: #ffffff;
-  --ok: #0f8a5f;
+  --ok: #0b7a52; /* 4.84:1 on --ok-soft; white on it 5.36:1 */
   --ok-soft: #e7f7f0;
+  --on-ok: #ffffff;
+  --on-warn: #ffffff;
+  --on-bad: #ffffff;
   --warn: #b45309;
   --warn-soft: #fef5e7;
   --bad: #c8323e;
@@ -45,14 +49,18 @@
   --surface: #111520;
   --surface-2: #181e2e;
   --border: #22293d;
-  --border-strong: #343e59;
+  --border-strong: #5a6684; /* 3.18:1 on the dark surface */
   --text: #eef1f8;
   --muted: #98a3bc;
   --faint: #758099;
-  --primary: #7c66ff;
-  --primary-hover: #9380ff;
-  --primary-soft: rgb(124 102 255 / 16%);
+  --primary: #8f7dff; /* as text on --primary-soft: 4.55:1 */
+  --primary-hover: #a596ff;
+  --primary-soft: rgb(143 125 255 / 16%);
+  --primary-solid: #6149e8; /* white on it: 5.79:1 */
   --on-primary: #ffffff;
+  --on-ok: #090b10; /* white on mint green is 1.9:1; the canvas ink is 10.2:1 */
+  --on-warn: #090b10;
+  --on-bad: #090b10;
   --ok: #34d399;
   --ok-soft: rgb(52 211 153 / 14%);
   --warn: #fbbf24;
@@ -74,14 +82,18 @@
     --surface: #111520;
     --surface-2: #181e2e;
     --border: #22293d;
-    --border-strong: #343e59;
+    --border-strong: #5a6684; /* 3.18:1 on the dark surface */
     --text: #eef1f8;
     --muted: #98a3bc;
     --faint: #758099;
-    --primary: #7c66ff;
-    --primary-hover: #9380ff;
-    --primary-soft: rgb(124 102 255 / 16%);
+    --primary: #8f7dff; /* as text on --primary-soft: 4.55:1 */
+    --primary-hover: #a596ff;
+    --primary-soft: rgb(143 125 255 / 16%);
+    --primary-solid: #6149e8; /* white on it: 5.79:1 */
     --on-primary: #ffffff;
+    --on-ok: #090b10; /* white on mint green is 1.9:1; the canvas ink is 10.2:1 */
+    --on-warn: #090b10;
+    --on-bad: #090b10;
     --ok: #34d399;
     --ok-soft: rgb(52 211 153 / 14%);
     --warn: #fbbf24;
@@ -684,7 +696,7 @@ p.callout {
   pointer-events: none;
 }
 .btn.primary {
-  background: var(--primary);
+  background: var(--primary-solid);
   border-color: var(--primary);
   color: var(--on-primary);
   font-weight: 600;
@@ -728,7 +740,7 @@ p.callout {
 .btn.danger.solid {
   background: var(--bad);
   border-color: var(--bad);
-  color: #fff;
+  color: var(--on-bad);
   font-weight: 600;
 }
 .btn.danger.ghost:hover:not(:disabled) {
@@ -806,7 +818,7 @@ p.callout {
   padding: 0 4px;
   border-radius: 999px;
   background: var(--bad);
-  color: #fff;
+  color: var(--on-bad);
   font-size: 10.5px;
   font-weight: 700;
   line-height: 17px;
@@ -1545,7 +1557,7 @@ textarea.draft:focus {
 .live-steps .done i {
   background: var(--ok);
   border-color: var(--ok);
-  color: #fff;
+  color: var(--on-ok);
 }
 .live-steps .done .ico {
   width: 13px;
@@ -2029,7 +2041,7 @@ details.person-row > .person .person-head {
   border-color: var(--primary);
 }
 .pill-choice[aria-checked='true'] {
-  background: var(--primary);
+  background: var(--primary-solid);
   border-color: var(--primary);
   color: var(--on-primary);
 }

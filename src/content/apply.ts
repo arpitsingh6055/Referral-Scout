@@ -124,10 +124,12 @@ export interface ApplyApi {
   }): Promise<{ ok: boolean; note?: string }>;
   /** Watches for in-place SPA login completion and notifies background to resume filling. */
   watchLoginCompletion(): void;
-  /** Selects an existing LinkedIn Easy Apply resume card if unselected, or reports if upload is needed. */
-  ensureResumeSelected(): 'selected' | 'needs-upload' | 'none';
+  /** Selects the most recent LinkedIn Easy Apply resume when none is chosen; never replaces the person's own choice. */
+  ensureResumeSelected(): 'already' | 'selected' | 'needs-upload' | 'none';
   /** Waits up to timeoutMs via MutationObserver for modal/step mutation or inline validation errors after clicking Next. */
   waitAfterNext(timeoutMs?: number): Promise<'mutated' | 'error' | 'timeout'>;
+  /** What the site is complaining about on this step, in its own words. Empty when it is not complaining. */
+  fieldErrors(): { label: string; message: string }[];
 }
 const VERSION = 15;
 const scope = globalThis as typeof globalThis & { __referralScoutApply?: ApplyApi };
@@ -297,6 +299,19 @@ function deepQueryAll<T extends Element>(root: ParentNode, selector: string, out
   }
   return out;
 }
+/** Wording that marks a window as an application rather than any other pop-up the site shows. */
+const APPLY_WINDOW =
+  /\b(apply to|easy apply|submit application|contact info|additional questions|work authori[sz]ation|resume|review your application|your application)\b/i;
+/**
+ * A window that holds an application. Checked live on 26 Nov 2026: LinkedIn's Easy Apply window is now a native
+ * `<dialog data-testid="dialog" aria-labelledby="dialog-header">` with hashed class names, no `role="dialog"` and no
+ * `.jobs-easy-apply-*` class, so the old class hooks never match. Besides the wording, a step counter with a Next or
+ * Review button identifies it without depending on the page being in English.
+ */
+function applyWindow(d: Element): boolean {
+  if (APPLY_WINDOW.test(clean(d.textContent).slice(0, 4000))) return true;
+  return !!d.querySelector('[role="progressbar"]') && buttons(d).length > 0;
+}
 /** LinkedIn's Easy Apply window, when it is open: a dialog about applying, never the messaging pop-up. */
 function easyApplyDialog(doc: Document): Element | null {
   const known = deepQueryAll(
@@ -305,19 +320,36 @@ function easyApplyDialog(doc: Document): Element | null {
   ).find(visible);
   if (known) return known;
   return (
-    deepQueryAll(doc, '[role="dialog"], dialog[open], [aria-modal="true"]')
+    deepQueryAll(doc, 'dialog[data-testid="dialog"][open], dialog[open], [role="dialog"], [aria-modal="true"]')
       .filter(d => visible(d) && !d.matches(MESSAGING) && !d.closest(MESSAGING))
-      .find(d =>
-        /\b(apply to|easy apply|submit application|contact info|additional questions|work authori[sz]ation|resume|review your application)\b/i.test(
-          clean(d.textContent).slice(0, 4000),
-        ),
-      ) ?? null
+      .find(applyWindow) ?? null
   );
 }
-function topChoiceBox(root: ParentNode): HTMLInputElement | undefined {
-  return [...root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(c =>
-    /top choice/i.test(c.getAttribute('aria-label') ?? labelOf(c)),
-  );
+/**
+ * LinkedIn's "Mark this job as a top choice" control. It is no longer an `<input type="checkbox">`: as of 26 Nov 2026
+ * it is a `[role="switch"]`, so both are read, and the caller works through this small wrapper rather than `.checked`.
+ */
+interface ToggleControl {
+  el: HTMLElement;
+  readonly checked: boolean;
+  click(): void;
+}
+function toggleFor(el: HTMLElement): ToggleControl {
+  const box = el as HTMLInputElement;
+  return {
+    el,
+    get checked() {
+      return box.type === 'checkbox' ? box.checked : el.getAttribute('aria-checked') === 'true';
+    },
+    click: () => clickFull(el),
+  };
+}
+function topChoiceBox(root: ParentNode): ToggleControl | undefined {
+  const named = (el: Element): boolean => /top choice/i.test(clean(el.getAttribute('aria-label')) || labelOf(el));
+  const hit =
+    [...root.querySelectorAll<HTMLElement>('input[type="checkbox"]')].find(named) ??
+    [...root.querySelectorAll<HTMLElement>('[role="switch"], [role="checkbox"]')].find(el => visible(el) && named(el));
+  return hit ? toggleFor(hit) : undefined;
 }
 /**
  * "Add another entry" buttons of a list on the form: a role, a school, a project, a certification, a language, a link.
@@ -352,6 +384,13 @@ function formRoot(doc: Document): Element {
   const has = (e: Element) => deepQueryAll(e, 'input, select, textarea, [contenteditable="true"], [role="combobox"]').some(visible);
   const easy = easyApplyDialog(doc);
   if (easy && has(easy)) return easy;
+  // On a LinkedIn job page the application exists only inside the Easy Apply window. Without it there is nothing to
+  // fill here, and the page's own search box, language picker and "job alert" tick are not part of any application:
+  // an empty root keeps them untouched and lets the caller open Easy Apply instead.
+  const host = (doc.defaultView ?? window).location.hostname;
+  if (/(^|\.)linkedin\.com$/i.test(host) && /\/jobs\//.test((doc.defaultView ?? window).location.pathname)) {
+    return easy ?? doc.createElement('div');
+  }
   const dialogs = deepQueryAll(doc, '[role="dialog"], dialog[open], [aria-modal="true"]').filter(
     d => visible(d) && has(d) && !d.matches(MESSAGING) && !d.closest(MESSAGING),
   );
@@ -464,6 +503,50 @@ function looksFinal(root: Element): boolean {
     clean(root.textContent).slice(0, 6000),
   );
 }
+/**
+ * Wording a site uses when it refuses a step. Kept deliberately narrow so an ordinary hint ("PDF or DOCX, under 2MB")
+ * is not mistaken for a complaint.
+ */
+const COMPLAINT =
+  /\b(required|please (enter|select|provide|choose|fill|complete|upload|add|correct)|must be|must contain|cannot be (empty|blank)|can'?t be (empty|blank)|is invalid|not valid|enter a valid|select an option|answer this|this field|missing|too (short|long)|at least \d|no more than \d|only numbers|invalid)\b/i;
+/**
+ * What a site is complaining about, in its own words. Checked live on 26 Nov 2026: LinkedIn sets no `aria-invalid`
+ * and renders no `role="alert"`; the message is a helper-text node joined to the field by `aria-describedby`
+ * (`<div data-testid="text-input-helper-text" id="…-info">`). Older LinkedIn markup, most ATS sites and the browser's
+ * own validity message are all still read here, so one reader covers every route.
+ */
+function fieldErrors(root: Element): { label: string; message: string }[] {
+  const out: { label: string; message: string }[] = [];
+  const add = (label: string, message: string): void => {
+    const m = clean(message).slice(0, 160);
+    if (!m || out.some(o => o.message === m)) return;
+    out.push({ label: clean(label).slice(0, 80), message: m });
+  };
+  for (const el of deepQueryAll<HTMLElement>(root, 'input, select, textarea, [role="combobox"], [contenteditable="true"]')) {
+    if (!visible(el)) continue;
+    const described = textOfIds(el.getAttribute('aria-describedby'), el);
+    if (el.getAttribute('aria-invalid') === 'true') {
+      add(labelOf(el), described || 'This needs an answer.');
+      continue;
+    }
+    if (described && COMPLAINT.test(described)) {
+      add(labelOf(el), described);
+      continue;
+    }
+    const native = el as HTMLInputElement;
+    if (typeof native.willValidate === 'boolean' && native.willValidate && native.checkValidity && !native.checkValidity())
+      add(labelOf(el), native.validationMessage);
+  }
+  for (const el of deepQueryAll<HTMLElement>(
+    root,
+    '[role="alert"], [data-test-form-element-error-messages], .artdeco-inline-feedback--error',
+  ))
+    if (visible(el)) add('', el.textContent ?? '');
+  // A complaint shown beside a field that does not point back at it.
+  for (const el of deepQueryAll<HTMLElement>(root, '[data-testid="text-input-helper-text"], [id$="-error"], [data-testid$="-error"]'))
+    if (visible(el) && COMPLAINT.test(clean(el.textContent))) add('', el.textContent ?? '');
+  return out.slice(0, 4);
+}
 function buttons(root: Element): { el: HTMLElement; label: string; role: 'next' | 'submit' | null }[] {
   return [...root.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]')]
     .filter(visible)
@@ -477,9 +560,11 @@ function stepOf(doc: Document, root: Element): string {
   const match =
     text.match(/\bstep \d+ (of|\/) \d+\b/i) ?? text.match(/\b\d+ of \d+\b(?= steps?)/i) ?? text.match(/\b\d+\s*\/\s*\d+ pages?/i);
   const heading = clean(root.querySelector('h3, h2')?.textContent).slice(0, 80);
-  return (
-    [match?.[0], now ? `${Math.round(Number(now))}% complete` : '', heading].filter(Boolean).join(' · ') || clean(doc.title).slice(0, 80)
-  );
+  // A counter the site shows ("1/4 pages", "Step 2 of 5") says where the person is, and says it better than a
+  // percentage. Showing both put "Step 1 · 25% complete · 1/4 pages" in the panel: three readings of one fact, and
+  // a percentage that contradicts the extension's own progress figure beside it. The bar is the fallback, not an extra.
+  const where = match?.[0] ?? (now ? `${Math.round(Number(now))}% complete` : '');
+  return [where, heading].filter(Boolean).join(' · ') || clean(doc.title).slice(0, 80);
 }
 
 /**
@@ -710,15 +795,31 @@ async function fillOne(entry: Entry, value: string | string[]): Promise<{ ok: bo
       const input = first as HTMLInputElement;
       // Custom dropdowns (react-select on Greenhouse, Lever's and Workday's own) open on a press of their outer box,
       // not on the input: press that, then type, and try a shorter search if the full answer lists nothing.
+      // The outer box to press. Sites increasingly ship hashed class names (LinkedIn already has), so the box is
+      // found by what it means — the thing that reports whether the list is open — before falling back to classes.
+      const expandable = input.closest<HTMLElement>('[aria-expanded], [aria-haspopup="listbox"], [aria-haspopup="true"]');
       const control =
+        (expandable && expandable !== input ? expandable : null) ??
         (input.closest('[class*="control"], [class*="Control"], [data-automation-id*="select"]') as HTMLElement | null) ??
         input.parentElement ??
         input;
-      const open = () => {
+      const listOpen = (): boolean => {
+        if ([input, control].some(e => e.getAttribute('aria-expanded') === 'true')) return true;
+        const listId = input.getAttribute('aria-controls') || input.getAttribute('aria-owns');
+        const list = listId ? input.ownerDocument.getElementById(listId) : null;
+        return list ? visible(list) : [...input.ownerDocument.querySelectorAll('[role="listbox"]')].some(visible);
+      };
+      const press = (el: HTMLElement) => {
         for (const type of ['pointerdown', 'mousedown'])
-          control.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+          el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+        el.click();
+      };
+      const open = () => {
+        press(control);
         input.focus();
-        input.click();
+        if (control !== input) input.click();
+        // Some boxes open only from the input itself, others only from a wrapper further out.
+        if (!listOpen() && input.parentElement && input.parentElement !== control) press(input.parentElement);
       };
       const type = (text: string) => {
         if (!('value' in input)) return;
@@ -727,8 +828,10 @@ async function fillOne(entry: Entry, value: string | string[]): Promise<{ ok: bo
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, bubbles: true }));
       };
       const shown = () => {
-        const box = input.closest('[class*="container"], [class*="Container"]') ?? control;
-        const text = clean(box.textContent).toLowerCase();
+        const box = input.closest('[class*="container"], [class*="Container"]') ?? control.parentElement ?? control;
+        const text = `${clean(box.textContent)} ${clean(input.getAttribute('aria-label'))} ${clean(
+          textOfIds(input.getAttribute('aria-activedescendant'), input),
+        )}`.toLowerCase();
         return !!one && text.includes(one.toLowerCase().slice(0, 30));
       };
       open();
@@ -1365,7 +1468,9 @@ function create(): ApplyApi {
       if (!box) return 'none';
       if (box.checked) return 'already';
       box.click();
-      return box.checked ? 'checked' : 'none';
+      // A native checkbox flips at once. A `[role="switch"]` is flipped by the site's own code on a later tick, so
+      // its state cannot be read back here; both callers re-read the step afterwards and correct this if it missed.
+      return box.checked || box.el.getAttribute('role') === 'switch' ? 'checked' : 'none';
     },
     externalApply(click = true) {
       const cards = '[componentkey^="job-card-component-ref-"], [data-job-id], .job-card-container, .jobs-search-results-list';
@@ -1787,6 +1892,25 @@ function create(): ApplyApi {
     },
     ensureResumeSelected() {
       const root = easyApplyDialog(document) ?? formRoot(document);
+      const near = (el: Element): string => clean(el.getAttribute('aria-label')) || clean(el.closest('div, li, label')?.textContent);
+      const isResume = (el: Element): boolean => /resume|\bcv\b|\.pdf|\.docx?/i.test(near(el));
+      // The file's own date, shown beside it. The newest is the one the person last chose to upload.
+      const uploaded = (el: Element): number => {
+        const text = clean(el.closest('div, li, label')?.textContent);
+        const stamp = /\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}/.exec(text)?.[0];
+        const at = stamp ? Date.parse(stamp) : NaN;
+        return Number.isNaN(at) ? -Infinity : at;
+      };
+      // Checked live on 26 Nov 2026: each stored resume is one radio of a single group, labelled only by
+      // `aria-label` (the file name) with the date in the surrounding card. There can be dozens.
+      const radios = deepQueryAll<HTMLInputElement>(root, 'input[type="radio"]').filter(r => visible(r) && isResume(r));
+      if (radios.length) {
+        // Never override a choice the person already made, and never swap a newer file for an older one.
+        if (radios.some(r => r.checked)) return 'already';
+        const pick = [...radios].sort((a, b) => uploaded(b) - uploaded(a))[0]!;
+        clickFull(pick);
+        return pick.checked ? 'selected' : 'none';
+      }
       const cards = deepQueryAll<HTMLElement>(
         root,
         '[data-test-resume-card], .jobs-document-upload-redesign-card__container, [class*="resume-card" i]',
@@ -1798,27 +1922,20 @@ function create(): ApplyApi {
             c.classList.contains('jobs-document-upload-redesign-card__container--selected') ||
             !!c.querySelector('input[type="radio"]:checked, [aria-checked="true"]'),
         );
-        if (!already) {
-          const pick = cards[0]!.querySelector<HTMLElement>('input[type="radio"], [role="radio"], button, label') ?? cards[0]!;
-          clickFull(pick);
-        }
-        return 'selected';
-      }
-      const radios = deepQueryAll<HTMLInputElement>(root, 'input[type="radio"]').filter(r =>
-        /resume|cv|\.pdf|\.docx?/i.test(clean(r.closest('div, li, label')?.textContent)),
-      );
-      if (radios.length) {
-        if (!radios.some(r => r.checked)) clickFull(radios[0]!);
+        if (already) return 'already';
+        const best = [...cards].sort((a, b) => uploaded(b) - uploaded(a))[0]!;
+        clickFull(best.querySelector<HTMLElement>('input[type="radio"], [role="radio"], button, label') ?? best);
         return 'selected';
       }
       const emptyFile = deepQueryAll<HTMLInputElement>(root, 'input[type="file"]').find(i => !i.disabled && !(i.files?.length ?? 0));
       return emptyFile ? 'needs-upload' : 'none';
     },
+    fieldErrors() {
+      return fieldErrors(easyApplyDialog(document) ?? formRoot(document));
+    },
     waitAfterNext(timeoutMs = 2500) {
       const root = easyApplyDialog(document) ?? formRoot(document);
-      const errSel = '[data-test-form-element-error-messages], .artdeco-inline-feedback--error, [aria-invalid="true"]';
-      const hasErr = () =>
-        deepQueryAll(root, errSel).some(e => visible(e) && (e.getAttribute('aria-invalid') === 'true' || clean(e.textContent).length > 2));
+      const hasErr = () => fieldErrors(root).length > 0;
       const snap = () => clean(root.textContent).slice(0, 600);
       const initial = snap();
       return new Promise<'mutated' | 'error' | 'timeout'>(resolve => {
