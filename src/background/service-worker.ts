@@ -9,6 +9,7 @@ import {
   applySurfaceBehaviour,
   installMenus,
   openWorkbench,
+  registerHudActionMessages,
   registerSidePanelLifecycle,
   registerSurfaceMessages,
   registerSurfaces,
@@ -23,6 +24,7 @@ registerGmailMessages();
 registerRunner();
 registerSurfaces();
 registerSurfaceMessages();
+registerHudActionMessages();
 registerSidePanelLifecycle();
 registerWorkspaceMessages();
 // Clicking an important background notification takes the person back into the workbench; notifications are
