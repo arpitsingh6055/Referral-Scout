@@ -744,6 +744,20 @@ describe('a job already applied to', () => {
     document.querySelector('main')!.innerHTML = '<h1>Product Manager</h1><button aria-label="Easy Apply to this job">Easy Apply</button>';
     expect(api.openEasyApply(false)).toBe('opened');
   });
+
+  it('reports closed when the job says Not currently accepting applications, ignoring other job cards', async () => {
+    Element.prototype.getClientRects = function () {
+      return [{}] as unknown as DOMRectList;
+    };
+    document.body.innerHTML = `
+      <div componentkey="job-card-component-ref-1000009">Other job · Not currently accepting applications</div>
+      <main><h1>Product Owner Intern</h1><p>Not currently accepting applications</p></main>`;
+    delete (globalThis as { __referralScoutApply?: unknown }).__referralScoutApply;
+    vi.resetModules();
+    await import('../src/content/apply');
+    const api = (globalThis as unknown as { __referralScoutApply: ApplyApi }).__referralScoutApply;
+    expect(api.openEasyApply(false)).toBe('closed');
+  });
 });
 
 describe('applying on the company’s own site', () => {

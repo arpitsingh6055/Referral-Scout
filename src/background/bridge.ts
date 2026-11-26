@@ -50,7 +50,7 @@ function toJob(found: FoundJob, now: number, profileVersion: number): Job {
     workMode: parseWorkMode(`${found.location} ${found.insight}`),
     observedAt: now,
     // A search result does not prove a vacancy is open; only reading the page could, and we have not.
-    availability: 'unknown' as Availability,
+    availability: (found.closed ? 'closed' : 'unknown') as Availability,
     ...(found.why ? { description: found.why, descriptionHash: hashText(found.why) } : {}),
     // The ranking step writes one reason per job rather than a requirement list, so that is what there is to
     // match against. It is thin evidence and the Jobs screen says so rather than inventing bullet points.

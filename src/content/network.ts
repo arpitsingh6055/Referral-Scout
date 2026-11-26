@@ -10,6 +10,7 @@ import {
   connectionIds,
   inboxRows,
   type InboxRow,
+  CLOSED_JOB_RE,
   jobRows,
 } from '../parsers/network';
 import { pageItem } from './page-item';
@@ -542,7 +543,7 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
       }
     };
     const id = idFrom(location.href) || idFrom(cmd.url);
-    const readDesc = (): string => {
+    const docsOf = (): Document[] => {
       const docs: Document[] = [document];
       for (const frame of document.querySelectorAll('iframe')) {
         try {
@@ -552,7 +553,10 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
           /* cross-origin frame (an ad): skip */
         }
       }
-      for (const d of docs) {
+      return docs;
+    };
+    const readDesc = (): string => {
+      for (const d of docsOf()) {
         const el = id
           ? d.querySelector(`[componentkey="JobDetails_AboutTheJob_${id}"]`)
           : d.querySelector('[componentkey^="JobDetails_AboutTheJob_"]');
@@ -561,8 +565,28 @@ async function handle(cmd: NetworkPageCommand, signal: AbortSignal): Promise<unk
       }
       return '';
     };
-    const text = await wait(() => readDesc() || null, signal, 12000).catch(() => '');
-    return { text: (text || '').slice(0, 8000) };
+    const readClosed = (): boolean => {
+      for (const d of docsOf()) {
+        const main = d.querySelector('main') ?? d.body;
+        if (!main) continue;
+        const clone = main.cloneNode(true) as Element;
+        clone
+          .querySelectorAll('[componentkey^="job-card-component-ref-"], [data-job-id], .jobs-search-results-list, script, style')
+          .forEach(e => e.remove());
+        if (CLOSED_JOB_RE.test(textOf(clone))) return true;
+      }
+      return false;
+    };
+    const result = await wait(
+      () => {
+        const text = readDesc();
+        const closed = readClosed();
+        return text || closed ? { text, closed } : null;
+      },
+      signal,
+      12000,
+    ).catch(() => ({ text: '', closed: false }));
+    return { text: (result.text || '').slice(0, 8000), ...(result.closed ? { closed: true } : {}) };
   }
   if (cmd.action === 'sentInvitations') {
     // Invitations still waiting (checked live, 12 November 2026): ten people at a time, each with their profile

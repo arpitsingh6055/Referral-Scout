@@ -956,6 +956,61 @@ it('ranks jobs against the full background by default when the profile shows a q
   vi.mocked(networkCommand).mockReset();
 });
 
+it('drops closed jobs reporting "Not currently accepting applications" before asking ChatGPT to rank', async () => {
+  const { askChatGpt } = await import('../src/background/network-ai');
+  const found = (id: string, title: string, company: string, score: number) => ({
+    id,
+    url: `https://www.linkedin.com/jobs/view/${id}/`,
+    title,
+    company,
+    location: 'India',
+    insight: '',
+    term: 'pm intern',
+    score,
+    picked: false,
+  });
+  await seed({
+    plan: {
+      forRoles: 'Product Management internship',
+      terms: ['pm intern'],
+      titles: { large: [], mid: [], small: [] },
+      source: 'rules',
+      at: 1,
+    },
+    jobSearch: {
+      status: 'finding',
+      cursor: 1,
+      startedAt: 1,
+      found: [found('111111', 'Product Owner Intern', 'ClearancePort', 90), found('222222', 'Product Intern', 'OpenCo', 60)],
+    },
+  });
+  vi.mocked(networkCommand).mockImplementation(async (_tab, cmd) =>
+    cmd.action === 'jobText'
+      ? (cmd.url ?? '').includes('111111')
+        ? { text: 'Product internship.', closed: true }
+        : { text: 'Open product internship.' }
+      : undefined,
+  );
+  vi.mocked(askChatGpt).mockClear();
+  vi.mocked(askChatGpt).mockResolvedValueOnce(
+    JSON.stringify({
+      remove: [],
+      rank: [{ id: '222222', fit: 80, basis: 'domain', quals: [], why: 'good match' }],
+    }),
+  );
+  await networkTick();
+  const saved = await getNetwork();
+  const prompt = String(vi.mocked(askChatGpt).mock.calls[0]![0]);
+  expect(prompt).not.toContain('ClearancePort');
+  expect(prompt).toContain('OpenCo');
+  expect(saved.jobSearch!.status).toBe('choosing');
+  expect(saved.jobSearch!.found.map(j => j.company)).toEqual(['OpenCo']);
+  expect(saved.jobSearch!.dropped).toEqual([
+    { title: 'Product Owner Intern', company: 'ClearancePort', why: 'Not currently accepting applications.' },
+  ]);
+  vi.mocked(networkCommand).mockReset();
+});
+
 it('finds the company page through LinkedIn company search when the job did not give it, so the Current company filter is still used', async () => {
   const jobUrl = 'https://www.linkedin.com/jobs/view/81/';
   await seed({

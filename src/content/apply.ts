@@ -61,7 +61,7 @@ export interface ApplyApi {
   clear(): void;
   next(): { clicked?: string; error?: string };
   /** click=false only reports what it would do, so the background can click in exactly one frame. */
-  openEasyApply(click?: boolean): 'opened' | 'external' | 'open' | 'applied' | 'none';
+  openEasyApply(click?: boolean): 'opened' | 'external' | 'open' | 'applied' | 'closed' | 'none';
   /** Ticks LinkedIn's "Mark job as a top choice" (only when the person asks; it uses a monthly allowance). */
   markTopChoice(): 'checked' | 'already' | 'none';
   /** Passes LinkedIn's "Job search safety reminder" by pressing its Continue applying. True when it did. */
@@ -1481,9 +1481,9 @@ function create(): ApplyApi {
         .querySelectorAll('[componentkey^="job-card-component-ref-"], [data-job-id], .jobs-search-results-list, script, style')
         .forEach(e => e.remove());
       // No word boundaries: textContent runs lines together ("Product ManagerApplied 2 days ago").
-      return /applied \d+\s*\w+ ago|applied on \w+|application submitted|\byou applied/i.test(clean(main.textContent).slice(0, 6000))
-        ? 'applied'
-        : 'none';
+      const mainText = clean(main.textContent).slice(0, 6000);
+      if (/(?:not currently|no longer)\s+accepting\s+applications/i.test(mainText)) return 'closed';
+      return /applied \d+\s*\w+ ago|applied on \w+|application submitted|\byou applied/i.test(mainText) ? 'applied' : 'none';
     },
   };
 }

@@ -87,6 +87,7 @@ export interface ApplySession {
   hasNext: boolean;
   hasSubmit: boolean;
   captcha: boolean;
+  closed?: boolean;
   needOrigins?: string[];
   /** LinkedIn's "Mark this job as a top choice" on this step, and how many the person has left this month. */
   topChoice?: { checked: boolean; remaining?: number } | undefined;
@@ -1045,6 +1046,16 @@ async function fillStep(
       .catch(() => []);
     const already = looks.some(r => r.result === 'open');
     const target = looks.find(r => r.result === 'opened');
+    if (!target && looks.some(r => r.result === 'closed')) {
+      await captureJob(tabId, url);
+      await update(tabId, x => ({
+        ...x,
+        stage: 'error',
+        closed: true,
+        message: 'This job is no longer accepting applications.',
+      }));
+      return;
+    }
     if (!target && looks.some(r => r.result === 'applied')) {
       // Nothing to fill: the person already applied here. Offer the referral step instead of an error.
       await captureJob(tabId, url);

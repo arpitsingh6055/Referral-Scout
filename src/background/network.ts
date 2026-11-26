@@ -582,7 +582,7 @@ const planLimits = (what: string) => ({
 const DESC_CACHE = 'job-descriptions',
   DESC_TTL = 14 * DAY,
   DESC_KEEP = 300;
-type DescCache = Record<string, { text: string; at: number }>;
+type DescCache = Record<string, { text: string; closed?: boolean; at: number }>;
 async function saveDescriptions(cache: DescCache): Promise<void> {
   const fresh = Object.entries(cache)
     .filter(([, v]) => Date.now() - v.at < DESC_TTL)
@@ -638,6 +638,7 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
     const specLabels = specs.length ? SPECIALIZATIONS.filter(x => specs.includes(x.id)).map(x => x.short) : [];
     const intent = employmentIntent(s.settings?.employmentType, roles);
     const drop = new Map<string, string>();
+    const closedIds = new Set<string>();
     let why = '';
 
     if (list.length) {
@@ -673,9 +674,15 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
         batch += 1;
         const descriptions: Record<string, string> = {};
         const attempted = new Set<string>(); // job ids whose description was read, or tried
-        const keep = (job: FoundJob, text: string | undefined): void => {
-          if (!text) return;
-          descriptions[job.id] = clampDescription(text);
+        const keep = (job: FoundJob, res: { text?: string; closed?: boolean } | undefined): void => {
+          if (res?.closed) {
+            closedIds.add(job.id);
+            drop.set(job.id, 'Not currently accepting applications.');
+            cache[job.id] = { text: clampDescription(res.text ?? ''), closed: true, at: Date.now() };
+            return;
+          }
+          if (!res?.text) return;
+          descriptions[job.id] = clampDescription(res.text);
           cache[job.id] = { text: descriptions[job.id]!, at: Date.now() };
         };
         // Already read in an earlier search: no page needed.
@@ -683,7 +690,12 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
         for (const job of slice) {
           const hit = cache[job.id];
           if (hit && Date.now() - hit.at < DESC_TTL) {
-            descriptions[job.id] = hit.text;
+            if (hit.closed) {
+              closedIds.add(job.id);
+              drop.set(job.id, 'Not currently accepting applications.');
+            } else {
+              descriptions[job.id] = hit.text;
+            }
             attempted.add(job.id);
             read_ += 1;
           } else toFetch.push(job);
@@ -698,13 +710,14 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
           const byUrl = new Map(toFetch.map(job => [job.url, job]));
           await readPagesInParallel(
             toFetch.map(job => job.url),
-            async (tab, url) => ((await networkCommand(tab, { action: 'jobText', url }, signal)) as { text?: string } | undefined)?.text,
+            async (tab, url) =>
+              (await networkCommand(tab, { action: 'jobText', url }, signal)) as { text?: string; closed?: boolean } | undefined,
             signal,
             {
               shouldStop: stopRequested,
-              onDone: async (url, text) => {
+              onDone: async (url, res) => {
                 const job = byUrl.get(url)!;
-                keep(job, text);
+                keep(job, res);
                 attempted.add(job.id);
                 read_ += 1;
                 await progress(read_);
@@ -715,20 +728,23 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
           // LinkedIn can hold back rendering in a hidden tab, so a page that came back empty gets one more try in the
           // main work tab, which is the one in front inside the work window.
           for (const job of toFetch) {
-            if (!attempted.has(job.id) || descriptions[job.id]) continue;
+            if (!attempted.has(job.id) || descriptions[job.id] || closedIds.has(job.id)) continue;
             if (await stopRequested()) break;
             try {
               const tab = await networkTab(job.url, signal);
-              keep(job, ((await networkCommand(tab, { action: 'jobText', url: job.url }, signal)) as { text?: string } | undefined)?.text);
+              keep(
+                job,
+                (await networkCommand(tab, { action: 'jobText', url: job.url }, signal)) as { text?: string; closed?: boolean } | undefined,
+              );
             } catch (error) {
               if (signal.aborted) throw error; // still unreadable: ranked from its title alone
             }
           }
         }
         if (await stopRequested()) stopped = true;
-        const readJobs = slice.filter(job => attempted.has(job.id));
+        const readJobs = slice.filter(job => attempted.has(job.id) && !closedIds.has(job.id));
         await saveDescriptions(cache).catch(() => undefined);
-        if (!readJobs.length) break;
+        if (!readJobs.length) continue;
         await note(s, `Asking ChatGPT to rank ${readJobs.length} jobs against your qualifications (batch ${batch}, up to 2 minutes)…`);
         let batchRemove = new Map<string, string>(),
           rank = new Map<string, JobRank>();
@@ -801,11 +817,16 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
       j.status = 'choosing';
       delete j.ranking;
       delete j.rankStop;
-      const checked = drop.size
-        ? ` ChatGPT removed ${drop.size} ${drop.size === 1 ? 'advert or poor match' : 'adverts or poor matches'}.`
+      const closedCount = closedIds.size;
+      const aiRemoved = drop.size - closedCount;
+      const closedNote = closedCount
+        ? ` Removed ${closedCount} closed ${closedCount === 1 ? 'job' : 'jobs'} not accepting applications.`
+        : '';
+      const checked = aiRemoved
+        ? `${closedNote} ChatGPT removed ${aiRemoved} ${aiRemoved === 1 ? 'advert or poor match' : 'adverts or poor matches'}.`
         : why
-          ? ' ChatGPT could not check the list, so it is unfiltered.'
-          : '';
+          ? `${closedNote} ChatGPT could not check the list, so it is unfiltered.`
+          : closedNote;
       const prioritizedCount = kept.filter(x => x.prioritized).length;
       const priorityNote = prioritizedCount ? ` ${prioritizedCount} fit your qualification and are at the top.` : '';
       c.status = j.found.length

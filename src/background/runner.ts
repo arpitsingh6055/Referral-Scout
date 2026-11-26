@@ -151,6 +151,11 @@ export function readSession(s: ApplySession | undefined, now = Date.now()): Read
         ...(a.options?.length ? { options: a.options } : {}),
       })),
     };
+  if (s.closed)
+    return {
+      state: 'closed',
+      note: s.message || 'This job is no longer accepting applications.',
+    };
   if (s.stage === 'error')
     return {
       state: 'failed',

@@ -203,6 +203,8 @@ export function inboxRows(doc: ParentNode): InboxRow[] {
   }
   return rows.slice(0, 60);
 }
+export const CLOSED_JOB_RE = /(?:not currently|no longer)\s+accepting\s+applications/i;
+
 export interface JobRow {
   id: string;
   title: string;
@@ -224,6 +226,7 @@ export function jobRows(doc: ParentNode): JobRow[] {
     if (!id || seen.has(id)) continue;
     let row: Element = marker;
     for (let i = 0; i < 6 && !row.querySelector('button[aria-label^="Dismiss"]') && row.parentElement; i++) row = row.parentElement;
+    if (CLOSED_JOB_RE.test(textOf(row))) continue;
     const dismiss = row.querySelector('button[aria-label^="Dismiss"]')?.getAttribute('aria-label') ?? '';
     const lines = [...row.querySelectorAll('p')].map(textOf).filter(Boolean);
     const title = (/^Dismiss (.+) job$/i.exec(dismiss)?.[1] ?? lines[0] ?? '').replace(/\s*\(Verified job\)\s*$/i, '').trim();

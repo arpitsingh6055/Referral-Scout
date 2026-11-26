@@ -58,6 +58,18 @@ describe('reading the LinkedIn job list (structure checked live, November 2026)'
       },
     ]);
   });
+
+  it('skips job cards that are no longer accepting applications', () => {
+    const doc = new DOMParser().parseFromString(
+      `<main>
+        ${row('4461594137', 'Operations Associate', 'Stripe', 'Bengaluru (On-site)', 'Posted 1 month ago')}
+        <div><div role="button"><div componentkey="job-card-component-ref-4478433477"><p>Product Owner Intern</p><p>ClearancePort</p><p>Delhi, India</p><p>Not currently accepting applications</p></div></div><button aria-label="Dismiss Product Owner Intern job">x</button></div>
+        <div><div role="button"><div componentkey="job-card-component-ref-4478433478"><p>Strategy Intern</p><p>Acme</p><p>Mumbai, India</p><p>No longer accepting applications</p></div></div><button aria-label="Dismiss Strategy Intern job">x</button></div>
+      </main>`,
+      'text/html',
+    );
+    expect(jobRows(doc).map(r => r.id)).toEqual(['4461594137']);
+  });
 });
 
 describe('planning the search', () => {

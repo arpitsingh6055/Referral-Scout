@@ -34,6 +34,8 @@ export interface FoundJob {
   basis?: 'degree' | 'experience' | 'domain' | undefined;
   /** ChatGPT's one-line reason for the fit score, shown under the job so the ranking can be checked. */
   why?: string | undefined;
+  /** True when LinkedIn reports the job is no longer accepting applications. */
+  closed?: boolean | undefined;
 }
 export interface JobSearch {
   status: 'finding' | 'choosing' | 'working';
@@ -265,6 +267,7 @@ export function shortlist(
   const taken = new Set(alreadyPursued.map(normalizeCompany)),
     best = new Map<string, FoundJob>();
   for (const job of jobs) {
+    if (job.closed) continue;
     const key = normalizeCompany(job.company);
     if (!key || taken.has(key) || done.some(d => sameJob(d, job))) continue;
     const held = best.get(key);
