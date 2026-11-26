@@ -79,7 +79,7 @@ const STUDENT_TITLE = /\b(mba|pgdm|pgp|b\.?tech|m\.?tech|bba|candidate|intern|tr
 const FORMER_ROLE =
   /\b(?:ex|former|previously)[-\s]+(?:[\w&]+\s+){0,2}(?:recruit|talent|ceo|founder|co-?founder|head|director|hr\b|manager|vp|chief|lead|owner)/i;
 const NOT_DECISION_MAKER =
-  /founder'?s'?\s+office|assistant to|executive assistant|chief of staff|office of the|ceo'?s office|associate to|\bPA to\b/i;
+  /founder[\u2018\u2019']?s[\u2018\u2019']?\s+office|assistant to|executive assistant|chief of staff|office of the|ceo[\u2018\u2019']?s\s+office|associate to|\bPA to\b/i;
 
 const RECRUITER =
   /\b(recruit(?:er|ers|ing|ment)|talent\s+(?:acquisition|partner|advisor|scout|sourcer|sourcing|lead|manager|specialist|head|team|attraction)|sourcer|head\s+of\s+talent|hiring\s+(?:manager|lead|partner|team)|campus\s+(?:hiring|recruit\w*|relations)|university\s+(?:relations|recruit\w*|hiring)|early\s+careers|human\s+resources|hrbp|hr\s+(?:business\s+partner|manager|lead|head|generalist|executive|director|partner|specialist|operations|ops|recruiter)|people\s+(?:partner|operations|ops|team|lead|head|&\s*culture|and\s+culture|success|experience)|head\s+of\s+people|chief\s+people)\b/i;

@@ -477,11 +477,16 @@ export async function campaignView(): Promise<CampaignView> {
     outreach,
     events,
   });
-  const found = network?.jobSearch?.found?.length ?? 0;
-  const qualified = (network?.jobSearch?.found ?? []).filter(j => j.picked).length || tasks.length;
+  const found = Math.max(jobs.length, network?.jobSearch?.found?.length ?? 0);
+  const qualified =
+    jobs.filter(j => j.userJudgement === 'shortlisted' || j.qualification?.tier === 'strong').length ||
+    (network?.jobSearch?.found ?? []).filter(j => j.picked).length ||
+    tasks.length;
+  const syncedReplies = Math.max(empty.replies, conversations.filter(c => c.status === 'replied' || c.status === 'needs-reply').length);
 
   return {
     ...empty,
+    replies: syncedReplies,
     actions,
     conversations: [...conversations].sort((a, b) => b.lastMessageAt - a.lastMessageAt),
     outreach,
@@ -531,8 +536,8 @@ export async function campaignView(): Promise<CampaignView> {
       qualified,
       applied: tasks.filter(t => t.state === 'submitted').length,
       queued: tasks.length,
-      contacts: network?.contacts?.length ?? 0,
-      replies: empty.replies,
+      contacts: Math.max(contacts.length, network?.contacts?.length ?? 0),
+      replies: syncedReplies,
     }),
     events,
     receipts: tasks

@@ -52,32 +52,36 @@ const PAGE_SIZE = 50;
 function row(contact: ContactRow, ctx: Ctx, pinnedSet: Set<string>): HTMLElement {
   const confident = contact.confidence >= 0.8;
   const companyPinned = !!contact.company && pinnedSet.has(canonicalCompany(contact.company));
+  const roleLine = `${contact.role ?? 'Role unknown'} · ${RELATIONSHIP[contact.relationship] ?? contact.relationship}`;
   return div('row row-queue', [
     div('row-title', [
       div('inline', [text('span', 'row-company', contact.company ?? ''), companyPinned ? pill('Pinned', 'violet') : null]),
       externalLink(contact.name, contact.profileUrl, 'cell-strong cell-link'),
-      text('div', 'cell-muted', `${contact.role ?? 'Role unknown'} · ${RELATIONSHIP[contact.relationship] ?? contact.relationship}`),
+      Object.assign(text('div', 'cell-muted clamp', roleLine), { title: roleLine }),
     ]),
     div('col-hide', [pill(CATEGORY[contact.category] ?? contact.category, contact.category === 'unknown' ? 'grey' : 'violet')]),
-    div('', [pill(confident ? 'Identity confirmed' : 'Identity unconfirmed', confident ? 'green' : 'amber')]),
+    div('', [!confident ? pill('Identity unconfirmed', 'amber') : null]),
     div('col-hide', [
       contact.email
         ? pill(
             contact.emailConfidence === 'verified' ? 'Email verified' : 'Email to verify',
             contact.emailConfidence === 'verified' ? 'green' : 'amber',
           )
-        : pill(contact.profileUrl ? 'LinkedIn only' : 'No route', contact.profileUrl ? 'grey' : 'red'),
+        : !contact.profileUrl
+          ? pill('No route', 'red')
+          : null,
     ]),
     div('inline', [
+      contact.profileUrl ? button('Open profile ↗', 'btn btn-sm btn-primary', () => ctx.openExternal(contact.profileUrl!)) : null,
       contact.company && ctx.view.campaign
-        ? button(companyPinned ? 'Pinned ★' : 'Pin', companyPinned ? 'btn btn-sm btn-primary' : 'btn btn-sm', () =>
+        ? button(companyPinned ? 'Pinned ★' : 'Pin', companyPinned ? 'btn btn-sm' : 'btn btn-sm btn-ghost', () =>
             ctx.run({ kind: 'campaign', action: 'pinCompany', company: contact.company!, pinned: !companyPinned }),
           )
         : null,
       copyLinkButton(contact.profileUrl, 'Copy'),
       contact.suppressed
         ? pill('Suppressed', 'red')
-        : button('Never contact', 'btn btn-sm btn-danger', async () => {
+        : button('Never contact', 'btn btn-sm btn-ghost', async () => {
             if (
               await confirmModal({
                 title: `Never contact ${contact.name}?`,
@@ -185,8 +189,10 @@ export function people(ctx: Ctx): HTMLElement {
               )
             : emptyState({
                 icon: 'mail',
-                title: 'No conversations yet',
-                description: 'Click Sync Gmail Replies or reach out on LinkedIn to track conversations here.',
+                title: ctx.view.replies ? `${plural(ctx.view.replies, 'LinkedIn reply')} recorded` : 'No email threads synced yet',
+                description: ctx.view.replies
+                  ? 'LinkedIn replies are tracked on your contacts. Click Sync Gmail Replies to also pull email threads.'
+                  : 'Click Sync Gmail Replies or reach out on LinkedIn to track conversations here.',
               }),
         ],
       }),

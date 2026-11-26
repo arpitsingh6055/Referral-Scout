@@ -1,5 +1,5 @@
 /** Side-panel launcher and legacy outreach controls; profile, CV and provider connections are managed in the dashboard. */
-import { introduction, renderNote, type NetworkState, type OutreachSettings, SAFE, riskNotes } from '../shared/network';
+import { introduction, renderNote, type NetworkState, type OutreachSettings, SAFE, riskNotes, defaultSettings } from '../shared/network';
 import { buildApplySettings } from './apply';
 import { qualificationPicker } from './qualifications';
 import { node, csv, optional, pad, request, button, act, field, choice, accordion, bubble, flags, ui, openDashboard } from './core';
@@ -267,8 +267,42 @@ export function buildSetup(
 
 /* AI account configuration is centralised in the dashboard Settings. */
 export function buildApi(s: NetworkState): HTMLElement {
-  const { box, body } = accordion('api', 'AI connection', s.api ? `API key · ${s.api.model}` : 'ChatGPT website (default)');
+  const mode = s.settings?.chatgptMode ?? 'incognito';
+  const { box, body } = accordion(
+    'api',
+    'AI connection',
+    s.api ? `API key · ${s.api.model}` : `ChatGPT website (default) · ${mode === 'incognito' ? 'Incognito' : 'Normal'}`,
+  );
+  const modeChoice = choice(
+    'ChatGPT mode for searches & drafts',
+    mode,
+    [
+      ['incognito', 'Incognito / Temporary chat (default)'],
+      ['normal', 'Normal chat history'],
+    ],
+    'Incognito runs searches and ranking in ChatGPT Temporary chat so your conversation sidebar stays clean.',
+  );
+  modeChoice.input.addEventListener('change', () => {
+    const nextMode = modeChoice.input.value === 'normal' ? 'normal' : 'incognito';
+    void chrome.runtime
+      ?.sendMessage?.({ kind: 'workspace', action: 'setChatGptMode', mode: nextMode })
+      ?.then(() =>
+        act(
+          {
+            kind: 'network',
+            action: 'save',
+            target: s.target,
+            location: s.location,
+            template: s.template,
+            settings: { ...(s.settings ?? defaultSettings), chatgptMode: nextMode },
+          },
+          `ChatGPT mode set to ${nextMode === 'incognito' ? 'Incognito (Temporary chat)' : 'Normal chat'}.`,
+        ),
+      )
+      ?.catch(() => undefined);
+  });
   body.append(
+    modeChoice.wrap,
     node(
       'p',
       'The ChatGPT website is the default and only needs you to sign in at chatgpt.com. An optional OpenAI API key can be managed in dashboard Settings.',

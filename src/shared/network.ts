@@ -161,6 +161,7 @@ export const outreachSettingsSchema = z.object({
   // True once the seeker has confirmed the list; until then it is pre-filled from their CV and LinkedIn profile.
   specializationsChosen: z.boolean().default(false),
   aiMode: z.enum(['template', 'chatgpt']).default('template'),
+  chatgptMode: z.enum(['incognito', 'normal']).default('incognito'),
   noteTemplate: z.string().trim().min(10).max(1200).default(defaultNoteTemplate),
   weeklyInvites: z.number().int().positive().nullable().default(80),
   activeHours: z
@@ -185,6 +186,7 @@ export const defaultSettings: OutreachSettings = {
   specializations: [],
   specializationsChosen: false,
   aiMode: 'template',
+  chatgptMode: 'incognito',
   noteTemplate: defaultNoteTemplate,
   weeklyInvites: 80,
   activeHours: null,

@@ -211,3 +211,49 @@ it('reads the answer when an empty "thinking" block comes before it', async () =
   await run();
   expect(events.find(e => e.stage === 'response_extracted')?.text).toContain('{"schemaVersion":2}');
 });
+
+it('does not truncate an incomplete JSON reply after a >12s streaming pause while the Stop button is visible', async () => {
+  vi.resetModules();
+  vi.stubGlobal('chrome', {
+    runtime: {
+      id: 'abc',
+      getURL: (s: string) => `chrome-extension://abc/${s}`,
+      onMessage: { addListener: vi.fn() },
+      sendMessage: vi.fn(async (m: { kind: string; stage?: string; text?: string; error?: string }) => {
+        if (m.kind === 'network.ai.event')
+          events.push({ stage: m.stage!, ...(m.text ? { text: m.text } : {}), ...(m.error ? { error: m.error } : {}) });
+      }),
+    },
+  });
+  await import('../src/content/network-ai');
+  listener = vi.mocked(chrome.runtime.onMessage.addListener).mock.calls[0]![0] as typeof listener;
+  const send = (msg: object) => {
+    const reply = vi.fn();
+    listener({ kind: 'network.ai', id: ID, ...msg }, { id: 'abc' }, reply);
+    return reply;
+  };
+  expect(send({ action: 'begin', total: 1 })).toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+  expect(send({ action: 'part', index: 0, chunk: PROMPT })).toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+  expect(send({ action: 'execute' })).toHaveBeenCalledWith(expect.objectContaining({ ok: true, state: 'running' }));
+
+  // Advance until the prompt is sent and the first partial JSON chunk appears with a visible Stop button.
+  await vi.advanceTimersByTimeAsync(4000);
+  const answer = document.querySelector<HTMLElement>('[data-message-author-role="assistant"] .markdown')!;
+  answer.textContent = '{"schemaVersion":3,"identity":{"fullName":"Arpit Singh","email":"a@b.com",';
+  const stop = document.createElement('button');
+  stop.type = 'button';
+  stop.setAttribute('aria-label', 'Stop streaming');
+  document.querySelector('form')!.append(stop);
+
+  // Pause longer than 12 seconds mid-stream while Stop is still visible.
+  await vi.advanceTimersByTimeAsync(16000);
+  expect(events.map(e => e.stage)).not.toContain('response_extracted');
+
+  // Resume streaming and finish the JSON; Stop disappears.
+  answer.textContent = '{"schemaVersion":3,"identity":{"fullName":"Arpit Singh","email":"a@b.com"}}';
+  stop.remove();
+  await vi.advanceTimersByTimeAsync(5000);
+
+  const extracted = events.find(e => e.stage === 'response_extracted')?.text;
+  expect(extracted).toBe('{"schemaVersion":3,"identity":{"fullName":"Arpit Singh","email":"a@b.com"}}');
+});

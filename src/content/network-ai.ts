@@ -16,6 +16,7 @@ const requests = new Map<
     running?: boolean;
     parentId?: string;
     thinking?: boolean;
+    temporaryChat?: boolean;
   }
 >();
 let lastComposer: Element | null = null;
@@ -176,6 +177,29 @@ function clearComposer(editor: HTMLElement): void {
   }
 }
 const notSend = /dictate|voice|attach|add files|model|mode|stop|microphone|photo|search|think/i;
+const notStop = /read|aloud|speech|voice|dictat/i;
+/** Generation Stop button inside ChatGPT (never the message bar's "Stop reading aloud" control). */
+function stopButton(): HTMLElement | null {
+  for (const q of selectors.chatgpt.stop) {
+    const e = [...document.querySelectorAll<HTMLElement>(q)].find(b => visible(b) && !notStop.test(b.getAttribute('aria-label') ?? ''));
+    if (e) return e;
+  }
+  const form = composer()?.closest('form') ?? document.querySelector('form[data-chatgpt-composer]');
+  if (!form) return null;
+  return (
+    [...form.querySelectorAll<HTMLElement>('button')].filter(visible).find(b => {
+      const label = b.getAttribute('aria-label') ?? '';
+      return /\b(stop|cancel|interrupt)\b/i.test(label) && !notStop.test(label);
+    }) ?? null
+  );
+}
+function isReplyStreaming(reply: HTMLElement | null): boolean {
+  if (!reply) return false;
+  if (reply.closest('[data-talvt-turn-state]:not([data-talvt-turn-state="complete"])')) return true;
+  if (reply.querySelector('[data-talvt-turn-state]:not([data-talvt-turn-state="complete"]), [aria-busy="true"], .result-streaming'))
+    return true;
+  return reply.getAttribute('aria-busy') === 'true';
+}
 /** Send button inside the composer form. This ChatGPT build exposes almost no data-testid hooks, so fall back to aria-labels and the submit button. */
 function sendButton(): HTMLElement | null {
   const direct = find(selectors.chatgpt.send);
@@ -229,7 +253,52 @@ async function setThinking(id: string, want: boolean, signal: AbortSignal): Prom
   }
   await progress(id, 'thinking_skipped');
 }
-async function perform(id: string, prompt: string, parentId?: string, thinking?: boolean): Promise<void> {
+function findTemporaryButton(): HTMLElement | null {
+  const direct = find(selectors.chatgpt.temporary);
+  if (direct) return direct;
+  return (
+    [...document.querySelectorAll<HTMLElement>('button')]
+      .filter(visible)
+      .find(b => /temporary\s*chat/i.test(b.getAttribute('aria-label') ?? '') || !!b.querySelector('use[href*="codex-icon-incognito"]')) ??
+    null
+  );
+}
+
+function isTemporaryChatActive(): boolean {
+  try {
+    if (new URLSearchParams(location.search).get('temporary-chat') === 'true') return true;
+  } catch {
+    // Ignore malformed URL.
+  }
+  const btn = findTemporaryButton();
+  if (!btn) return false;
+  if (btn.hasAttribute('data-selected') && btn.getAttribute('data-selected') !== 'false') return true;
+  if (btn.getAttribute('aria-pressed') === 'true') return true;
+  if (/turn off/i.test(btn.getAttribute('aria-label') ?? '')) return true;
+  return false;
+}
+
+/**
+ * Toggles ChatGPT's "Temporary chat" (incognito) button when present so automated searches and drafts
+ * do not clutter the user's normal conversation sidebar.
+ */
+async function setTemporaryChat(id: string, want: boolean, signal: AbortSignal): Promise<void> {
+  if (isTemporaryChatActive() === want) {
+    await progress(id, 'temporary_chat_verified');
+    return;
+  }
+  const btn = findTemporaryButton();
+  if (!btn) {
+    await progress(id, 'temporary_chat_skipped');
+    return;
+  }
+  btn.click();
+  await sleep(500, signal);
+  await wait(() => chatGptReady(), signal, 5000).catch(() => undefined);
+  await progress(id, isTemporaryChatActive() === want ? 'temporary_chat_verified' : 'temporary_chat_skipped');
+}
+
+async function perform(id: string, prompt: string, parentId?: string, thinking?: boolean, temporaryChat?: boolean): Promise<void> {
   const signal = new AbortController().signal;
   let clicked = false; // once Send was pressed, a failure may hide a real submission
   const full = `${marker(id)}\n${prompt}`;
@@ -245,6 +314,7 @@ async function perform(id: string, prompt: string, parentId?: string, thinking?:
       } else if (userTurns().length || assistantTurns().length)
         throw new Error('This ChatGPT conversation is not empty and does not contain this job. Open a fresh chat; nothing was submitted.');
       await wait(() => chatGptReady(), signal, 30000);
+      if (!parentId && temporaryChat !== undefined) await setTemporaryChat(id, temporaryChat, signal);
       await progress(id, 'composer_stable');
       if (thinking !== undefined) await setThinking(id, thinking, signal);
       const editor = composer();
@@ -354,13 +424,19 @@ async function perform(id: string, prompt: string, parentId?: string, thinking?:
           await progress(id, 'assistant_streaming');
         }
       }
-      // Finished when the text has stopped changing and either a whole JSON object has arrived, the Stop button is gone,
-      // or nothing has changed for 12 seconds (a stray "Stop" control must not hold the answer back for ever).
+      // Finished once a complete JSON object has settled, or after generation has genuinely stopped (no Stop button or
+      // active streaming state). Never truncate an incomplete JSON response while ChatGPT is still streaming or thinking.
       const still = Date.now() - changed;
+      const jsonDone = completeJson(last);
+      const looksLikeIncompleteJson = last.includes('{') && !jsonDone;
+      const streaming = isReplyStreaming(reply);
+      const generating = !!stopButton() || streaming;
       if (
         last &&
         (reply ? reply.isConnected : true) &&
-        ((completeJson(last) && still >= 1500) || (still >= 2500 && !find(selectors.chatgpt.stop)) || still >= 12000)
+        ((jsonDone && !streaming && still >= 1500) ||
+          (!generating && !looksLikeIncompleteJson && still >= 2500) ||
+          (!generating && looksLikeIncompleteJson && still >= 15000))
       ) {
         await progress(id, 'completion_verified');
         await progress(id, 'response_extracted', { text: last });
@@ -396,6 +472,7 @@ const begin = z.object({
     .optional(),
   chunk: z.string().max(30000).optional(),
   thinking: z.boolean().optional(),
+  temporaryChat: z.boolean().optional(),
 });
 const secureSender = (sender: chrome.runtime.MessageSender) =>
   sender.id === chrome.runtime.id &&
@@ -415,15 +492,16 @@ if (window.top === window && chrome.runtime?.onMessage)
     if (action === 'status') {
       const record = requests.get(id);
       const turn = turnFor(id),
-        reply = turn ? relevantAssistant(turn) : null;
-      const finished = !!reply && !find(selectors.chatgpt.stop) && !!replyValue(reply);
+        reply = turn ? relevantAssistant(turn) : null,
+        replyText = reply ? replyValue(reply) : '';
+      const finished = !!reply && !!replyText && !isReplyStreaming(reply) && (completeJson(replyText) || !stopButton());
       respond({
         state: record?.state ?? (turn ? 'submitted' : 'unknown'),
         text: record?.text,
         error: record?.error,
         documentId,
         foundUserTurn: !!turn,
-        ...(finished && reply ? { replyText: replyValue(reply) } : {}),
+        ...(finished ? { replyText } : {}),
       });
       return false;
     }
@@ -440,6 +518,7 @@ if (window.top === window && chrome.runtime?.onMessage)
           state: 'receiving',
           ...(parsed.data.parentId ? { parentId: parsed.data.parentId } : {}),
           ...(parsed.data.thinking !== undefined ? { thinking: parsed.data.thinking } : {}),
+          ...(parsed.data.temporaryChat !== undefined ? { temporaryChat: parsed.data.temporaryChat } : {}),
         });
       respond({ ok: true, documentId });
       return false;
@@ -461,7 +540,7 @@ if (window.top === window && chrome.runtime?.onMessage)
       return false;
     }
     record.running = true;
-    void perform(id, record.chunks.join(''), record.parentId, record.thinking);
+    void perform(id, record.chunks.join(''), record.parentId, record.thinking, record.temporaryChat);
     respond({ ok: true, state: 'running', documentId });
     return false;
   });
@@ -469,4 +548,4 @@ if (window.top === window && chrome.runtime?.onMessage)
 if (window.top === window) void send({ kind: 'network.ai.hello', documentId, url: location.href }).catch(() => undefined);
 
 /** For tests only. */
-export const __test = { turnFor, relevantAssistant, replyValue, userTurns, assistantTurns };
+export const __test = { turnFor, relevantAssistant, replyValue, userTurns, assistantTurns, findTemporaryButton, isTemporaryChatActive };

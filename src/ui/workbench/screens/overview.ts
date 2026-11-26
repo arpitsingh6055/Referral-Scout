@@ -75,7 +75,17 @@ function buildCommandCenter(ctx: Ctx): HTMLElement | null {
   const queueUrls = new Set(queue.flatMap(q => [q.jobId, q.url].filter((v): v is string => !!v)));
   const companies = new Map<
     string,
-    { key: string; name: string; roles: number; shortlisted: number; queued: number; topFit: number; pinned: boolean; url?: string }
+    {
+      key: string;
+      name: string;
+      roles: number;
+      shortlisted: number;
+      queued: number;
+      topFit: number;
+      hasScored: boolean;
+      pinned: boolean;
+      url?: string;
+    }
   >();
 
   for (const j of jobs) {
@@ -88,19 +98,27 @@ function buildCommandCenter(ctx: Ctx): HTMLElement | null {
       shortlisted: 0,
       queued: 0,
       topFit: 0,
+      hasScored: false,
       pinned: pinned.has(key),
       url: j.url,
     };
     prev.roles += 1;
     if (j.judgement === 'shortlisted') prev.shortlisted += 1;
     if (queueUrls.has(j.id) || queueUrls.has(j.url)) prev.queued += 1;
+    if (j.fitAssessed || j.fit > 0) prev.hasScored = true;
     prev.topFit = Math.max(prev.topFit, j.fit);
     if (!prev.url && j.url) prev.url = j.url;
     companies.set(key, prev);
   }
 
   const ranked = [...companies.values()]
-    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || Number(b.shortlisted > 0) - Number(a.shortlisted > 0) || b.topFit - a.topFit)
+    .sort(
+      (a, b) =>
+        Number(b.pinned) - Number(a.pinned) ||
+        Number(b.shortlisted > 0) - Number(a.shortlisted > 0) ||
+        Number(b.hasScored) - Number(a.hasScored) ||
+        b.topFit - a.topFit,
+    )
     .slice(0, 12);
   if (!ranked.length) return null;
 
@@ -124,7 +142,10 @@ function buildCommandCenter(ctx: Ctx): HTMLElement | null {
             div('row-title', [
               div('inline', [
                 externalLink(co.name, co.url, 'cell-strong cell-link'),
-                pill(`#${idx + 1} · ${co.topFit}/100`, co.topFit >= 80 ? 'green' : 'violet'),
+                pill(
+                  co.hasScored || co.topFit > 0 ? `#${idx + 1} · ${co.topFit}/100` : `#${idx + 1} · Unscored`,
+                  co.topFit >= 80 ? 'green' : co.hasScored || co.topFit > 0 ? 'violet' : 'grey',
+                ),
                 co.pinned ? pill('Pinned', 'violet') : null,
               ]),
               text(
@@ -270,9 +291,20 @@ export function overview(ctx: Ctx): HTMLElement {
     return page;
   }
 
+  const shortlistedJobsCount = discoveredJobs.filter(j => j.judgement === 'shortlisted').length;
+  const strongJobsCount = discoveredJobs.filter(j => j.tier === 'strong').length;
   page.append(
     div('grid metrics', [
-      metric('briefcase', 'Qualified jobs', counts.total, counts.queued ? `${counts.queued} waiting in the queue` : undefined),
+      metric(
+        'briefcase',
+        'Shortlisted jobs',
+        shortlistedJobsCount || counts.total,
+        shortlistedJobsCount
+          ? `${strongJobsCount} strong · ${discoveredJobs.length} discovered`
+          : counts.queued
+            ? `${counts.queued} waiting in the queue`
+            : `${discoveredJobs.length} discovered`,
+      ),
       metric(
         'list',
         'Applications',
@@ -437,8 +469,8 @@ export const overviewHeader = (ctx: Ctx): { title: string; sub: string; status?:
   const discovered = ctx.workspace?.jobs ?? [];
   const shortlisted = discovered.filter(j => j.judgement === 'shortlisted').length;
   return {
-    title: c.name,
-    sub: `${c.targetRoles.join(' · ')} — ${c.location}`,
+    title: 'Overview',
+    sub: `${c.name} · ${c.targetRoles.join(' · ')} — ${c.location}`,
     status: statusPill(c.status, ctx.view.inboxCounts.open),
     actions: [
       running

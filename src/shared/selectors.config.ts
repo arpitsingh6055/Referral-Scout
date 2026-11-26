@@ -44,7 +44,7 @@ export const selectors = {
       'button[aria-label="Send"]',
       'form[data-chatgpt-composer] button[type="submit"]',
     ],
-    stop: ['button[data-testid="stop-button"]', 'button[aria-label*="Stop"]'],
+    stop: ['button[data-testid="stop-button"]', 'button[data-testid*="stop" i]', 'button[aria-label*="stop" i]'],
     reply: [
       '[data-talvt-turn-state="complete"]',
       '[data-response-body] [data-dil-response]',
@@ -62,7 +62,12 @@ export const selectors = {
       '[role="option"][aria-label*="Medium" i]',
       'button[aria-label*="Medium" i]',
     ],
-    temporary: ['button[aria-label*="Temporary"]', 'button[data-testid="temporary-chat-button"]'],
+    temporary: [
+      'button[aria-label="Temporary chat"]',
+      'button[aria-label*="Temporary" i]',
+      'button[data-testid="temporary-chat-button"]',
+      'button:has(use[href*="codex-icon-incognito"])',
+    ],
     newChat: ['a[data-testid="create-new-chat-button"]', 'a[aria-label="New chat"]'],
     login: ['form[data-logged-out]', 'button[data-testid="login-button"]', 'a[href="/auth/login"]'],
     challenge: ['iframe[src*="challenges.cloudflare.com"]', '#challenge-running', '#challenge-stage'],

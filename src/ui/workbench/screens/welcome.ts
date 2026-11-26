@@ -51,6 +51,19 @@ export function welcome(ctx: Ctx): HTMLElement {
   ])
     employment.append(el('option', { value, selected: value === savedEmployment }, [label]));
 
+  const currentChatGptMode = w.chatgptMode ?? 'incognito';
+  const chatGptModeSelect = el('select', { class: 'input', 'aria-label': 'ChatGPT mode' }) as HTMLSelectElement;
+  for (const [value, label] of [
+    ['incognito', 'Incognito / Temporary chat (default — keeps searches out of history)'],
+    ['normal', 'Normal chat (saves searches in your ChatGPT history)'],
+  ]) {
+    chatGptModeSelect.append(el('option', { value, selected: value === currentChatGptMode }, [label]));
+  }
+  chatGptModeSelect.addEventListener('change', () => {
+    const mode = chatGptModeSelect.value === 'normal' ? 'normal' : 'incognito';
+    void ctx.run({ kind: 'workspace', action: 'setChatGptMode', mode });
+  });
+
   const steps = div('setup-steps', [
     step('1', 'Connect LinkedIn and read your profile', 'Use your existing LinkedIn session. You can do this now or later.', linkedInReady),
     step('2', 'Add your CV', 'After LinkedIn is read, add a CV or continue with the profile details you enter yourself.', cvReady),
@@ -170,9 +183,19 @@ export function welcome(ctx: Ctx): HTMLElement {
   cvFile.id = 'welcome-cv-file';
 
   const campaignCard = card('3. What are you looking for?', {
-    sub: 'One clear target is enough to start. Add more role variations later from Campaign settings.',
+    sub: 'One clear target is enough to start. Add more role variations later from Mission settings.',
     body: [
-      div('form-grid', [field('Target role', target), field('Location', locations), field('Employment type', employment)]),
+      div('form-grid', [
+        field('Target role', target),
+        field('Location', locations),
+        field('Employment type', employment),
+        field('ChatGPT mode for searches & drafts', chatGptModeSelect),
+      ]),
+      text(
+        'p',
+        'field-help',
+        'Incognito (Temporary chat) is on by default so job-search and ranking prompts do not clutter your ChatGPT conversation list.',
+      ),
       div('inline', [
         button(ctx.view.campaign ? 'Update campaign' : 'Create my campaign', 'btn btn-primary btn-lg', async () => {
           const roles = target.value
@@ -232,6 +255,11 @@ export function welcome(ctx: Ctx): HTMLElement {
             } catch {
               warnings.push('Referral preferences could not be synchronised. Check Campaign settings before starting outreach.');
             }
+            await sendWorkspace({
+              kind: 'workspace',
+              action: 'setChatGptMode',
+              mode: chatGptModeSelect.value === 'normal' ? 'normal' : 'incognito',
+            }).catch(() => undefined);
             await ctx.refresh();
             ctx.go('overview');
             ctx.inform(
@@ -273,6 +301,11 @@ export function welcome(ctx: Ctx): HTMLElement {
               : button('Connect Gmail', 'btn btn-sm', async () => {
                   try {
                     await sendGmail({ kind: 'gmail', action: 'connect' });
+                    await sendWorkspace({
+                      kind: 'workspace',
+                      action: 'setChatGptMode',
+                      mode: chatGptModeSelect.value === 'normal' ? 'normal' : 'incognito',
+                    }).catch(() => undefined);
                     await ctx.refresh();
                   } catch (error) {
                     ctx.fail(error instanceof Error ? error.message : 'Gmail could not be connected.');

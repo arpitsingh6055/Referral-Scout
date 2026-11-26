@@ -629,8 +629,8 @@ export function resolveMacroJourney(input: JourneySnapshotInput): JourneyStepSta
     return {
       stage: 5,
       totalStages: 6,
-      mode: 'ready',
-      percent: 100,
+      mode: 'completion',
+      percent: 82,
       title: input.shortlistedCount ? `${input.shortlistedCount} Shortlisted · Ready to Queue` : `${input.jobsCount} Jobs Matched`,
       detail: input.shortlistedCount
         ? 'Next: Add shortlisted roles to your application queue'
@@ -645,8 +645,8 @@ export function resolveMacroJourney(input: JourneySnapshotInput): JourneyStepSta
     stage: 6,
     totalStages: 6,
     mode: 'ready',
-    percent: 100,
-    title: 'Pipeline Active · 100% Ready',
+    percent: input.submittedCount > 0 ? 100 : 92,
+    title: input.submittedCount > 0 ? 'Pipeline Active · 100% Ready' : 'Stage 6 of 6 · Queue Active',
     detail:
       input.peopleCount > 0
         ? `${input.submittedCount} applied · ${input.peopleCount} referral contacts ranked`

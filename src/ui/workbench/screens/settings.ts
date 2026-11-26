@@ -145,11 +145,35 @@ export function settings(ctx: Ctx): HTMLElement {
           ),
           connection(
             'ChatGPT website',
-            'Optional',
-            'grey',
-            'Used for AI-assisted writing through your own signed-in ChatGPT browser session. Open ChatGPT and sign in there; there is no separate Referral Scout password.',
+            (w.chatgptMode ?? 'incognito') === 'incognito' ? 'Incognito (Temporary)' : 'Normal chat',
+            'green',
+            'Used for AI-assisted job search, ranking, and writing through your signed-in ChatGPT session. Incognito (Temporary chat) keeps automated searches out of your ChatGPT history.',
             [
-              button('Open ChatGPT', 'btn btn-sm', () => ctx.openExternal('https://chatgpt.com/')),
+              (() => {
+                const sel = document.createElement('select');
+                sel.className = 'input';
+                sel.setAttribute('aria-label', 'ChatGPT mode');
+                for (const [val, label] of [
+                  ['incognito', 'Incognito (Temporary chat · default)'],
+                  ['normal', 'Normal chat history'],
+                ] as const) {
+                  const opt = document.createElement('option');
+                  opt.value = val;
+                  opt.textContent = label;
+                  opt.selected = (w.chatgptMode ?? 'incognito') === val;
+                  sel.append(opt);
+                }
+                sel.addEventListener('change', () => {
+                  const mode = sel.value === 'normal' ? 'normal' : 'incognito';
+                  void ctx.run({ kind: 'workspace', action: 'setChatGptMode', mode });
+                });
+                return sel;
+              })(),
+              button('Open ChatGPT', 'btn btn-sm', () =>
+                ctx.openExternal(
+                  (w.chatgptMode ?? 'incognito') === 'incognito' ? 'https://chatgpt.com/?temporary-chat=true' : 'https://chatgpt.com/',
+                ),
+              ),
               button(
                 'Test ChatGPT',
                 'btn btn-sm',
@@ -294,6 +318,25 @@ export function settings(ctx: Ctx): HTMLElement {
   );
 
   /* sources */
+  const manualBoards = document.createElement('details');
+  manualBoards.className = 'advanced-settings';
+  const manualSummary = document.createElement('summary');
+  manualSummary.textContent = 'Other job boards (manual paste only — Internshala, Naukri, Instahyre, Wellfound)';
+  manualBoards.append(
+    manualSummary,
+    div(
+      'stack',
+      ['Internshala', 'Naukri', 'Instahyre', 'Wellfound'].map(name =>
+        div('rule-row', [
+          div('', [
+            text('div', 'rule-name', name),
+            text('div', 'rule-note', 'Open a job from this site and fill it with Referral Scout; automatic discovery is not connected.'),
+          ]),
+          pill('Manual paste', 'grey'),
+        ]),
+      ),
+    ),
+  );
   page.append(
     card('Job sources', {
       sub: 'A source that fails is reported and skipped; it never stops the others.',
@@ -305,19 +348,6 @@ export function settings(ctx: Ctx): HTMLElement {
           ]),
           pill('Available', 'green'),
         ]),
-        ...['Internshala', 'Naukri', 'Instahyre', 'Wellfound'].map(name =>
-          div('rule-row', [
-            div('', [
-              text('div', 'rule-name', name),
-              text(
-                'div',
-                'rule-note',
-                'You can open a job from this source and use Referral Scout to review it; automatic discovery is not connected yet.',
-              ),
-            ]),
-            pill('Manual workflow', 'grey'),
-          ]),
-        ),
         div('rule-row', [
           div('', [
             text('div', 'rule-name', 'A job you paste in'),
@@ -325,6 +355,7 @@ export function settings(ctx: Ctx): HTMLElement {
           ]),
           pill('Available', 'green'),
         ]),
+        manualBoards,
       ],
     }),
   );

@@ -11,10 +11,16 @@ import { humanizeCompanyName } from '../shared/referral';
 import { validatedDossier } from '../shared/dossier';
 import { extractJson } from '../parsers/json';
 
+import { chatGptMode, chatGptUrl, saveChatGptMode, CHATGPT_MODE_KEY, type ChatGptMode } from './chatgpt-mode';
+
+export { chatGptMode, chatGptUrl, saveChatGptMode, CHATGPT_MODE_KEY, type ChatGptMode };
+
 export type AiStage =
   | 'queued'
   | 'tab_opened'
   | 'current_document_ready'
+  | 'temporary_chat_verified'
+  | 'temporary_chat_skipped'
   | 'thinking_verified'
   | 'thinking_skipped'
   | 'thinking_unverified'
@@ -99,6 +105,8 @@ export function registerAiMessages(): void {
       if (
         ![
           'current_document_ready',
+          'temporary_chat_verified',
+          'temporary_chat_skipped',
           'thinking_verified',
           'thinking_skipped',
           'thinking_unverified',
@@ -173,6 +181,21 @@ async function recoverReply(job: AiJob): Promise<string | null> {
     return null;
   }
 }
+/** Re-reads the live ChatGPT tab for a previously dispatched job if it finished after initial extraction. */
+export async function recoverLatestAiReply(prompt: string, kind: AiJob['kind'], owner: string, parentId = ''): Promise<string | null> {
+  const id = await aiJobId(prompt, kind, owner, parentId);
+  const job = await load(id);
+  if (!job) return null;
+  return recoverReply(job);
+}
+
+/** Clears a saved AI job (for example when its cached reply was truncated or invalid) so a retry runs fresh. */
+export async function invalidateAiJob(prompt: string, kind: AiJob['kind'], owner: string, parentId = ''): Promise<void> {
+  const id = await aiJobId(prompt, kind, owner, parentId);
+  await remove('aiJobs', id).catch(() => undefined);
+  await remove('meta', key(id)).catch(() => undefined);
+}
+
 /** Manual recovery: re-read the newest dossier conversation of this owner from its still-open ChatGPT tab. */
 export async function recoverDossier(owner: string): Promise<string> {
   const summaries = (await all('aiJobs'))
@@ -191,6 +214,8 @@ const aiHandles = new Map<string, ManagedTabHandle>();
 
 async function dispatch(job: AiJob, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted();
+  const mode = await chatGptMode();
+  const targetUrl = chatGptUrl(mode);
   if (job.parentId && job.tab === undefined) {
     const parent = await load(job.parentId);
     if (!parent?.tab) throw new Error('The original ChatGPT conversation is missing. In-place JSON repair cannot continue.');
@@ -199,7 +224,7 @@ async function dispatch(job: AiJob, signal: AbortSignal): Promise<void> {
   }
   if (job.tab === undefined) {
     const handle = await openManagedTab({
-      url: 'https://chatgpt.com/',
+      url: targetUrl,
       mode: 'background',
       purpose: 'chatgpt_extract',
       autoCloseOnComplete: job.kind !== 'BUILD_DOSSIER',
@@ -219,7 +244,7 @@ async function dispatch(job: AiJob, signal: AbortSignal): Promise<void> {
     if (['send_clicked', 'user_turn_verified', 'assistant_streaming', 'completion_verified'].includes(job.stage))
       throw new Error('The ChatGPT tab closed after submission. Open the original conversation and review it before retrying.');
     const handle = await openManagedTab({
-      url: 'https://chatgpt.com/',
+      url: targetUrl,
       mode: 'background',
       purpose: 'chatgpt_extract',
       autoCloseOnComplete: job.kind !== 'BUILD_DOSSIER',
@@ -250,6 +275,7 @@ async function dispatch(job: AiJob, signal: AbortSignal): Promise<void> {
     total: chunks.length,
     ...(job.parentId ? { parentId: job.parentId } : {}),
     ...(job.thinking !== undefined ? { thinking: job.thinking } : {}),
+    temporaryChat: mode === 'incognito',
   });
   if (!hello?.ok) throw new Error('ChatGPT content script did not accept the task handshake.');
   for (let index = 0; index < chunks.length; index++) {
@@ -502,12 +528,18 @@ async function askChatGptOnce(
     if (job.tab && i % 3 === 0) {
       try {
         const state = await chrome.tabs.sendMessage(job.tab, { kind: 'network.ai', action: 'status', id });
-        if (state?.state === 'response_extracted' && typeof state.text === 'string' && state.text.trim()) {
-          job.result = state.text;
+        const candidate =
+          state?.state === 'response_extracted' && typeof state.text === 'string' && state.text.trim()
+            ? state.text
+            : state?.foundUserTurn && typeof state?.replyText === 'string' && state.replyText.trim()
+              ? state.replyText.trim()
+              : '';
+        if (candidate) {
+          job.result = candidate;
           await save(job, 'response_extracted', state.documentId);
           // Per-contact drafts would otherwise leave hundreds of tabs open. Keep the dossier chat for inspection.
           await done(job);
-          return state.text;
+          return candidate;
         }
       } catch {
         /* Tab may be navigating; no duplicate submission */

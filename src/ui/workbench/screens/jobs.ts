@@ -73,8 +73,13 @@ function row(job: JobRow, ctx: Ctx, queuedRefs: Set<string>, pinnedSet: Set<stri
       job.aiWhy ? text('div', 'cell-muted', `Why: ${job.aiWhy}`) : null,
     ]),
     div('col-hide', [pill(job.source.replace(/ Jobs$/, ''), 'grey')]),
-    div('', [pill(job.tier === 'blocked' ? 'Not eligible' : `Fit ${job.fit}`, TIER_TONE[job.tier] ?? 'grey')]),
-    div('col-hide', [text('div', 'cell-muted', job.postedAt ? ago(job.postedAt) : 'date unknown')]),
+    div('', [
+      pill(
+        job.tier === 'blocked' ? 'Not eligible' : !job.fitAssessed && job.fit === 0 ? 'Unscored' : `Fit ${job.fit}`,
+        !job.fitAssessed && job.fit === 0 ? 'grey' : (TIER_TONE[job.tier] ?? 'grey'),
+      ),
+    ]),
+    div('col-hide', [job.postedAt ? text('div', 'cell-muted', ago(job.postedAt)) : null]),
     div('inline', [
       inQueue
         ? pill('In queue', 'blue')
@@ -310,8 +315,12 @@ export function jobs(ctx: Ctx): HTMLElement {
         const shortlistedCount = group.items.filter(j => j.judgement === 'shortlisted').length;
         const monogram = group.name.trim().charAt(0).toUpperCase() || 'C';
         const panelUrl = group.items[0]?.url || 'https://www.linkedin.com/jobs/';
-        const rationale = `Rank #${rankNum}: ${pinned ? 'Pinned priority, ' : ''}${shortlistedCount ? `${shortlistedCount} shortlisted, ` : ''}best fit ${group.topFit}/100 across ${plural(group.items.length, 'role')}`;
-        const rankBadge = pill(`#${rankNum} · ${group.topFit}/100`, group.topFit >= 80 ? 'green' : 'violet');
+        const hasScored = group.items.some(j => j.fitAssessed || j.fit > 0);
+        const rationale = `Rank #${rankNum}: ${pinned ? 'Pinned priority, ' : ''}${shortlistedCount ? `${shortlistedCount} shortlisted, ` : ''}${hasScored ? `best fit ${group.topFit}/100` : 'unscored'} across ${plural(group.items.length, 'role')}`;
+        const rankBadge = pill(
+          hasScored ? `#${rankNum} · ${group.topFit}/100` : `#${rankNum} · Unscored`,
+          !hasScored ? 'grey' : group.topFit >= 80 ? 'green' : 'violet',
+        );
         rankBadge.title = rationale;
 
         const primaryCta =

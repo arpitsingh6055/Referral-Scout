@@ -60,7 +60,8 @@ import { applyProfile, cvFile, PROFILE_KEY } from './apply';
 import { emptyApplyProfile } from '../shared/apply';
 import { write } from '../storage/state';
 import type { AiProfileDraft } from '../shared/profile-draft';
-import { askChatGpt } from './network-ai';
+import { askChatGpt, invalidateAiJob, recoverLatestAiReply } from './network-ai';
+import { chatGptMode, saveChatGptMode, type ChatGptMode } from './chatgpt-mode';
 import { updateNetwork } from './network';
 import { enqueueShortlisted, syncFromNetwork } from './bridge';
 import { all } from '../storage/database';
@@ -203,6 +204,8 @@ export interface WorkspaceView {
   };
   /** Optional, opt-in usage reporting preference. */
   usageReporting: boolean;
+  /** Whether automated ChatGPT tasks use Incognito (Temporary chat) or normal chat history. */
+  chatgptMode?: ChatGptMode;
   /** True when side-panel outreach settings allow invitations to send automatically. */
   outreachAutomatic: boolean;
   storage: { jobs: number; applications: number; contacts: number; events: number; facts: number };
@@ -355,6 +358,7 @@ export async function workspaceView(): Promise<WorkspaceView> {
     ...(me.review ? { reviewMeta: me.review } : {}),
     usageReporting: network?.usageConsent === true,
     outreachAutomatic: network?.settings?.outreachMode === 'automatic',
+    chatgptMode: await chatGptMode(),
     storage: {
       jobs: jobs.length,
       applications: applications.length,
@@ -428,6 +432,8 @@ async function processProfileWithChatGPT(): Promise<void> {
       queued: { percent: 12, eta: 55, label: 'Waiting for ChatGPT…' },
       tab_opened: { percent: 20, eta: 48, label: 'Opening your ChatGPT session…' },
       current_document_ready: { percent: 28, eta: 42, label: 'ChatGPT is ready; preparing your profile analysis…' },
+      temporary_chat_verified: { percent: 34, eta: 38, label: 'Incognito ChatGPT session ready…' },
+      temporary_chat_skipped: { percent: 34, eta: 38, label: 'ChatGPT session ready…' },
       thinking_verified: { percent: 42, eta: 34, label: 'ChatGPT is thinking through your CV and LinkedIn evidence…' },
       thinking_skipped: { percent: 42, eta: 34, label: 'ChatGPT is processing your source evidence…' },
       composer_stable: { percent: 52, eta: 28, label: 'Preparing the reconciliation request…' },
@@ -468,10 +474,20 @@ async function processProfileWithChatGPT(): Promise<void> {
       },
     });
     reportAiProgress('Checking the structured response and source conflicts…', 97, 2);
-    let draft: AiProfileDraft;
-    try {
-      draft = normalizeChatGptResponse(reply);
-    } catch {
+    const parseDraftOrNull = (raw: string): AiProfileDraft | null => {
+      try {
+        return normalizeChatGptResponse(raw);
+      } catch {
+        return null;
+      }
+    };
+    let draft = parseDraftOrNull(reply);
+    if (!draft) {
+      const recovered = await recoverLatestAiReply(prompt, 'BUILD_DOSSIER', network.profile.url).catch(() => null);
+      draft = recovered ? parseDraftOrNull(recovered) : null;
+    }
+    if (!draft) {
+      await invalidateAiJob(prompt, 'BUILD_DOSSIER', network.profile.url);
       throw new Error(
         'ChatGPT did not return a valid candidate-profile draft. Nothing was added to your profile. Retry processing or inspect the ChatGPT response.',
       );
@@ -591,6 +607,7 @@ export const workspaceRequest = z.discriminatedUnion('action', [
     reason: z.string().max(200).optional(),
   }),
   z.object({ kind: z.literal('workspace'), action: z.literal('surface'), surface: z.enum(['tab', 'panel']) }),
+  z.object({ kind: z.literal('workspace'), action: z.literal('setChatGptMode'), mode: z.enum(['incognito', 'normal']) }),
   z.object({ kind: z.literal('workspace'), action: z.literal('processProfileWithChatGPT') }),
   z.object({
     kind: z.literal('workspace'),
@@ -873,6 +890,18 @@ async function handle(req: WorkspaceRequest): Promise<WorkspaceResult | { json: 
     case 'surface':
       await setDefaultSurface(req.surface);
       break;
+    case 'setChatGptMode': {
+      await saveChatGptMode(req.mode);
+      await updateNetwork(s => ({
+        ...s,
+        settings: { ...(s.settings ?? {}), chatgptMode: req.mode } as NonNullable<typeof s.settings>,
+      })).catch(() => undefined);
+      message =
+        req.mode === 'incognito'
+          ? 'ChatGPT searches and drafts will run in Incognito (Temporary chat).'
+          : 'ChatGPT searches and drafts will run in normal chat history.';
+      break;
+    }
     case 'processProfileWithChatGPT':
       await processProfileWithChatGPT();
       message =

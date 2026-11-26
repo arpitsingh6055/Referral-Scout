@@ -134,21 +134,32 @@ export function applications(ctx: Ctx): HTMLElement {
       action: button('Create a campaign', 'btn btn-primary', () => ctx.go('setup')),
     });
   if (!queue.length) {
-    const discoveredCount = ctx.workspace?.jobs.length ?? 0;
+    const discoveredJobs = ctx.workspace?.jobs ?? [];
+    const discoveredCount = discoveredJobs.length;
+    const shortlistedCount = discoveredJobs.filter(j => j.judgement === 'shortlisted').length;
     return emptyState({
       icon: 'list',
-      title: 'The queue is empty',
-      description: discoveredCount
-        ? `You have ${plural(discoveredCount, 'discovered job')} ready to review in Jobs. Shortlist the ones you want, then add them to the queue.`
-        : 'Shortlist jobs from the Jobs screen, or paste a job link. Each one becomes a durable task that survives a browser restart.',
-      action: discoveredCount
+      title: shortlistedCount ? `${plural(shortlistedCount, 'shortlisted job')} ready to queue` : 'The queue is empty',
+      description: shortlistedCount
+        ? 'Add your shortlisted jobs to the application queue so Referral Scout can prepare and fill them one by one.'
+        : discoveredCount
+          ? `You have ${plural(discoveredCount, 'discovered job')} ready to review in Jobs. Shortlist the ones you want, then add them to the queue.`
+          : 'Shortlist jobs from the Jobs screen, or paste a job link. Each one becomes a durable task that survives a browser restart.',
+      action: shortlistedCount
         ? div('inline', [
-            button(`Review ${discoveredCount} discovered ${discoveredCount === 1 ? 'job' : 'jobs'}`, 'btn btn-primary', () =>
-              ctx.go('jobs'),
+            button(`Queue ${shortlistedCount} shortlisted`, 'btn btn-primary', () =>
+              ctx.run({ kind: 'workspace', action: 'enqueueShortlisted' }),
             ),
-            button('Find more jobs', 'btn', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' })),
+            button(`Review ${discoveredCount} jobs`, 'btn', () => ctx.go('jobs')),
           ])
-        : button('Find jobs on LinkedIn', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' })),
+        : discoveredCount
+          ? div('inline', [
+              button(`Review ${discoveredCount} discovered ${discoveredCount === 1 ? 'job' : 'jobs'}`, 'btn btn-primary', () =>
+                ctx.go('jobs'),
+              ),
+              button('Find more jobs', 'btn', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' })),
+            ])
+          : button('Find jobs on LinkedIn', 'btn btn-primary', () => ctx.runNetwork({ kind: 'network', action: 'findJobs' })),
     });
   }
 

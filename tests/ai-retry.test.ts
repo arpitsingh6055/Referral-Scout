@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { aiJobId, askChatGpt } from '../src/background/network-ai';
+import { aiJobId, askChatGpt, invalidateAiJob, recoverLatestAiReply } from '../src/background/network-ai';
 import { put } from '../src/storage/database';
 import { clearDatabase, closeDatabase } from '../src/storage/database';
 
@@ -110,4 +110,48 @@ it('says plainly when ChatGPT really asks to sign in', async () => {
   await seed('queued', ['queued']);
   tabs.get.mockImplementation(async (id: number) => ({ id, url: 'https://auth.openai.com/log-in' }));
   await expect(askChatGpt(PROMPT, new AbortController().signal, KIND, OWNER)).rejects.toThrow(/sign in/i);
+});
+
+it('recovers a finished reply when the ChatGPT tab refreshed mid-job (state is submitted with replyText)', async () => {
+  await seed('queued', ['queued']);
+  tabs.sendMessage.mockImplementation(async (_tab: number, m: { action?: string; kind: string; index?: number }) => {
+    if (m.kind === 'network.ai.ping') return { ok: true, ready: true, documentId: 'doc' };
+    if (m.action === 'status')
+      return executed
+        ? { state: 'submitted', foundUserTurn: true, replyText: '{"schemaVersion":3}', documentId: 'doc-after-refresh' }
+        : { state: 'unknown' };
+    if (m.action === 'begin') return { ok: true, documentId: 'doc' };
+    if (m.action === 'part') return { ok: true, index: m.index, documentId: 'doc' };
+    if (m.action === 'execute') {
+      executed = true;
+      return { ok: true, documentId: 'doc', state: 'running' };
+    }
+    return undefined;
+  });
+  await expect(askChatGpt(PROMPT, new AbortController().signal, KIND, OWNER)).resolves.toBe('{"schemaVersion":3}');
+});
+
+it('invalidates a cached malformed job so retrying sends a fresh request instead of replaying broken JSON', async () => {
+  const id = await aiJobId(PROMPT, KIND, OWNER);
+  await put('meta', {
+    id: `network-ai:${id}`,
+    value: {
+      id,
+      kind: KIND,
+      owner: OWNER,
+      tab: 7,
+      prompt: PROMPT,
+      createdAt: 1,
+      updatedAt: 1,
+      stage: 'response_extracted',
+      result: '{broken',
+      trace: [],
+    },
+  });
+  // Before invalidation, cached broken result is returned.
+  await expect(askChatGpt(PROMPT, new AbortController().signal, KIND, OWNER)).resolves.toBe('{broken');
+  // Live tab recovery sees no finished reply, then invalidation clears the poisoned cache.
+  await expect(recoverLatestAiReply(PROMPT, KIND, OWNER)).resolves.toBeNull();
+  await invalidateAiJob(PROMPT, KIND, OWNER);
+  await expect(askChatGpt(PROMPT, new AbortController().signal, KIND, OWNER)).resolves.toBe('{"schemaVersion":2}');
 });

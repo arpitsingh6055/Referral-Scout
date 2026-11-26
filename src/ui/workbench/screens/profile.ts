@@ -46,8 +46,10 @@ const sourceLabel: Record<string, string> = {
   model: 'Suggested',
 };
 
-const provenance = (p: { source: string; verifiedAt?: number }): HTMLElement =>
-  pill(sourceLabel[p.source] ?? p.source, p.verifiedAt ? 'green' : 'amber');
+const provenance = (p: { source: string; verifiedAt?: number }, approved = false): HTMLElement =>
+  p.verifiedAt || approved
+    ? pill(p.source === 'user' ? 'You entered this' : 'Verified', 'green')
+    : pill(sourceLabel[p.source] ?? p.source, 'amber');
 
 /* ---------- education ---------- */
 function educationForm(record: Partial<EducationRecord>, ctx: Ctx): HTMLElement {
@@ -253,6 +255,7 @@ export function profile(ctx: Ctx): HTMLElement {
       action: button('Retry', 'btn btn-primary', () => ctx.refresh()),
     });
   const p = w.profile;
+  const approved = isProfileApproved(w.reviewMeta?.status);
 
   const page = div('stack');
 
@@ -439,7 +442,7 @@ export function profile(ctx: Ctx): HTMLElement {
                         ),
                       ]),
                       div('inline', [
-                        provenance(e.provenance),
+                        provenance(e.provenance, approved),
                         button('Edit', 'btn btn-sm', () => {
                           editing = `education:${e.id}`;
                           ctx.redraw();
@@ -485,7 +488,7 @@ export function profile(ctx: Ctx): HTMLElement {
                         ),
                       ]),
                       div('inline', [
-                        provenance(e.provenance),
+                        provenance(e.provenance, approved),
                         button('Edit', 'btn btn-sm', () => {
                           editing = `employment:${e.id}`;
                           ctx.redraw();
@@ -521,7 +524,7 @@ export function profile(ctx: Ctx): HTMLElement {
                   : div('row row-compact', [
                       div('', [text('div', 'cell-strong', e.name), text('div', 'cell-muted', e.summary ?? e.skills.join(', '))]),
                       div('inline', [
-                        provenance(e.provenance),
+                        provenance(e.provenance, approved),
                         button('Edit', 'btn btn-sm', () => {
                           editing = `project:${e.id}`;
                           ctx.redraw();

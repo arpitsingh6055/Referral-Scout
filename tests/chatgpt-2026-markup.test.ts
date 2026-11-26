@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 // The November 2026 ChatGPT build: no data-message-author-role, the marker split across spans, the answer in
@@ -38,4 +39,34 @@ it('does not throw in the page when the extension was reloaded under an open tab
   vi.stubGlobal('chrome', {});
   const { send } = await import('../src/content/dom');
   await expect(send({ kind: 'x' })).rejects.toThrow(/Extension context invalidated/);
+});
+
+it('detects and toggles ChatGPT Temporary chat (incognito) button from live DOM', async () => {
+  vi.stubGlobal('chrome', { runtime: { onMessage: { addListener: () => undefined }, sendMessage: async () => undefined, id: 'x' } });
+  document.body.innerHTML += `
+    <header>
+      <button type="button" class="Button-bP61lc" aria-label="Temporary chat" data-state="closed">
+        <span><svg><use href="/cdn/assets/icons-fb01fecc45cedc8e.svg#codex-icon-incognito-light-20"></use></svg></span>
+      </button>
+    </header>`;
+  vi.resetModules();
+  const { __test } = await import('../src/content/network-ai');
+  const btn = __test.findTemporaryButton();
+  expect(btn).not.toBeNull();
+  expect(btn?.getAttribute('aria-label')).toBe('Temporary chat');
+  expect(__test.isTemporaryChatActive()).toBe(false);
+  btn?.setAttribute('data-selected', '');
+  expect(__test.isTemporaryChatActive()).toBe(true);
+});
+
+it('defaults ChatGPT mode to incognito (?temporary-chat=true) and persists normal mode toggle', async () => {
+  const { clearDatabase, openDatabase } = await import('../src/storage/database');
+  const { chatGptMode, saveChatGptMode, chatGptUrl } = await import('../src/background/network-ai');
+  await openDatabase();
+  await clearDatabase();
+  expect(await chatGptMode()).toBe('incognito');
+  expect(chatGptUrl('incognito')).toBe('https://chatgpt.com/?temporary-chat=true');
+  await saveChatGptMode('normal');
+  expect(await chatGptMode()).toBe('normal');
+  expect(chatGptUrl('normal')).toBe('https://chatgpt.com/');
 });
