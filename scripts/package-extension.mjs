@@ -1,4 +1,4 @@
-import { access, readFile, rename, rm, stat } from 'node:fs/promises';
+import { access, copyFile, mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
@@ -30,8 +30,12 @@ await access('referral-scout.zip.pending');
 await rm('referral-scout.zip', { force: true });
 await rename('referral-scout.zip.pending', 'referral-scout.zip');
 
+await mkdir('release', { recursive: true });
+const releasePath = `release/referral-scout-v${manifest.version}-chrome-edge.zip`;
+await copyFile('referral-scout.zip', releasePath);
+
 const zipBytes = await readFile('referral-scout.zip');
 const zipStat = await stat('referral-scout.zip');
 const sha256 = createHash('sha256').update(zipBytes).digest('hex');
 
-console.log(`Created referral-scout.zip (v${manifest.version}, ${(zipStat.size / 1024).toFixed(1)} kB, sha256:${sha256})`);
+console.log(`Created referral-scout.zip & ${releasePath} (v${manifest.version}, ${(zipStat.size / 1024).toFixed(1)} kB, sha256:${sha256})`);

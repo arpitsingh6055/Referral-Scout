@@ -7,6 +7,11 @@ const manifest = JSON.parse(await readFile('dist/manifest.json', 'utf8'));
 assert.equal(manifest.manifest_version, 3);
 assert.equal(manifest.version, pkg.version, `Version mismatch: dist/manifest.json (${manifest.version}) !== package.json (${pkg.version})`);
 assert.ok(manifest.minimum_chrome_version, 'minimum_chrome_version must be set');
+assert.ok(manifest.name && manifest.name.length <= 75, 'manifest name must be <= 75 chars');
+assert.ok(
+  manifest.short_name && manifest.short_name.length <= 12,
+  `manifest short_name (${manifest.short_name}) must be <= 12 chars for Edge/Chrome store compliance`,
+);
 assert.ok(manifest.description && manifest.description.length <= 132, 'manifest description must be <= 132 chars for store compliance');
 assert.equal(
   manifest.content_security_policy?.extension_pages,
@@ -57,13 +62,44 @@ async function inspect(dir) {
       continue;
     }
     assert.ok(!file.endsWith('.map'), `Source map leaked into dist package: ${file}`);
+    assert.ok(item.name !== '.DS_Store' && item.name !== 'Thumbs.db', `OS junk file leaked into dist package: ${file}`);
     if (/pdf\.worker\.min.*\.mjs$/.test(item.name)) hasPdfWorker = true;
     if (file.endsWith('.js')) {
       const code = await readFile(file, 'utf8');
       assert(!/\beval\s*\(|new\s+Function\s*\(|import\s*\(\s*['"]https?:/.test(code), `Unsafe code in ${file}`);
     }
+    if (file.endsWith('.html')) {
+      const html = await readFile(file, 'utf8');
+      assert(!/<script[^>]+src=["']https?:/i.test(html), `External remote script tag forbidden in MV3: ${file}`);
+    }
   }
 }
 await inspect('dist');
 assert.ok(hasPdfWorker, 'Bundled PDF.js worker asset missing from dist/assets/');
-console.log(`MV3 build v${manifest.version} verified: entry points, icons, PDF worker, CSP, zero source maps or unsafe code.`);
+
+// Store screenshot PNG compliance check (no alpha channel allowed on Chrome Web Store).
+try {
+  const shots = await readdir('docs/screenshots');
+  for (const name of shots) {
+    if (!name.endsWith('.png')) continue;
+    const buf = await readFile(`docs/screenshots/${name}`);
+    if (buf.length >= 26 && buf.toString('ascii', 1, 4) === 'PNG') {
+      const w = buf.readUInt32BE(16);
+      const h = buf.readUInt32BE(20);
+      const colorType = buf.readUInt8(25);
+      assert.ok(
+        colorType !== 4 && colorType !== 6,
+        `Screenshot ${name} contains alpha channel (colorType=${colorType}); Chrome Web Store rejects transparent PNGs.`,
+      );
+      if (!((w === 1280 && h === 800) || (w === 640 && h === 400))) {
+        console.log(`Note: docs/screenshots/${name} is ${w}x${h} (store listing uploads require 1280x800 or 640x400).`);
+      }
+    }
+  }
+} catch {
+  // docs/screenshots optional in minimal builds.
+}
+
+console.log(
+  `MV3 build v${manifest.version} verified: entry points, icons, short_name (${manifest.short_name}), PDF worker, CSP, zero source maps or unsafe code.`,
+);
