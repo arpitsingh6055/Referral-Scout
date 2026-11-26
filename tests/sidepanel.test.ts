@@ -605,3 +605,67 @@ it('invokes chrome.sidePanel.open synchronously in user gesture and exposes focu
   expect(res.focused).toBe(true);
   expect(res.tabId).toBe(42);
 });
+
+it('routes all 5 LinkedIn HUD_ACTION_* messages from trustedSite and returns toolbar-click guidance when sidePanel.open rejects', async () => {
+  const listeners: ((msg: unknown, sender: chrome.runtime.MessageSender, sendResponse: (r?: unknown) => void) => boolean)[] = [];
+  vi.stubGlobal('chrome', {
+    windows: {
+      WINDOW_ID_CURRENT: -2,
+      update: vi.fn().mockResolvedValue({ id: 7 }),
+    },
+    tabs: {
+      query: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockResolvedValue({ id: 55, windowId: 7 }),
+      get: vi.fn().mockResolvedValue({ id: 10, windowId: 7 }),
+    },
+    sidePanel: {
+      open: vi.fn().mockRejectedValue(new Error('sidePanel.open() may only be called in response to a user gesture')),
+    },
+    runtime: {
+      id: 'ext-1',
+      getURL: (p: string) => `chrome-extension://ext-1/${p}`,
+      onMessage: {
+        addListener: (fn: (msg: unknown, sender: chrome.runtime.MessageSender, sendResponse: (r?: unknown) => void) => boolean) => {
+          listeners.push(fn);
+        },
+      },
+    },
+  });
+
+  const { HUD_ACTIONS, registerHudActionMessages } = await import('../src/background/surfaces');
+  registerHudActionMessages();
+  expect(listeners.length).toBeGreaterThan(0);
+
+  const liSender = {
+    id: 'ext-1',
+    frameId: 0,
+    url: 'https://www.linkedin.com/jobs/',
+    origin: 'https://www.linkedin.com',
+    tab: { id: 10 },
+  } as unknown as chrome.runtime.MessageSender;
+
+  const evilSender = {
+    id: 'ext-1',
+    frameId: 0,
+    url: 'https://evil.example/phish',
+    origin: 'https://evil.example',
+    tab: { id: 99 },
+  } as unknown as chrome.runtime.MessageSender;
+
+  const respondUntrusted = vi.fn();
+  expect(listeners[0]!({ type: HUD_ACTIONS.OPEN_WORKBENCH }, evilSender, respondUntrusted)).toBe(false);
+
+  const wbReply = await new Promise<Record<string, unknown>>(resolve => {
+    const handled = listeners[0]!({ type: HUD_ACTIONS.OPEN_WORKBENCH, route: 'jobs' }, liSender, r =>
+      resolve(r as Record<string, unknown>),
+    );
+    expect(handled).toBe(true);
+  });
+  expect(wbReply.ok).toBe(true);
+
+  const spReply = await new Promise<Record<string, unknown>>(resolve => {
+    const handled = listeners[0]!({ type: HUD_ACTIONS.OPEN_SIDEPANEL }, liSender, r => resolve(r as Record<string, unknown>));
+    expect(handled).toBe(true);
+  });
+  expect(spReply).toMatchObject({ ok: true, opened: false, needsToolbarClick: true });
+});

@@ -7,10 +7,14 @@
  * background storage, and the user can change the toolbar default at any time.
  */
 
-import { publishActiveMission, readActiveMission, type MissionSurface } from '../shared/progress-store';
+import { publishActiveMission, publishProgressTask, readActiveMission, type MissionSurface } from '../shared/progress-store';
+import { applyControl } from '../shared/domain/campaign';
+import { activeCampaign, changeCampaign } from '../shared/persistence/campaign-store';
 import { read, write } from '../storage/state';
-import { trustedExtension } from '../validators/security';
+import { trustedExtension, trustedSite } from '../validators/security';
+import { getNetwork, networkTick, pauseNetwork, updateNetwork } from './network';
 import { focusManagedTab, openManagedTab } from './network-browser';
+import { tick } from './runner';
 
 export type Surface = 'tab' | 'panel';
 const SURFACE_KEY = 'default-surface';
@@ -333,4 +337,105 @@ export function registerSurfaceMessages(): void {
 
 export async function applySurfaceBehaviour(): Promise<void> {
   await chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: (await defaultSurface()) === 'panel' })?.catch?.(() => undefined);
+}
+
+export const HUD_ACTIONS = {
+  SCAN_JOBS: 'HUD_ACTION_SCAN_JOBS',
+  FIND_REFERRERS: 'HUD_ACTION_FIND_REFERRERS',
+  TOGGLE_ENGINE: 'HUD_ACTION_TOGGLE_ENGINE',
+  OPEN_WORKBENCH: 'HUD_ACTION_OPEN_WORKBENCH',
+  OPEN_SIDEPANEL: 'HUD_ACTION_OPEN_SIDEPANEL',
+} as const;
+
+export type HudActionType = (typeof HUD_ACTIONS)[keyof typeof HUD_ACTIONS];
+
+const HUD_ACTION_SET = new Set<string>(Object.values(HUD_ACTIONS));
+
+/**
+ * Handles typed quick-control actions dispatched from the LinkedIn Shadow-DOM HUD (`trustedSite`)
+ * or extension pages (`trustedExtension`), keeping general `surfaces` / `network-messages` strict.
+ */
+export async function handleHudAction(
+  input: { type: HudActionType; route?: string; url?: string },
+  senderTabId?: number,
+): Promise<{ ok: boolean; active?: boolean; opened?: boolean; needsToolbarClick?: boolean; message?: string; error?: string }> {
+  switch (input.type) {
+    case HUD_ACTIONS.SCAN_JOBS: {
+      const current = await getNetwork();
+      if (!current.profile) {
+        return { ok: false, error: 'Read your LinkedIn profile in Workbench first.' };
+      }
+      if (current.jobSearch?.status === 'finding') {
+        return { ok: true, message: 'Job search already running' };
+      }
+      await updateNetwork(s => ({
+        ...s,
+        jobSearch: { status: 'finding', cursor: 0, found: [], startedAt: Date.now() },
+        status: 'Starting your job search…',
+      }));
+      void publishProgressTask({
+        id: 'job_search',
+        status: 'running',
+        percent: 16,
+        label: 'Scanning LinkedIn Jobs…',
+        detail: 'Scanning your target roles',
+        ctaLabel: 'View jobs →',
+        targetRoute: 'jobs',
+        etaSeconds: 30,
+      });
+      void networkTick();
+      return { ok: true, message: 'Scanning LinkedIn jobs…' };
+    }
+    case HUD_ACTIONS.FIND_REFERRERS: {
+      await openWorkbench('referrals');
+      return { ok: true, message: 'Opened Referrers in Workbench' };
+    }
+    case HUD_ACTIONS.TOGGLE_ENGINE: {
+      const [net, camp] = await Promise.all([getNetwork(), activeCampaign().catch(() => undefined)]);
+      const currentlyActive = !net.paused && (net.active || camp?.status === 'running');
+      if (currentlyActive) {
+        await pauseNetwork('Paused from LinkedIn Quick Controls.');
+        if (camp) {
+          await changeCampaign(camp.id, c => (c ? applyControl(c, 'pause') : c));
+        }
+        await publishActiveMission({ active: false, stageLabel: 'Engine Paused', liveSummary: 'Paused from LinkedIn' });
+        return { ok: true, active: false, message: 'Engine paused' };
+      }
+      await updateNetwork(s => {
+        const next = { ...s, active: true };
+        delete next.paused;
+        return next;
+      });
+      if (camp) {
+        await changeCampaign(camp.id, c => (c ? applyControl(c, 'resume') : c));
+      }
+      await publishActiveMission({ active: true, stageLabel: 'Engine Running', liveSummary: 'Resumed from LinkedIn' });
+      void networkTick();
+      void tick();
+      return { ok: true, active: true, message: 'Engine resumed' };
+    }
+    case HUD_ACTIONS.OPEN_WORKBENCH: {
+      await openWorkbench(typeof input.route === 'string' && input.route ? input.route : 'jobs');
+      return { ok: true, message: 'Workbench focused' };
+    }
+    case HUD_ACTIONS.OPEN_SIDEPANEL: {
+      const opened = await openPanel(senderTabId);
+      return { ok: true, opened, needsToolbarClick: !opened };
+    }
+  }
+}
+
+export function registerHudActionMessages(): void {
+  chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
+    if (!input || typeof input !== 'object') return false;
+    const type = (input as { type?: unknown }).type;
+    if (typeof type !== 'string' || !HUD_ACTION_SET.has(type)) return false;
+    if (!trustedSite(sender, chrome.runtime.id) && !trustedExtension(sender, chrome.runtime.id)) return false;
+
+    const payload = input as { type: HudActionType; route?: string; url?: string };
+    void handleHudAction(payload, sender.tab?.id)
+      .then(res => respond(res))
+      .catch((e: unknown) => respond({ ok: false, error: e instanceof Error ? e.message : 'Action failed' }));
+    return true;
+  });
 }

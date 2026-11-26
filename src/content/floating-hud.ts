@@ -5,8 +5,9 @@
  * 1. Form Autofill HUD (`updatePageHud`) when filling LinkedIn/ATS forms.
  * 2. Floating Wayfinding Re-Entry Pill & Quick-Control Drawer (`initInPageWayfindingHud`) whenever an active
  *    Referral Scout mission is running or awaiting review while the Chrome Side Panel is closed
- *    (`!mission.isSidePanelOpen`), allowing instant on-page controls + 1-click Full Workbench launch without
- *    relying on `chrome.sidePanel.open()` from a webpage content-script gesture.
+ *    (`!mission.isSidePanelOpen`), routing all 5 drawer controls through typed `HUD_ACTION_*` messages
+ *    with event isolation (`stopPropagation`), service-worker wake-up retry, tactile feedback, and a visual
+ *    toolbar-pin callout when Chromium/Edge blocks `chrome.sidePanel.open()` from webpage gestures.
  */
 
 import { getCachedActiveMission, readActiveMission, subscribeActiveMission, type ActiveMissionState } from '../shared/progress-store';
@@ -19,6 +20,23 @@ export interface PageHudPayload {
   askCount?: number;
 }
 
+const HUD_ACTIONS = {
+  SCAN_JOBS: 'HUD_ACTION_SCAN_JOBS',
+  FIND_REFERRERS: 'HUD_ACTION_FIND_REFERRERS',
+  TOGGLE_ENGINE: 'HUD_ACTION_TOGGLE_ENGINE',
+  OPEN_WORKBENCH: 'HUD_ACTION_OPEN_WORKBENCH',
+  OPEN_SIDEPANEL: 'HUD_ACTION_OPEN_SIDEPANEL',
+} as const;
+
+interface HudActionReply {
+  ok?: boolean;
+  active?: boolean;
+  opened?: boolean;
+  needsToolbarClick?: boolean;
+  message?: string;
+  error?: string;
+}
+
 const FONT = "font:500 12.5px/1.35 system-ui,-apple-system,'Segoe UI',sans-serif;box-sizing:border-box";
 
 let hostEl: HTMLElement | null = null;
@@ -28,6 +46,8 @@ let drawerEl: HTMLElement | null = null;
 let drawerTitleEl: HTMLElement | null = null;
 let drawerPctEl: HTMLElement | null = null;
 let drawerTickerEl: HTMLElement | null = null;
+let drawerStatusEl: HTMLElement | null = null;
+let drawerGuideEl: HTMLElement | null = null;
 let drawerTrackEl: HTMLElement | null = null;
 let drawerFillEl: HTMLElement | null = null;
 let drawerPauseBtn: HTMLButtonElement | null = null;
@@ -45,51 +65,41 @@ let drawerOpen = false;
 let hasApplyOverride = false;
 let currentMode: 'apply' | 'wayfinding' = 'apply';
 let hideTimer: ReturnType<typeof setTimeout> | undefined;
+let statusTimer: ReturnType<typeof setTimeout> | undefined;
 let wayfindingInitialized = false;
 
-function sendRuntimeMessage(payload: Record<string, unknown>, onDone?: (res: unknown) => void): void {
+function showDrawerStatus(msg: string, isError = false): void {
+  if (!drawerStatusEl) return;
+  clearTimeout(statusTimer);
+  drawerStatusEl.textContent = msg.slice(0, 60);
+  drawerStatusEl.className = isError ? 'drawer-status is-err' : 'drawer-status is-ok';
+  drawerStatusEl.style.display = 'block';
+  statusTimer = setTimeout(() => {
+    if (drawerStatusEl) drawerStatusEl.style.display = 'none';
+  }, 3500);
+}
+
+async function sendHudAction(type: string, extra: Record<string, unknown> = {}, allowRetry = true): Promise<HudActionReply> {
   try {
     const runtime = (globalThis as { chrome?: typeof chrome }).chrome?.runtime;
-    if (!runtime?.sendMessage) {
-      onDone?.(undefined);
-      return;
+    if (!runtime?.sendMessage) return { ok: false, error: 'Extension runtime unavailable' };
+    const res = (await runtime.sendMessage({ type, ...extra })) as HudActionReply | undefined;
+    return res ?? { ok: false, error: 'No response from background' };
+  } catch (err) {
+    if (allowRetry) {
+      await new Promise(r => setTimeout(r, 120));
+      return sendHudAction(type, extra, false);
     }
-    void Promise.resolve(runtime.sendMessage(payload))
-      .then(res => onDone?.(res))
-      .catch(() => onDone?.(undefined));
-  } catch {
-    onDone?.(undefined);
+    return { ok: false, error: err instanceof Error ? err.message.slice(0, 56) : 'Action failed' };
   }
 }
 
-function openControlsFromPage(triggerBtn?: HTMLButtonElement | null): void {
-  const prevText = triggerBtn?.textContent ?? 'Try Native Side Panel';
-  if (triggerBtn) {
-    triggerBtn.textContent = 'Opening…';
-    triggerBtn.disabled = true;
-  }
-  const restore = (label = prevText, delayMs = 0): void => {
-    if (!triggerBtn) return;
-    if (delayMs > 0) {
-      triggerBtn.textContent = label;
-      setTimeout(() => {
-        if (triggerBtn) {
-          triggerBtn.textContent = prevText;
-          triggerBtn.disabled = false;
-        }
-      }, delayMs);
-    } else {
-      triggerBtn.textContent = label;
-      triggerBtn.disabled = false;
-    }
-  };
-  sendRuntimeMessage({ kind: 'surface', action: 'open-panel' }, res => {
-    const reply = res as { opened?: boolean } | undefined;
-    if (reply?.opened) {
-      restore();
-    } else {
-      restore('Use toolbar icon ↑', 2200);
-    }
+function withButtonFeedback(btn: HTMLButtonElement, busyLabel: string, idleLabel: string, task: () => Promise<void>): void {
+  btn.disabled = true;
+  btn.textContent = busyLabel;
+  void task().finally(() => {
+    btn.disabled = false;
+    if (btn.textContent === busyLabel) btn.textContent = idleLabel;
   });
 }
 
@@ -105,7 +115,9 @@ function syncDrawer(mission: ActiveMissionState): void {
   if (drawerTickerEl) drawerTickerEl.textContent = mission.liveSummary || 'Synced with Referral Scout';
   if (drawerFillEl) drawerFillEl.style.width = `${pct}%`;
   if (drawerTrackEl) drawerTrackEl.className = mission.active ? 'track is-running' : 'track';
-  if (drawerPauseBtn) drawerPauseBtn.textContent = mission.active ? 'Pause Engine' : 'Resume Engine';
+  if (drawerPauseBtn && !drawerPauseBtn.disabled) {
+    drawerPauseBtn.textContent = mission.active ? 'Pause Engine' : 'Resume Engine';
+  }
 }
 
 /** Toggles the instant on-page Shadow-DOM Quick-Control Drawer on LinkedIn. */
@@ -130,13 +142,14 @@ function ensureHost(): boolean {
       `@keyframes rs-cd-stripe{from{background-position:0 0}to{background-position:24px 0}}` +
       `@keyframes rs-cd-sheen{0%{transform:translateX(-100%)}100%{transform:translateX(220%)}}` +
       `@keyframes rs-cd-radar{0%{box-shadow:0 0 0 0 rgba(124,102,255,0.6)}70%{box-shadow:0 0 0 7px rgba(124,102,255,0)}100%{box-shadow:0 0 0 0 rgba(124,102,255,0)}}` +
+      `@keyframes rs-cd-bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}` +
       `.box,.drawer{${FONT};width:348px;max-width:calc(100vw - 32px);background:rgba(15,23,42,0.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);color:#f8fafc;border:1px solid rgba(148,163,184,0.28);border-radius:12px;box-shadow:0 14px 36px rgba(0,0,0,0.38);overflow:hidden}` +
       `.row{display:flex;align-items:center;gap:10px;padding:10px 12px}` +
       `.pct{${FONT};font-variant-numeric:tabular-nums;font-weight:700;font-size:12px;color:#c4b5fd;min-width:34px;text-align:right;flex:none}` +
       `.copy{flex:1;min-width:0}` +
       `.title{${FONT};font-weight:600;color:#ffffff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}` +
       `.sub{${FONT};font-size:11.5px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}` +
-      `.btn{${FONT};border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.12);color:#ffffff;border-radius:7px;padding:5px 9px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap}` +
+      `.btn{${FONT};border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.12);color:#ffffff;border-radius:7px;padding:6px 9px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background 140ms ease}` +
       `.btn:hover:not(:disabled){background:rgba(255,255,255,0.22)}` +
       `.btn:disabled{opacity:0.65;cursor:default}` +
       `.btn-primary{background:#6d54ff;border-color:#7c66ff;color:#ffffff}` +
@@ -157,18 +170,29 @@ function ensureHost(): boolean {
       `.drawer-radar{width:7px;height:7px;border-radius:50%;background:#34d399;flex:none;animation:rs-cd-radar 1.8s infinite}` +
       `.drawer-body{padding:10px 12px;display:flex;flex-direction:column;gap:8px}` +
       `.drawer-ticker{${FONT};font-size:12px;color:#cbd5e1}` +
+      `.drawer-status{${FONT};font-size:11.5px;padding:6px 8px;border-radius:7px;display:none}` +
+      `.drawer-status.is-ok{background:rgba(16,185,129,0.18);color:#6ee7b7;border:1px solid rgba(16,185,129,0.35)}` +
+      `.drawer-status.is-err{background:rgba(239,68,68,0.18);color:#fca5a5;border:1px solid rgba(239,68,68,0.35)}` +
+      `.drawer-guide{${FONT};font-size:11.5px;padding:8px 10px;border-radius:8px;background:rgba(124,102,255,0.2);border:1px solid rgba(124,102,255,0.45);color:#ede9fe;display:none;line-height:1.4}` +
+      `.drawer-guide-arrow{display:inline-block;margin-right:4px;animation:rs-cd-bounce 1.2s ease-in-out infinite}` +
       `.drawer-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}` +
       `.drawer-foot{display:flex;flex-direction:column;gap:6px;padding-top:4px;border-top:1px solid rgba(148,163,184,0.14)}` +
       `.drawer-hint{${FONT};font-size:11px;color:#94a3b8;text-align:center}` +
-      `@media (prefers-reduced-motion: reduce){.track.is-running .fill,.track.is-running .fill::after,.drawer-radar{animation:none!important}}`,
+      `@media (prefers-reduced-motion: reduce){.track.is-running .fill,.track.is-running .fill::after,.drawer-radar,.drawer-guide-arrow{animation:none!important}}`,
   );
   root.adoptedStyleSheets = [sheet];
+
+  const stopBubble = (el: HTMLElement): void => {
+    el.addEventListener('pointerdown', e => e.stopPropagation());
+    el.addEventListener('click', e => e.stopPropagation());
+  };
 
   /* --- Expanded Quick-Control Drawer --- */
   drawerEl = document.createElement('section');
   drawerEl.className = 'drawer';
   drawerEl.setAttribute('aria-label', 'Referral Scout Quick Controls');
   drawerEl.style.display = 'none';
+  stopBubble(drawerEl);
 
   const dHead = document.createElement('div');
   dHead.className = 'drawer-head';
@@ -187,7 +211,8 @@ function ensureHost(): boolean {
   dClose.className = 'close';
   dClose.setAttribute('aria-label', 'Close quick controls');
   dClose.textContent = '▾';
-  dClose.addEventListener('click', () => {
+  dClose.addEventListener('click', e => {
+    e.stopPropagation();
     drawerOpen = false;
     renderWayfinding(getCachedActiveMission());
   });
@@ -204,6 +229,20 @@ function ensureHost(): boolean {
   drawerTickerEl = document.createElement('div');
   drawerTickerEl.className = 'drawer-ticker';
 
+  drawerStatusEl = document.createElement('div');
+  drawerStatusEl.className = 'drawer-status';
+  drawerStatusEl.setAttribute('role', 'status');
+
+  drawerGuideEl = document.createElement('div');
+  drawerGuideEl.className = 'drawer-guide';
+  const guideArrow = document.createElement('span');
+  guideArrow.className = 'drawer-guide-arrow';
+  guideArrow.textContent = '↑';
+  const guideText = document.createElement('span');
+  guideText.textContent =
+    'Click the RS icon in your top-right browser toolbar to pin & open the Side Panel, or use Open Full Workbench below.';
+  drawerGuideEl.append(guideArrow, guideText);
+
   const dGrid = document.createElement('div');
   dGrid.className = 'drawer-grid';
 
@@ -211,12 +250,11 @@ function ensureHost(): boolean {
   scanBtn.type = 'button';
   scanBtn.className = 'btn';
   scanBtn.textContent = 'Scan Jobs on Page';
-  scanBtn.addEventListener('click', () => {
-    scanBtn.textContent = 'Starting scan…';
-    sendRuntimeMessage({ kind: 'network', action: 'findJobs' }, () => {
-      setTimeout(() => {
-        scanBtn.textContent = 'Scan Jobs on Page';
-      }, 1500);
+  scanBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    withButtonFeedback(scanBtn, 'Scanning…', 'Scan Jobs on Page', async () => {
+      const reply = await sendHudAction(HUD_ACTIONS.SCAN_JOBS);
+      showDrawerStatus(reply.ok ? (reply.message ?? 'Scanning LinkedIn jobs…') : (reply.error ?? 'Could not start scan'), !reply.ok);
     });
   });
 
@@ -224,24 +262,49 @@ function ensureHost(): boolean {
   refsBtn.type = 'button';
   refsBtn.className = 'btn';
   refsBtn.textContent = 'Find Referrers';
-  refsBtn.addEventListener('click', () => {
-    sendRuntimeMessage({ kind: 'surface', action: 'open-tab', route: 'referrals' });
+  refsBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    withButtonFeedback(refsBtn, 'Opening…', 'Find Referrers', async () => {
+      const reply = await sendHudAction(HUD_ACTIONS.FIND_REFERRERS);
+      showDrawerStatus(reply.ok ? (reply.message ?? 'Opened Referrers') : (reply.error ?? 'Could not open Referrers'), !reply.ok);
+    });
   });
 
   drawerPauseBtn = document.createElement('button');
   drawerPauseBtn.type = 'button';
   drawerPauseBtn.className = 'btn';
   drawerPauseBtn.textContent = 'Pause Engine';
-  drawerPauseBtn.addEventListener('click', () => {
+  drawerPauseBtn.addEventListener('click', e => {
+    e.stopPropagation();
     const currentlyActive = getCachedActiveMission().active;
-    sendRuntimeMessage({ kind: 'network', action: currentlyActive ? 'pause' : 'resume' });
+    const busy = currentlyActive ? 'Pausing…' : 'Resuming…';
+    const fallbackIdle = currentlyActive ? 'Pause Engine' : 'Resume Engine';
+    withButtonFeedback(drawerPauseBtn!, busy, fallbackIdle, async () => {
+      const reply = await sendHudAction(HUD_ACTIONS.TOGGLE_ENGINE);
+      if (reply.ok && typeof reply.active === 'boolean' && drawerPauseBtn) {
+        drawerPauseBtn.textContent = reply.active ? 'Pause Engine' : 'Resume Engine';
+      }
+      showDrawerStatus(reply.ok ? (reply.message ?? 'Updated engine') : (reply.error ?? 'Toggle failed'), !reply.ok);
+    });
   });
 
   const panelBtn = document.createElement('button');
   panelBtn.type = 'button';
   panelBtn.className = 'btn';
-  panelBtn.textContent = 'Try Native Side Panel';
-  panelBtn.addEventListener('click', () => openControlsFromPage(panelBtn));
+  panelBtn.textContent = 'Open Side Panel';
+  panelBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    withButtonFeedback(panelBtn, 'Opening…', 'Open Side Panel', async () => {
+      const reply = await sendHudAction(HUD_ACTIONS.OPEN_SIDEPANEL);
+      if (reply.ok && reply.opened) {
+        if (drawerGuideEl) drawerGuideEl.style.display = 'none';
+        showDrawerStatus('Side Panel opened ✓');
+      } else {
+        if (drawerGuideEl) drawerGuideEl.style.display = 'block';
+        showDrawerStatus('Click RS icon in toolbar ↑');
+      }
+    });
+  });
 
   dGrid.append(scanBtn, refsBtn, drawerPauseBtn, panelBtn);
 
@@ -249,8 +312,12 @@ function ensureHost(): boolean {
   workbenchBtn.type = 'button';
   workbenchBtn.className = 'btn btn-primary';
   workbenchBtn.textContent = 'Open Full Workbench →';
-  workbenchBtn.addEventListener('click', () => {
-    sendRuntimeMessage({ kind: 'surface', action: 'open-tab', route: 'jobs' });
+  workbenchBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    withButtonFeedback(workbenchBtn, 'Opening…', 'Open Full Workbench →', async () => {
+      const reply = await sendHudAction(HUD_ACTIONS.OPEN_WORKBENCH, { route: 'jobs' });
+      showDrawerStatus(reply.ok ? (reply.message ?? 'Workbench focused ✓') : (reply.error ?? 'Could not open Workbench'), !reply.ok);
+    });
   });
 
   const hint = document.createElement('div');
@@ -261,12 +328,13 @@ function ensureHost(): boolean {
   dFoot.className = 'drawer-foot';
   dFoot.append(workbenchBtn, hint);
 
-  dBody.append(drawerTickerEl, dGrid, dFoot);
+  dBody.append(drawerTickerEl, drawerStatusEl, drawerGuideEl, dGrid, dFoot);
   drawerEl.append(dHead, drawerTrackEl, dBody);
 
   /* --- Compact Bottom Pill / Card --- */
   cardEl = document.createElement('div');
   cardEl.className = 'box';
+  stopBubble(cardEl);
 
   const row = document.createElement('div');
   row.className = 'row';
@@ -286,7 +354,8 @@ function ensureHost(): boolean {
   jumpBtn.type = 'button';
   jumpBtn.className = 'btn';
   jumpBtn.textContent = 'Next gap';
-  jumpBtn.addEventListener('click', () => {
+  jumpBtn.addEventListener('click', e => {
+    e.stopPropagation();
     if (currentMode === 'wayfinding') {
       toggleQuickControlDrawer();
       return;
@@ -301,7 +370,8 @@ function ensureHost(): boolean {
   closeBtn.className = 'close';
   closeBtn.setAttribute('aria-label', 'Hide progress overlay');
   closeBtn.textContent = '×';
-  closeBtn.addEventListener('click', () => {
+  closeBtn.addEventListener('click', e => {
+    e.stopPropagation();
     if (currentMode === 'wayfinding') {
       drawerOpen = false;
       minimized = true;
@@ -325,7 +395,8 @@ function ensureHost(): boolean {
   miniPillBtn.type = 'button';
   miniPillBtn.className = 'mini';
   miniPillBtn.style.display = 'none';
-  miniPillBtn.addEventListener('click', () => {
+  miniPillBtn.addEventListener('click', e => {
+    e.stopPropagation();
     minimized = false;
     toggleQuickControlDrawer(true);
   });
