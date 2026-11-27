@@ -159,13 +159,13 @@ export function registerNetworkMessages(): void {
         let allowed = false;
         await updateNetwork(s => {
           const i = s.intent;
+          const senderProfile = profileUrl(sender.url ?? '');
           allowed =
             !!i &&
-            (s.active || !!i.manual) &&
-            i.revision === s.revision &&
+            (i.manual ? true : s.active && i.revision === s.revision) &&
             i.id === auth.data.id &&
             i.tabId === sender.tab?.id &&
-            i.url === profileUrl(sender.url ?? '') &&
+            (i.url === senderProfile || profileUrl(i.url) === senderProfile) &&
             Date.now() - i.at < 120000 &&
             (auth.data.claim ? !i.claimed : i.claimed);
           if (allowed && i && auth.data.claim) i.claimed = true;
