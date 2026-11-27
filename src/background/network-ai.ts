@@ -9,6 +9,9 @@ import type { NetworkState, NetworkContact } from '../shared/network';
 import { renderNote, introduction, defaultSettings } from '../shared/network';
 import { humanizeCompanyName } from '../shared/referral';
 import { validatedDossier } from '../shared/dossier';
+import { budgetLine, mayAsk, recordCall, recordLimitHit, recordSuccess, thinkingAllowed } from '../shared/ai-budget';
+import { aiBudget, saveAiBudget } from './ai-budget-store';
+
 import { extractJson } from '../parsers/json';
 
 import { chatGptMode, chatGptUrl, saveChatGptMode, CHATGPT_MODE_KEY, type ChatGptMode } from './chatgpt-mode';
@@ -393,12 +396,25 @@ export async function askChatGpt(
   parentId = '',
   limits?: { startMs: number; totalMs: number; onStage?: (stage: string) => void; thinking?: boolean },
 ): Promise<string> {
+  // The profile dossier is asked once and everything downstream depends on it, so it is never skipped to save a
+  // message. Everything else spends from the budget, and a tier that forbids thinking gets the instant answer.
+  const budget = await aiBudget();
+  const force = kind === 'BUILD_DOSSIER';
+  const verdict = mayAsk(budget, Date.now(), force);
+  if (!verdict.ok) throw new Error(budgetLine(budget));
+  const capped =
+    limits && limits.thinking !== undefined ? { ...limits, thinking: thinkingAllowed(budget.tier, kind, limits.thinking) } : limits;
   try {
-    const text = await askChatGptOnce(prompt, signal, kind, owner, parentId, limits);
+    const text = await askChatGptOnce(prompt, signal, kind, owner, parentId, capped);
+    await saveAiBudget(recordSuccess(recordCall(budget)));
     await writeState(AI_HEALTH_KEY, { ok: true, at: Date.now() } satisfies AiHealth).catch(() => undefined);
     return text;
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
+    // A refusal still cost an attempt, and a limit means stop asking for a while rather than retry into a wall.
+    await saveAiBudget(
+      /reached.*limit|usage limit|usage cap|rate limit|429/i.test(message) ? recordLimitHit(recordCall(budget)) : recordCall(budget),
+    );
     // Only failures that point at ChatGPT's page itself, not a slow answer or a sign-in.
     if (PAGE_TROUBLE.test(message))
       await writeState(AI_HEALTH_KEY, { ok: false, at: Date.now(), error: message.slice(0, 300) } satisfies AiHealth).catch(
@@ -630,15 +646,7 @@ export async function prepareInvitation(s: NetworkState, p: NetworkContact, limi
     `SENDER: ${JSON.stringify({ name: s.profile.name, exploring: s.target })}`,
     `RECIPIENT: ${JSON.stringify({ name: p.name, headline: p.headline, company: humanizeCompanyName(p.companyName ?? '') })}`,
   ].join('\n');
-  const result = note.parse(
-    extractJson(
-      await askChatGpt(prompt, signal, 'WRITE_INVITATION_NOTE', s.profile.url, '', {
-        thinking: false,
-        startMs: 20_000,
-        totalMs: 45_000,
-      }),
-    ),
-  );
+  const result = note.parse(extractJson(await askChatGpt(prompt, signal, 'WRITE_INVITATION_NOTE', s.profile.url)));
   return verifyMessage(result.text, p, limit);
 }
 export async function prepareIntroduction(s: NetworkState, p: NetworkContact, signal: AbortSignal): Promise<string> {

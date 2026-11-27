@@ -216,7 +216,14 @@ export function fillPrompt(input: {
 }): string {
   const { page, profile } = input;
   const details = Object.fromEntries(Object.entries(profile.details).filter(([, v]) => !!v?.trim()));
-  const answers = Object.entries(profile.answers).slice(-80);
+  // Only the saved answers this step could actually use. Shipping the last eighty on every step of every form
+  // grew the prompt without improving a single answer: a question that is not on this page cannot be reused here.
+  // Anything still unmatched is filled in up to the same ceiling, newest first, for questions worded differently.
+  const wanted = new Set(page.form.map(f => questionKey(f.label)));
+  const saved = Object.entries(profile.answers);
+  const matched = saved.filter(([k]) => wanted.has(k));
+  const spare = saved.filter(([k]) => !wanted.has(k)).slice(-Math.max(0, 30 - matched.length));
+  const answers = [...matched, ...spare];
   const eeoRule =
     profile.eeo === 'decline'
       ? ' For "eeo" (diversity) fields, choose the option that declines to answer (for example "Prefer not to say" or "I don\u2019t wish to answer") when one exists, otherwise leave them out.'
@@ -901,6 +908,28 @@ export function refusalSentence(errors: { label: string; message: string }[]): s
   const said = parts.join(' ').slice(0, 200);
   return `The site will not move on: ${said}${/[.!?]$/.test(said) ? '' : '.'} Fix it on the page, then press Next step.`;
 }
+
+/**
+ * Why ChatGPT could not answer, when the reason is about ChatGPT's availability rather than about this form.
+ * These are the cases where carrying on without it is better than stopping: the saved answers and details still
+ * fill most of a form, and what is left can be handed to the person instead of losing the whole application.
+ */
+export function aiUnavailable(raw: string): 'limit' | 'signed-out' | 'unreachable' | null {
+  const m = raw.toLowerCase();
+  // The extension's own budget refusal counts too: it is a decision to wait, and the fill should carry on
+  // from saved answers exactly as it does when ChatGPT itself says no.
+  if (/usage limit|usage cap|rate limit|too many requests|reached .*limit|429|asked for a break|budget is used/.test(m)) return 'limit';
+  if (/sign in|signed out|log ?in|not authenticated|unauthori[sz]ed|401/.test(m)) return 'signed-out';
+  if (/could not be reached|network|offline|timed out|took too long|has not finished|no response|composer|hydration/.test(m))
+    return 'unreachable';
+  return null;
+}
+
+/** What to tell the person when the fill carried on without ChatGPT. */
+export const aiUnavailableNote = (why: 'limit' | 'signed-out' | 'unreachable', left: number): string =>
+  `${
+    why === 'limit' ? 'ChatGPT has reached its usage limit' : why === 'signed-out' ? 'ChatGPT is not signed in' : 'ChatGPT did not respond'
+  }. Everything your saved answers cover is filled${left ? `; ${left} question${left === 1 ? '' : 's'} ${left === 1 ? 'is' : 'are'} listed for you` : ''}.`;
 
 /** One written answer redone on request: afresh, or shorter. The same facts-only rules as the full fill. */
 export function rewritePrompt(input: {

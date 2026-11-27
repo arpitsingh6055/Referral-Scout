@@ -61,6 +61,8 @@ import { emptyApplyProfile } from '../shared/apply';
 import { write } from '../storage/state';
 import type { AiProfileDraft } from '../shared/profile-draft';
 import { askChatGpt, invalidateAiJob, recoverLatestAiReply } from './network-ai';
+import { aiBudget, setAiTier } from './ai-budget-store';
+import { type AiTier, TIERS, budgetLine, perContactAllowed } from '../shared/ai-budget';
 import { chatGptMode, saveChatGptMode, type ChatGptMode } from './chatgpt-mode';
 import { updateNetwork } from './network';
 import { enqueueShortlisted, syncFromNetwork } from './bridge';
@@ -206,6 +208,12 @@ export interface WorkspaceView {
   usageReporting: boolean;
   /** Whether automated ChatGPT tasks use Incognito (Temporary chat) or normal chat history. */
   chatgptMode?: ChatGptMode;
+  /** Which ChatGPT plan the person told us they have, and how much of this stretch's budget is left. */
+  aiTier: AiTier;
+  aiBudgetLine: string;
+  /** Whether this plan allows a note rewritten for each recipient, and whether they asked for it. */
+  perContactAllowed: boolean;
+  perContactOn: boolean;
   /** True when side-panel outreach settings allow invitations to send automatically. */
   outreachAutomatic: boolean;
   storage: { jobs: number; applications: number; contacts: number; events: number; facts: number };
@@ -359,6 +367,15 @@ export async function workspaceView(): Promise<WorkspaceView> {
     usageReporting: network?.usageConsent === true,
     outreachAutomatic: network?.settings?.outreachMode === 'automatic',
     chatgptMode: await chatGptMode(),
+    ...(await (async () => {
+      const b = await aiBudget();
+      return {
+        aiTier: b.tier,
+        aiBudgetLine: budgetLine(b),
+        perContactAllowed: perContactAllowed(b.tier),
+        perContactOn: network?.settings?.perContactAi === true,
+      };
+    })()),
     storage: {
       jobs: jobs.length,
       applications: applications.length,
@@ -608,6 +625,8 @@ export const workspaceRequest = z.discriminatedUnion('action', [
   }),
   z.object({ kind: z.literal('workspace'), action: z.literal('surface'), surface: z.enum(['tab', 'panel']) }),
   z.object({ kind: z.literal('workspace'), action: z.literal('setChatGptMode'), mode: z.enum(['incognito', 'normal']) }),
+  z.object({ kind: z.literal('workspace'), action: z.literal('setAiTier'), tier: z.enum(['free', 'go', 'plus', 'api']) }),
+  z.object({ kind: z.literal('workspace'), action: z.literal('setPerContactAi'), on: z.boolean() }),
   z.object({ kind: z.literal('workspace'), action: z.literal('processProfileWithChatGPT') }),
   z.object({
     kind: z.literal('workspace'),
@@ -900,6 +919,21 @@ async function handle(req: WorkspaceRequest): Promise<WorkspaceResult | { json: 
         req.mode === 'incognito'
           ? 'ChatGPT searches and drafts will run in Incognito (Temporary chat).'
           : 'ChatGPT searches and drafts will run in normal chat history.';
+      break;
+    }
+    case 'setAiTier': {
+      await setAiTier(req.tier);
+      message = `${TIERS[req.tier].label}: ${TIERS[req.tier].blurb}`;
+      break;
+    }
+    case 'setPerContactAi': {
+      await updateNetwork(s => ({
+        ...s,
+        settings: { ...(s.settings ?? {}), perContactAi: req.on } as NonNullable<typeof s.settings>,
+      })).catch(() => undefined);
+      message = req.on
+        ? 'Each invitation will be rewritten for its recipient. That is one ChatGPT question per person.'
+        : 'Invitations will be filled from the wording written once for your search. No ChatGPT question per person.';
       break;
     }
     case 'processProfileWithChatGPT':

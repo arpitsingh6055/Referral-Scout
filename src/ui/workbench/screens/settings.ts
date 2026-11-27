@@ -2,6 +2,7 @@
 import { exportData, sendGmail, testChatGpt } from '../api';
 import { ago, button, card, confirmModal, div, errorStateWithRetry, field, input, metric, pill, setFieldError, text } from '../dom';
 import type { Ctx } from '../shell';
+import { type AiTier, TIERS } from '../../../shared/ai-budget';
 
 /** Produces a non-PII diagnostics snapshot suitable for pasting into a bug report. */
 export function buildDiagnosticsSummary(ctx: Ctx): string {
@@ -51,6 +52,8 @@ function connection(
 
 export function settings(ctx: Ctx): HTMLElement {
   const w = ctx.workspace;
+  // A view saved before the plan selector existed, or one from an older build, still has to render.
+  const aiTier: AiTier = w && TIERS[w.aiTier] ? w.aiTier : 'free';
   if (!w)
     return errorStateWithRetry('Could not load settings', 'Your local settings store did not respond. Retry to refresh.', () =>
       ctx.refresh(),
@@ -138,6 +141,63 @@ export function settings(ctx: Ctx): HTMLElement {
       card('Accounts and connections', {
         sub: 'Sign in on the service itself. Referral Scout uses the session already open in this browser; it does not collect your passwords.',
         body: [
+          /*
+           * Which plan the person is on decides how much Referral Scout may ask of ChatGPT before it starts
+           * waiting, so it is asked for plainly rather than guessed. The consequence of each choice is written
+           * next to it, because "Free" means nothing on its own.
+           */
+          div('rule-row', [
+            div('', [
+              text('div', 'rule-name', 'Your ChatGPT plan'),
+              text('div', 'rule-note', `${TIERS[aiTier].blurb} ${w.aiBudgetLine ?? ''}`.trim()),
+            ]),
+            div('inline', [
+              (() => {
+                const sel = document.createElement('select');
+                sel.className = 'input';
+                sel.setAttribute('aria-label', 'Your ChatGPT plan');
+                for (const tier of ['free', 'go', 'plus', 'api'] as const) {
+                  const opt = document.createElement('option');
+                  opt.value = tier;
+                  opt.textContent = `${TIERS[tier].label} · about ${TIERS[tier].perWindow} questions per 3 hours`;
+                  opt.selected = aiTier === tier;
+                  sel.append(opt);
+                }
+                sel.addEventListener('change', () => {
+                  const tier = sel.value as 'free' | 'go' | 'plus' | 'api';
+                  void ctx.run({ kind: 'workspace', action: 'setAiTier', tier });
+                });
+                return sel;
+              })(),
+            ]),
+          ]),
+          ...(w.perContactAllowed
+            ? [
+                div('rule-row', [
+                  div('', [
+                    text('div', 'rule-name', 'Rewrite every message for its recipient'),
+                    text(
+                      'div',
+                      'rule-note',
+                      'Off by default. Your search already has wording written once for these roles, and filling in a name costs nothing. Turning this on spends one ChatGPT question per person you reach out to.',
+                    ),
+                  ]),
+                  div('inline', [
+                    (() => {
+                      const box = input('', {
+                        type: 'checkbox',
+                        'aria-label': 'Rewrite every message for its recipient',
+                        ...(w.perContactOn ? { checked: true } : {}),
+                      });
+                      box.addEventListener('change', () => {
+                        void ctx.run({ kind: 'workspace', action: 'setPerContactAi', on: box.checked });
+                      });
+                      return box;
+                    })(),
+                  ]),
+                ]),
+              ]
+            : []),
           connection(
             'LinkedIn',
             w.connections.linkedin ? 'Profile read' : 'Action needed',

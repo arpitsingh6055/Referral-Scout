@@ -710,6 +710,10 @@ const workspace: WorkspaceView = {
   surface: 'tab',
   cv: { hasText: true, imported: true },
   usageReporting: false,
+  aiTier: 'go',
+  aiBudgetLine: '19 of 25 ChatGPT questions left in this stretch.',
+  perContactAllowed: false,
+  perContactOn: false,
   outreachAutomatic: false,
   storage: { jobs: 31, applications: 31, contacts: 22, events: 48, facts: 14 },
 };

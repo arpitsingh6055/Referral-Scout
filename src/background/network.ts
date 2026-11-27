@@ -73,6 +73,8 @@ import { seekerEvidence, suggestSpecializationsFromProfile, type SeekerSource } 
 import { extractJson } from '../parsers/json';
 import { networkCommand, networkTab, closeWorkWindow, readPagesInParallel, PARALLEL_PAGES } from './network-browser';
 import { prepareIntroduction, prepareInvitation, askChatGpt } from './network-ai';
+import { rankBatchesFor, perContactAllowed } from '../shared/ai-budget';
+import { aiBudget } from './ai-budget-store';
 import { publishActiveMission } from '../shared/progress-store';
 
 /** Saved settings with defaults filled in. Templates are the default for the first note; v0.10.0 briefly defaulted to ChatGPT, so existing installs are moved back once. A later choice is kept. */
@@ -651,7 +653,9 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
           if (reason) drop.set(j.id, reason);
         }
       const candidates = list.filter(x => !drop.has(x.id)); // best organic score first
-      const total = Math.min(candidates.length, RANK_BATCH * RANK_MAX_BATCHES);
+      // How deep to read is a budget decision, not a constant: a free plan spends one batch, a paid one three.
+      const maxBatches = Math.min(RANK_MAX_BATCHES, rankBatchesFor((await aiBudget()).tier));
+      const total = Math.min(candidates.length, RANK_BATCH * maxBatches);
       // The whole background - every LinkedIn section and the CV - so ChatGPT can weigh a degree against what the person has actually done.
       const evidence = seekerEvidence(profileSource(s));
       const cache: DescCache = (await read<DescCache>(DESC_CACHE)) ?? {};
@@ -667,7 +671,7 @@ async function findJobsStep(s: NetworkState, signal: AbortSignal): Promise<void>
         read_ = 0,
         stopped = false;
       await progress(0);
-      while (!stopped && idx < candidates.length && batch < RANK_MAX_BATCHES && prioritized < RANK_TARGET) {
+      while (!stopped && idx < candidates.length && batch < maxBatches && prioritized < RANK_TARGET) {
         signal.throwIfAborted();
         const slice = candidates.slice(idx, idx + RANK_BATCH);
         idx += RANK_BATCH;
@@ -1399,25 +1403,35 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
     Object.assign(p, facts);
   }
   const me = fresh.profile!.name;
+  const tier = (await aiBudget()).tier;
   // Found for a specific job: the wording is about that job and a referral, not general networking.
   const job = p.referralJob ? fresh.referralJobs?.find(j => j.url === p.referralJob) : undefined;
-  // Wording written for this company comes first, then the wording planned for the whole search, then the built-in text.
+  /*
+   * Wording written for this company comes first, then the wording planned for the whole search, then the built-in
+   * text. A contact found by general networking rather than against a job used to skip this and ask ChatGPT to
+   * write a note for that one person — one message per contact, and the quickest way to exhaust a daily cap on a
+   * campaign with fifty of them. The search plan's wording was already written once for these roles and takes the
+   * same placeholders, so it is hydrated here too; ChatGPT is asked per person only when explicitly turned on.
+   */
   const wording = job
     ? {
         note: job.strategy?.note ?? fresh.plan?.note,
         ask: job.strategy?.ask ?? fresh.plan?.ask,
         followUp: job.strategy?.followUp ?? fresh.plan?.followUp,
       }
-    : undefined;
-  const words = job
-    ? {
-        firstName: p.name.split(/\s+/)[0] || p.name,
-        myFirstName: me.split(/\s+/)[0] || me,
-        title: humanizeJobTitle(job.title),
-        company: humanizeCompanyName(job.company),
-        jobUrl: job.url,
-      }
-    : undefined;
+    : settings.perContactAi && perContactAllowed(tier)
+      ? undefined
+      : { note: fresh.plan?.note, ask: fresh.plan?.ask, followUp: fresh.plan?.followUp };
+  const words =
+    job || wording
+      ? {
+          firstName: p.name.split(/\s+/)[0] || p.name,
+          myFirstName: me.split(/\s+/)[0] || me,
+          title: humanizeJobTitle(job?.title ?? settings.roles?.[0] ?? fresh.target),
+          company: humanizeCompanyName(job?.company ?? p.companyName ?? ''),
+          jobUrl: job?.url ?? '',
+        }
+      : undefined;
   // ChatGPT personalisation is optional. If it is off, or fails, the user's own template is used so outreach never stalls.
   const draft = async (ai: () => Promise<string>, template: () => string): Promise<string> => {
     if (settings.aiMode !== 'chatgpt') return template();
@@ -1442,10 +1456,12 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
   if (kind === 'connect' && settings.noteMode !== 'none' && !p.invitationNote)
     p.invitationNote = job
       ? fitNote(wording?.note ? fill(wording.note, words!) : referralNote(job, p, me))
-      : await draft(
-          () => prepareInvitation(fresh, p, 200, signal),
-          () => renderNote(settings, fresh.target, p, me),
-        );
+      : wording?.note
+        ? fitNote(fill(wording.note, words!))
+        : await draft(
+            () => prepareInvitation(fresh, p, 200, signal),
+            () => renderNote(settings, fresh.target, p, me),
+          );
   if (kind === 'message' && !p.message)
     p.message = job
       ? (p.direct ? wording?.ask : wording?.followUp)
@@ -1453,10 +1469,12 @@ export async function processContact(s: NetworkState, p: NetworkContact, signal:
         : referralAsk(job, p, me, !p.direct)
       : p.direct
         ? directMessage(fresh, p, me)
-        : await draft(
-            () => prepareIntroduction(fresh, p, signal),
-            () => introduction(fresh, p, me),
-          );
+        : wording?.followUp
+          ? fill(wording.followUp, words!)
+          : await draft(
+              () => prepareIntroduction(fresh, p, signal),
+              () => introduction(fresh, p, me),
+            );
   // A direct message to someone already in your network always waits for your approval, whatever the follow-up
   // setting: messaging an existing connection is higher-stakes than a note or a post-acceptance follow-up.
   const review = kind === 'connect' ? settings.outreachMode === 'review' : p.direct ? true : settings.followupMode === 'review';

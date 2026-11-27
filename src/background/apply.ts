@@ -13,6 +13,8 @@ import {
   fillPrompt,
   pageKindFromUrl,
   planFromReply,
+  aiUnavailable,
+  aiUnavailableNote,
   questionKey,
   rememberedFor,
   rememberable,
@@ -41,6 +43,7 @@ import {
   refusalSentence,
 } from '../shared/apply';
 import { seekerEvidence } from '../shared/seeker';
+import { askLine } from '../shared/ai-budget';
 import { extractJson } from '../parsers/json';
 import { read, write } from '../storage/state';
 import { all, remove } from '../storage/database';
@@ -448,20 +451,30 @@ const aiWords: Record<string, string> = {
   completion_verified: 'Reading the answers',
   response_extracted: 'Checking every answer against the form',
 };
+/**
+ * What ChatGPT is told about the applicant. Every step of an application used to ship 7,000 characters of LinkedIn
+ * evidence and 14,000 of raw CV, unchanged, so a four-page form sent the same ~21,000 characters four times. The
+ * dossier is that same evidence already read and structured once, so where one exists it is sent instead: the same
+ * facts at roughly a fifth of the size, and a prompt small enough to answer quickly.
+ */
 const background = async (): Promise<{ text: string; location: string; name: string; url: string; roles: string[] }> => {
   const s = await getNetwork();
   if (!s.profile) throw new Error('Set up Referral Scout with your LinkedIn profile first.');
-  const evidence = seekerEvidence(
-    {
-      headline: s.profile.headline,
-      location: s.profile.location,
-      about: s.profile.about,
-      sections: s.profile.sections,
-      rawText: s.profile.rawText,
-    },
-    7000,
-  );
-  const cv = (s.cv?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 14000);
+  const structured = (s.dossier ?? '').trim();
+  const evidence = structured
+    ? structured.slice(0, 9000)
+    : seekerEvidence(
+        {
+          headline: s.profile.headline,
+          location: s.profile.location,
+          about: s.profile.about,
+          sections: s.profile.sections,
+          rawText: s.profile.rawText,
+        },
+        7000,
+      );
+  // Without a dossier the raw CV is the only evidence there is, so it still goes. With one it is already in there.
+  const cv = structured ? '' : (s.cv?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 14000);
   return {
     text: `${evidence}${cv ? `\nCV (full text): ${cv}` : ''}`,
     location: s.profile.location,
@@ -1278,24 +1291,49 @@ async function fillStep(
     await update(tabId, s => ({
       ...s,
       stage: 'thinking',
+      // Say which mode is being used and roughly what it costs in time, so a two-minute wait is expected
+      // rather than mistaken for a hang.
       message: thinking
-        ? 'ChatGPT is writing your answers…'
-        : `ChatGPT is answering ${rest.length} question${rest.length === 1 ? '' : 's'}…`,
+        ? `${askLine(true)} · writing your answers`
+        : `${askLine(false)} · ${rest.length} question${rest.length === 1 ? '' : 's'}`,
     }));
+    let aiDown: 'limit' | 'signed-out' | 'unreachable' | null = null;
     const reply = await askChatGpt(prompt, signal, 'FILL_APPLICATION', bg.url, '', {
       startMs: 90000,
       totalMs: (thinking ? 8 : 3) * 60000,
       thinking,
       onStage: stage => void update(tabId, s => ({ ...s, aiStage: stage, message: `${aiWords[stage] ?? 'Working'}…` })),
+    }).catch((e: unknown) => {
+      if (signal.aborted) throw e;
+      aiDown = aiUnavailable(e instanceof Error ? e.message : String(e));
+      // A fault about this form, rather than about ChatGPT being reachable, is still an error worth stopping for.
+      if (!aiDown) throw e;
+      return '';
     });
     signal.throwIfAborted();
-    let ai: FillPlan;
-    try {
-      ai = planFromReply(extractJson(reply), page.form, profile, !!photo, openLists, page.controls ?? []);
-    } catch {
-      throw new Error('ChatGPT’s answer could not be read. Press Fill again.');
+    let ai: FillPlan | null = null;
+    if (!reply) {
+      // ChatGPT is unavailable, not wrong. Everything the saved answers and details cover is already in `plan`;
+      // the questions that needed ChatGPT are handed to the person rather than losing the whole application.
+      plan.ask = rest
+        .filter(f => !f.sensitive && f.kind !== 'file')
+        .map(f => ({
+          id: f.id,
+          frame: f.frame,
+          label: f.label,
+          question: f.label,
+          ...(f.options?.length ? { options: f.options } : {}),
+          kind: f.kind,
+        }));
+      await update(tabId, x => ({ ...x, message: aiUnavailableNote(aiDown || 'unreachable', plan.ask.length) }));
+    } else {
+      try {
+        ai = planFromReply(extractJson(reply), page.form, profile, !!photo, openLists, page.controls ?? []);
+      } catch {
+        throw new Error('ChatGPT’s answer could not be read. Press Fill again.');
+      }
     }
-    if (ai.job?.company)
+    if (ai?.job?.company)
       await update(tabId, x => ({
         ...x,
         // The page's own structured data wins; ChatGPT's reading fills what the page did not say.
@@ -1311,18 +1349,19 @@ async function fillStep(
     // On LinkedIn ChatGPT may only answer what was empty, never change what LinkedIn or the person already set
     // (such as "Mark this job as a top choice", which uses a monthly allowance, or "Follow the company").
     const allowed = (id: string) => !covered.has(id) && (!linkedin || rest.some(f => f.id === id));
-    plan = {
-      fill: [...local.fill, ...ai.fill.filter(f => allowed(f.id))],
-      files: [...local.files, ...ai.files.filter(f => allowed(f.id))],
-      ask: ai.ask.filter(a => allowed(a.id)),
-      leftForYou: ai.leftForYou,
-      summary: ai.summary,
-      ...(ai.add ? { add: ai.add } : {}),
-      ...(ai.items ? { items: ai.items } : {}),
-      ...(ai.next ? { next: ai.next } : {}),
-      ...(ai.open ? { open: ai.open } : {}),
-      ...(ai.phase ? { phase: ai.phase } : {}),
-    };
+    if (ai)
+      plan = {
+        fill: [...local.fill, ...ai.fill.filter(f => allowed(f.id))],
+        files: [...local.files, ...ai.files.filter(f => allowed(f.id))],
+        ask: ai.ask.filter(a => allowed(a.id)),
+        leftForYou: ai.leftForYou,
+        summary: ai.summary,
+        ...(ai.add ? { add: ai.add } : {}),
+        ...(ai.items ? { items: ai.items } : {}),
+        ...(ai.next ? { next: ai.next } : {}),
+        ...(ai.open ? { open: ai.open } : {}),
+        ...(ai.phase ? { phase: ai.phase } : {}),
+      };
     // Questions the person already answered on an earlier application are filled, not asked again.
     const remembered = new Map(rememberedFor(page.form, profile).map(r => [r.id, r.value]));
     for (const q of [...plan.ask]) {

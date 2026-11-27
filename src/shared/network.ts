@@ -85,15 +85,6 @@ export const rememberMessage = z.object({
   action: z.enum(['get', 'save', 'remove']),
   item: savedItemSchema,
 });
-export const draftConnectMessage = z.object({
-  kind: z.literal('network.draftConnect'),
-  item: savedItemSchema,
-});
-export const connectNowMessage = z.object({
-  kind: z.literal('network.connectNow'),
-  item: savedItemSchema,
-  body: z.string().trim().max(200),
-});
 /** 'found' = listed for a job's referrals but not queued for any contact until the person asks. */
 export type ContactState =
   'found' | 'shortlisted' | 'requesting' | 'pending' | 'connected' | 'messaging' | 'messaged' | 'attention' | 'skipped' | 'review';
@@ -170,6 +161,12 @@ export const outreachSettingsSchema = z.object({
   // True once the seeker has confirmed the list; until then it is pre-filled from their CV and LinkedIn profile.
   specializationsChosen: z.boolean().default(false),
   aiMode: z.enum(['template', 'chatgpt']).default('template'),
+  /*
+   * Whether ChatGPT rewrites every invitation and follow-up for the individual recipient. Off by default: the
+   * search plan already carries wording written once for these roles, and hydrating it costs nothing, while a
+   * rewrite per contact is one ChatGPT message per person and the first thing to exhaust a daily cap.
+   */
+  perContactAi: z.boolean().default(false),
   chatgptMode: z.enum(['incognito', 'normal']).default('incognito'),
   noteTemplate: z.string().trim().min(10).max(1200).default(defaultNoteTemplate),
   weeklyInvites: z.number().int().positive().nullable().default(80),
@@ -195,6 +192,7 @@ export const defaultSettings: OutreachSettings = {
   specializations: [],
   specializationsChosen: false,
   aiMode: 'template',
+  perContactAi: false,
   chatgptMode: 'incognito',
   noteTemplate: defaultNoteTemplate,
   weeklyInvites: 80,
@@ -285,7 +283,6 @@ export interface NetworkState {
     body: string;
     revision: number;
     claimed: boolean;
-    manual?: boolean;
   } | null;
 }
 export const defaultTemplate =
