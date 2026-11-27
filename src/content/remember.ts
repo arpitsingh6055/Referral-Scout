@@ -112,9 +112,49 @@ const referralButton = (mode: 'referral' | 'connections', label: string): HTMLBu
   return b;
 };
 jobRow.append(referralButton('referral', 'Ask for referrals'), referralButton('connections', 'My connections here'));
+const connectRow = make('div', 'display:none');
+const connectBtn = make('button', PILL2, '✦ Connect with AI note');
+connectBtn.type = 'button';
+connectRow.append(connectBtn);
+
+const connectBox = make(
+  'div',
+  `${FONT};display:none;margin-bottom:8px;width:300px;background:#fff;color:#1d2226;border:1px solid #d0d7de;border-radius:12px;padding:12px;box-shadow:0 8px 28px rgba(0,0,0,.28)`,
+);
+const connectWho = make('div', `${FONT};font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`);
+const connectSub = make(
+  'div',
+  `${FONT};color:#5e6b78;font-size:12px;margin:2px 0 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`,
+);
+const connectField = make(
+  'textarea',
+  `${FONT};display:block;width:100%;height:84px;resize:none;border:1px solid #b9c2cc;border-radius:8px;padding:8px;background:#fff;color:#1d2226`,
+);
+connectField.maxLength = 200;
+const connectMeta = make(
+  'div',
+  `${FONT};display:flex;justify-content:space-between;align-items:center;margin-top:4px;font-size:11px;color:#5e6b78`,
+);
+const connectSource = make('span', '');
+const connectCount = make('span', '', '0 / 200');
+connectMeta.append(connectSource, connectCount);
+const connectStatus = make('div', `${FONT};min-height:16px;margin-top:4px;font-size:12px;color:#b3261e`);
+const connectActions = make('div', 'display:flex;justify-content:space-between;align-items:center;margin-top:6px');
+const connectCancel = make('button', `${FONT};border:0;background:transparent;color:#5e6b78;cursor:pointer;padding:6px 4px`, 'Cancel');
+connectCancel.type = 'button';
+const connectSend = make(
+  'button',
+  `${FONT};border:0;border-radius:999px;background:#0a66c2;color:#fff;cursor:pointer;padding:7px 16px;font-weight:600`,
+  'Send request',
+);
+connectSend.type = 'button';
+connectActions.append(connectCancel, connectSend);
+connectBox.append(connectWho, connectSub, connectField, connectMeta, connectStatus, connectActions);
+for (const type of ['keydown', 'keyup', 'keypress']) connectBox.addEventListener(type, e => e.stopPropagation());
+
 row.append(forget, save);
 box.append(who, sub, field, status, row);
-ui.append(box, jobRow, pill);
+ui.append(box, connectBox, jobRow, connectRow, pill);
 root.append(ui);
 // LinkedIn listens for keys on the whole page (for example "/" jumps to search). Typing a note must stay inside the box.
 for (const type of ['keydown', 'keyup', 'keypress']) box.addEventListener(type, e => e.stopPropagation());
@@ -132,10 +172,17 @@ function paint(): void {
   }
   const noun = current.type === 'job' ? 'job' : 'person';
   jobRow.style.display = current.type === 'job' ? 'block' : 'none'; // always offered on a job; a missing company is explained on click
+  const canConnect =
+    current.type === 'person' && current.relation !== 'connected' && current.relation !== 'pending' && current.relation !== 'follow-only';
+  connectRow.style.display = canConnect ? 'block' : 'none';
+  if (current.relation === 'pending') connectBtn.textContent = '✓ Request pending';
+  else if (canConnect && connectBtn.textContent === '✓ Request pending') connectBtn.textContent = '✦ Connect with AI note';
   pill.textContent = saved ? '✓ Remembered · edit note' : `＋ Remember this ${noun}`;
   pill.style.background = saved ? '#1a7f4b' : '#0a66c2';
   who.textContent = current.title;
   sub.textContent = current.subtitle;
+  connectWho.textContent = `Connect with ${current.title}`;
+  connectSub.textContent = current.company || current.subtitle || 'LinkedIn profile';
   field.placeholder =
     current.type === 'job'
       ? 'Note, e.g. applied on the website, ask for a referral at this company'
@@ -145,10 +192,88 @@ function paint(): void {
 const openBox = (open: boolean): void => {
   box.style.display = open ? 'block' : 'none';
   if (open) {
+    connectBox.style.display = 'none';
     status.textContent = '';
     field.focus();
   }
 };
+const openConnectBox = (open: boolean): void => {
+  connectBox.style.display = open ? 'block' : 'none';
+  if (open) {
+    box.style.display = 'none';
+    connectStatus.textContent = '';
+  }
+};
+const syncConnectCount = (): void => {
+  connectCount.textContent = `${connectField.value.length} / 200`;
+  connectCount.style.color = connectField.value.length > 200 ? '#b3261e' : '#5e6b78';
+};
+connectField.addEventListener('input', syncConnectCount);
+connectCancel.addEventListener('click', () => openConnectBox(false));
+connectBtn.addEventListener('click', async () => {
+  if (!current || current.type !== 'person') return;
+  if (connectBox.style.display === 'block') {
+    openConnectBox(false);
+    return;
+  }
+  openConnectBox(true);
+  connectField.value = '';
+  connectSource.textContent = 'Drafting with ChatGPT…';
+  connectSend.disabled = true;
+  syncConnectCount();
+  try {
+    const reply = (await send({
+      kind: 'network.draftConnect',
+      item: { ...current, note: field.value.trim() },
+    })) as { ok?: boolean; note?: string; source?: string; error?: string } | undefined;
+    if (!reply?.ok) {
+      connectSource.textContent = '';
+      connectStatus.textContent = reply?.error || 'Could not draft an invitation note.';
+      return;
+    }
+    connectField.value = reply.note ?? '';
+    connectSource.textContent = reply.source === 'chatgpt' ? 'Drafted with ChatGPT' : 'From your template';
+    syncConnectCount();
+    connectSend.disabled = false;
+    connectField.focus();
+  } catch {
+    connectSource.textContent = '';
+    connectStatus.textContent = 'Refresh this LinkedIn tab and try again.';
+  }
+});
+connectSend.addEventListener('click', async () => {
+  if (!current || current.type !== 'person') return;
+  const body = connectField.value.trim();
+  if (body.length > 200) {
+    connectStatus.textContent = `LinkedIn allows 200 characters; this is ${body.length}.`;
+    return;
+  }
+  connectSend.disabled = true;
+  connectSend.textContent = 'Sending…';
+  connectStatus.textContent = '';
+  try {
+    const reply = (await send({
+      kind: 'network.connectNow',
+      item: { ...current, note: field.value.trim() },
+      body,
+    })) as { ok?: boolean; state?: 'pending' | 'connected'; error?: string } | undefined;
+    if (!reply?.ok) {
+      connectStatus.textContent = reply?.error || 'Could not send connection request.';
+      return;
+    }
+    current = { ...current, relation: reply.state ?? 'pending' };
+    if (saved) saved = { ...saved, relation: reply.state ?? 'pending' };
+    else saved = { ...current, note: field.value.trim(), savedAt: Date.now() };
+    connectBtn.textContent = '✓ Request sent';
+    openConnectBox(false);
+    paint();
+  } catch {
+    connectStatus.textContent = 'Refresh this LinkedIn tab and try again.';
+  } finally {
+    connectSend.disabled = false;
+    connectSend.textContent = 'Send request';
+  }
+});
 
 pill.addEventListener('click', () => {
   if (current) openBox(box.style.display === 'none');

@@ -85,6 +85,15 @@ export const rememberMessage = z.object({
   action: z.enum(['get', 'save', 'remove']),
   item: savedItemSchema,
 });
+export const draftConnectMessage = z.object({
+  kind: z.literal('network.draftConnect'),
+  item: savedItemSchema,
+});
+export const connectNowMessage = z.object({
+  kind: z.literal('network.connectNow'),
+  item: savedItemSchema,
+  body: z.string().trim().max(200),
+});
 /** 'found' = listed for a job's referrals but not queued for any contact until the person asks. */
 export type ContactState =
   'found' | 'shortlisted' | 'requesting' | 'pending' | 'connected' | 'messaging' | 'messaged' | 'attention' | 'skipped' | 'review';
@@ -276,6 +285,7 @@ export interface NetworkState {
     body: string;
     revision: number;
     claimed: boolean;
+    manual?: boolean;
   } | null;
 }
 export const defaultTemplate =

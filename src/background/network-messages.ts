@@ -6,6 +6,8 @@ import { replyPrompt } from '../shared/referral';
 import { z } from 'zod';
 import {
   rememberMessage,
+  draftConnectMessage,
+  connectNowMessage,
   threadMessage,
   contactForThread,
   type NetworkContact,
@@ -29,6 +31,7 @@ import { trustedExtension, trustedSite } from '../validators/security';
 import { referralMessage, referralAsk, referralNote } from '../shared/referral';
 import { fitNote } from '../shared/network';
 import { getNetwork, updateNetwork, pauseNetwork, networkTick, queueBest, queueReferral } from './network';
+import { importContacts } from './bridge';
 import { networkCommand, networkTab } from './network-browser';
 import { acquire, release, renew } from './lease';
 import { all, remove } from '../storage/database';
@@ -158,7 +161,7 @@ export function registerNetworkMessages(): void {
           const i = s.intent;
           allowed =
             !!i &&
-            s.active &&
+            (s.active || !!i.manual) &&
             i.revision === s.revision &&
             i.id === auth.data.id &&
             i.tabId === sender.tab?.id &&
@@ -297,6 +300,11 @@ export function registerNetworkMessages(): void {
             old = list.find(x => x.url === item.url);
           if (action === 'remove') {
             s.saved = list.filter(x => x.url !== item.url);
+            if (item.type === 'person') {
+              s.contacts = s.contacts.filter(
+                c => !(c.url === item.url && c.state === 'found' && c.reason.startsWith('Saved from LinkedIn')),
+              );
+            }
             return s;
           }
           if (action === 'get') {
@@ -310,14 +318,180 @@ export function registerNetworkMessages(): void {
             result = old ?? null;
             return s;
           }
-          result = { ...old, ...item, note: item.note || old?.note || '', savedAt: old?.savedAt ?? Date.now() };
+          const now = Date.now();
+          result = { ...old, ...item, note: item.note || old?.note || '', savedAt: old?.savedAt ?? now };
           s.saved = [result, ...list.filter(x => x.url !== item.url)].slice(0, 5000);
+          if (item.type === 'person') {
+            const existing = s.contacts.find(c => c.url === item.url);
+            const reason = result.note ? `Saved from LinkedIn: ${result.note}` : 'Saved from LinkedIn profile';
+            if (existing) {
+              if (item.subtitle) existing.headline = item.subtitle;
+              if (item.company) existing.companyName = item.company;
+              if (existing.state === 'found') existing.reason = reason;
+            } else {
+              s.contacts.unshift({
+                url: item.url,
+                name: item.title,
+                headline: item.subtitle,
+                ...(item.company ? { companyName: item.company } : {}),
+                direct: item.relation === 'connected',
+                score: 85,
+                state: item.relation === 'connected' ? 'connected' : item.relation === 'pending' ? 'pending' : 'found',
+                reason,
+                addedAt: now,
+                requestedAt: item.relation === 'pending' ? now : 0,
+                checkedAt: now,
+                messagedAt: 0,
+                location: '',
+                about: '',
+                invitationNote: '',
+                message: '',
+              });
+            }
+          }
           return s;
         });
+        if (item.type === 'person' && action !== 'get') void importContacts().catch(() => undefined);
         return result;
       })()
         .then(saved => respond({ saved }))
         .catch(() => respond({ saved: null }));
+      return true;
+    }
+    const draftConnect = draftConnectMessage.safeParse(input);
+    if (draftConnect.success) {
+      if (!trustedSite(sender, chrome.runtime.id)) {
+        respond({ ok: false, error: 'Blocked.' });
+        return false;
+      }
+      const { item } = draftConnect.data;
+      void (async () => {
+        const s = await getNetwork();
+        if (!s.profile) throw new Error('Set up Referral Scout with your LinkedIn profile first.');
+        const contact: NetworkContact = {
+          url: item.url,
+          name: item.title,
+          headline: item.subtitle,
+          ...(item.company ? { companyName: item.company } : {}),
+          direct: false,
+          score: 85,
+          state: 'found',
+          reason: item.note ? `Saved from LinkedIn: ${item.note}` : 'Saved from LinkedIn profile',
+          addedAt: Date.now(),
+          requestedAt: 0,
+          checkedAt: 0,
+          messagedAt: 0,
+          location: '',
+          about: '',
+          invitationNote: '',
+          message: '',
+        };
+        try {
+          const aiNote = await prepareInvitation(s, contact, 200, AbortSignal.timeout(45_000));
+          return { ok: true, note: aiNote.slice(0, 200), source: 'chatgpt' as const };
+        } catch {
+          const fallback = renderNote(s.settings ?? defaultSettings, s.target, contact, s.profile.name).slice(0, 200);
+          return { ok: true, note: fallback, source: 'template' as const };
+        }
+      })()
+        .then(respond)
+        .catch(err => respond({ ok: false, error: err instanceof Error ? err.message : 'Could not draft an invitation note.' }));
+      return true;
+    }
+    const connectNow = connectNowMessage.safeParse(input);
+    if (connectNow.success) {
+      if (!trustedSite(sender, chrome.runtime.id) || sender.tab?.id === undefined) {
+        respond({ ok: false, error: 'Refresh this LinkedIn tab and try again.' });
+        return false;
+      }
+      const tabId = sender.tab.id;
+      const { item, body } = connectNow.data;
+      void (async () => {
+        const s0 = await getNetwork();
+        if (!s0.profile) throw new Error('Set up Referral Scout with your LinkedIn profile first.');
+        const intentId = crypto.randomUUID();
+        const now = Date.now();
+        await updateNetwork(s => {
+          const old = (s.saved ?? []).find(x => x.url === item.url);
+          const savedItem: SavedItem = {
+            ...old,
+            ...item,
+            note: item.note || old?.note || '',
+            savedAt: old?.savedAt ?? now,
+          };
+          s.saved = [savedItem, ...(s.saved ?? []).filter(x => x.url !== item.url)].slice(0, 5000);
+          s.intent = {
+            id: intentId,
+            tabId,
+            url: item.url,
+            kind: 'connect',
+            at: now,
+            body,
+            revision: s.revision,
+            claimed: false,
+            manual: true,
+          };
+          return s;
+        });
+        const result = z
+          .object({ state: z.enum(['pending', 'connected']), noteSent: z.boolean().optional() })
+          .parse(
+            await networkCommand(
+              tabId,
+              { action: 'connect', url: item.url, intentId, body, noteMode: body.trim() ? 'preferred' : 'none' },
+              AbortSignal.timeout(30_000),
+            ),
+          );
+        const sentAt = Date.now();
+        await updateNetwork(s => {
+          const savedItem = (s.saved ?? []).find(x => x.url === item.url);
+          if (savedItem) savedItem.relation = result.state;
+          const existing = s.contacts.find(c => c.url === item.url);
+          if (existing) {
+            existing.state = result.state;
+            if (result.state === 'pending') {
+              existing.requestedAt = sentAt;
+              existing.nextCheckAt = sentAt + 3 * DAY;
+            }
+            if (body) existing.invitationNote = body;
+            existing.reason = `Invitation confirmed Pending${result.noteSent === false && body ? ' (sent without a note: LinkedIn did not offer one)' : ''}.`;
+          } else {
+            s.contacts.unshift({
+              url: item.url,
+              name: item.title,
+              headline: item.subtitle,
+              ...(item.company ? { companyName: item.company } : {}),
+              direct: result.state === 'connected',
+              score: 85,
+              state: result.state,
+              reason: `Invitation confirmed Pending${result.noteSent === false && body ? ' (sent without a note: LinkedIn did not offer one)' : ''}.`,
+              addedAt: sentAt,
+              requestedAt: result.state === 'pending' ? sentAt : 0,
+              checkedAt: sentAt,
+              messagedAt: 0,
+              location: '',
+              about: '',
+              invitationNote: body,
+              message: '',
+            });
+          }
+          if (result.state === 'pending') {
+            s.actions.push({
+              at: sentAt,
+              kind: 'connect',
+              url: item.url,
+              confirmed: true,
+              idempotencyKey: `${s.profile!.url}|${item.url}|connect|${sentAt}`,
+            });
+          }
+          s.status = `Connection request sent to ${item.title}.`;
+          return s;
+        });
+        void importContacts().catch(() => undefined);
+        return { ok: true, state: result.state, noteSent: result.noteSent };
+      })()
+        .then(respond)
+        .catch(err => respond({ ok: false, error: err instanceof Error ? err.message : 'Could not send connection request.' }));
       return true;
     }
     if (!trustedExtension(sender, chrome.runtime.id)) return false;

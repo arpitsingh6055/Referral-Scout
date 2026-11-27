@@ -28,7 +28,7 @@ import { canonicalJobUrl, dedupeKey, normalizeTitle, qualify, type Availability,
 import { personKeyOf, type Contact, type ContactCategory, type Relationship } from '../shared/domain/outreach';
 import { requirementsFrom } from '../shared/domain/profile';
 import type { FoundJob } from '../shared/jobsearch';
-import type { NetworkContact } from '../shared/network';
+import type { NetworkContact, SavedItem } from '../shared/network';
 import { parseEmploymentType, parseSeniority, parseWorkMode, hashText } from '../connectors/job-sources';
 
 /* ---------- jobs ---------- */
@@ -228,18 +228,56 @@ function toContact(person: NetworkContact, now: number): Contact {
   };
 }
 
+function savedToContact(item: SavedItem, now: number): Contact {
+  const personKey = personKeyOf({
+    profileUrl: item.url,
+    name: item.title,
+    ...(item.company ? { companyName: item.company } : {}),
+  });
+  return {
+    id: `contact:${personKey}`,
+    personKey,
+    name: item.title,
+    ...(item.subtitle ? { currentRole: item.subtitle } : {}),
+    ...(item.company ? { companyName: item.company } : {}),
+    profileUrl: item.url,
+    relationship: item.relation === 'connected' ? 'existing-connection' : 'second-degree',
+    category: 'unknown',
+    evidence: [
+      {
+        claim: item.note ? `Saved from LinkedIn: ${item.note}` : 'Saved from LinkedIn profile',
+        source: 'LinkedIn',
+        observedAt: item.savedAt || now,
+        confidence: 0.9,
+      },
+    ],
+    confidence: 0.9,
+    emailConfidence: 'unknown',
+    createdAt: item.savedAt || now,
+    updatedAt: now,
+  };
+}
+
 export async function importContacts(now = Date.now()): Promise<number> {
   const network = await getNetwork().catch(() => null);
   const people = network?.contacts ?? [];
-  if (!people.length) return 0;
+  const savedPeople = (network?.saved ?? []).filter(i => i.type === 'person');
+  if (!people.length && !savedPeople.length) return 0;
   const existing = new Map((await allContacts()).map(c => [c.personKey, c]));
-  const write: Contact[] = [];
+  const byKey = new Map<string, Contact>();
   for (const person of people) {
     const fresh = toContact(person, now);
     const previous = existing.get(fresh.personKey);
     // A suppression is permanent and is never cleared by a re-import.
-    write.push(previous?.suppressed ? { ...fresh, suppressed: previous.suppressed } : fresh);
+    byKey.set(fresh.personKey, previous?.suppressed ? { ...fresh, suppressed: previous.suppressed } : fresh);
   }
+  for (const item of savedPeople) {
+    const fresh = savedToContact(item, now);
+    if (byKey.has(fresh.personKey)) continue;
+    const previous = existing.get(fresh.personKey);
+    byKey.set(fresh.personKey, previous?.suppressed ? { ...fresh, suppressed: previous.suppressed } : fresh);
+  }
+  const write = [...byKey.values()];
   await saveContacts(write);
   return write.filter(c => !existing.has(c.personKey)).length;
 }

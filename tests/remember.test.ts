@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto';
 import { beforeEach, expect, it } from 'vitest';
 import { pageItem, type PageDeps } from '../src/content/page-item';
 
@@ -88,4 +89,55 @@ it('offers to remember the selected job in the jobs search split view, where the
 it('shows nothing on other LinkedIn pages', () => {
   expect(pageItem(page('Feed | LinkedIn', '<p>feed</p>'), 'https://www.linkedin.com/feed/', deps)).toBeNull();
   expect(pageItem(page('Jobs | LinkedIn', ''), 'https://www.linkedin.com/jobs/', deps)).toBeNull();
+});
+
+it('bridges saved people into Workbench contacts so they show up in People', async () => {
+  const { clearDatabase } = await import('../src/storage/database');
+  await clearDatabase();
+  const { updateNetwork } = await import('../src/background/network');
+  const { importContacts } = await import('../src/background/bridge');
+  const { allContacts } = await import('../src/shared/persistence/campaign-store');
+
+  await updateNetwork(s => ({
+    ...s,
+    saved: [
+      {
+        type: 'person',
+        url: 'https://www.linkedin.com/in/munmun-telang/',
+        title: 'Munmun Telang',
+        subtitle: 'Product Manager, D2C @ Glanbia',
+        company: 'Glanbia',
+        relation: 'not-connected',
+        note: 'Great PM mentor',
+        savedAt: 1000,
+      },
+    ],
+  }));
+
+  const added = await importContacts(2000);
+  expect(added).toBe(1);
+  const contacts = await allContacts();
+  expect(contacts).toHaveLength(1);
+  expect(contacts[0]).toMatchObject({
+    name: 'Munmun Telang',
+    companyName: 'Glanbia',
+    profileUrl: 'https://www.linkedin.com/in/munmun-telang/',
+  });
+  expect(contacts[0]!.evidence[0]!.claim).toContain('Great PM mentor');
+});
+
+it('validates draftConnect and connectNow message schemas', async () => {
+  const { draftConnectMessage, connectNowMessage } = await import('../src/shared/network');
+  const item = {
+    type: 'person' as const,
+    url: 'https://www.linkedin.com/in/munmun-telang/',
+    title: 'Munmun Telang',
+    subtitle: 'Product Manager',
+    company: 'Glanbia',
+    relation: 'not-connected' as const,
+    note: '',
+  };
+  expect(draftConnectMessage.safeParse({ kind: 'network.draftConnect', item }).success).toBe(true);
+  expect(connectNowMessage.safeParse({ kind: 'network.connectNow', item, body: 'Hi Munmun, would love to connect!' }).success).toBe(true);
+  expect(connectNowMessage.safeParse({ kind: 'network.connectNow', item, body: 'x'.repeat(201) }).success).toBe(false);
 });
