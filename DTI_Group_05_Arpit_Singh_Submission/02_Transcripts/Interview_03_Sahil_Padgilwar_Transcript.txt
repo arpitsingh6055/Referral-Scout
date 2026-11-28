@@ -1,0 +1,73 @@
+DTI GROUP 5 — INTERVIEW 03 TRANSCRIPT
+
+Project: Job-referral outreach through LinkedIn (DTI Empathy Exercise)
+Interviewee: Sahil Rajkumar Padgilwar
+Role / Background: DevOps Engineer at Oracle [unclear, 00:11] Limited India
+Interviewer: Arpit Singh
+Source Recording: 01_Recordings/Interview_03_Sahil_Padgilwar.m4a
+Duration: 5:14
+
+TRANSCRIPT
+
+[00:00] Arpit Singh (Interviewer): Hi Sahil.
+[00:02] Sahil Padgilwar (Interviewee): Yeah, hi Arpit.
+[00:03] Arpit Singh (Interviewer): Can you please introduce yourself?
+[00:05] Sahil Padgilwar (Interviewee): Yeah, myself Sahil Rajkumar Padgilwar. I'm working as a DevOps Engineer at Oracle [unclear, 00:11] Limited India.
+[00:14] Arpit Singh (Interviewer): Okay. So Sahil, have you recently used LinkedIn for looking out for new roles or new jobs?
+[00:22] Sahil Padgilwar (Interviewee): Yes, yes, I'm regularly using LinkedIn for looking outside for work and jobs.
+[00:29] Arpit Singh (Interviewer): Okay, so do you directly go to the Jobs portal on LinkedIn or do you reach out to people and throw some cold mails or cold messages?
+[00:42] Sahil Padgilwar (Interviewee): I work with two kinds of things here. Sometimes on weekdays I surf on the LinkedIn feed and look for openings and do cold emailing. But on Saturday and Sunday I go on the Jobs portal of LinkedIn and apply there as well.
+[00:59] Arpit Singh (Interviewer): Okay.
+[01:00] Sahil Padgilwar (Interviewee): So I work on both.
+[01:01] Arpit Singh (Interviewer): So usually, let's say today is a free day for you and you are applying for jobs on LinkedIn. How many jobs can you manually apply for?
+[01:10] Sahil Padgilwar (Interviewee): Manually, I usually target 10 to 15 on Saturday and Sunday, so that it can easily be recoverable and trackable for me for the next week as well.
+[01:19] Arpit Singh (Interviewer): Okay. And do you also message for referrals for those same jobs?
+[01:26] Sahil Padgilwar (Interviewee): Yeah, yeah, if I find any connection working there, I usually try to reach them and ask for the referral.
+[01:33] Arpit Singh (Interviewer): Okay, so generally what happens is you send a connection request to somebody. They might take three or four days sometimes on average to reply back—maybe even quicker, maybe a bit late—but a lot of times you get a lot of notifications and people miss out on things. They do not remember whom they sent a message to, for what role, for what job, or what referral. So do you face those issues or do you have any system for that? How do you work around it?
+[02:07] Sahil Padgilwar (Interviewee): Yeah, earlier I used to face this issue, so later I prepared a tracker for that. Whenever I apply, I track it for one to two weeks, and later I remove them and go for the new ones.
+[02:22] Arpit Singh (Interviewer): Okay. So you have built a...
+[02:24] Sahil Padgilwar (Interviewee): Keep replacing the tracker.
+[02:25] Arpit Singh (Interviewer): Okay, you have built a personal tracker for that.
+[02:28] Sahil Padgilwar (Interviewee): Yes, yes, yes.
+[02:29] Arpit Singh (Interviewer): Okay. And can you describe this tracker in short? What is this tracker, and what all things do you keep track of?
+[02:38] Sahil Padgilwar (Interviewee): It is like—I manually surf on LinkedIn, and meanwhile every Saturday and Sunday my [unclear, 02:45] code tries to fetch all the jobs from LinkedIn based on my experience.
+[02:51] Arpit Singh (Interviewer): Okay.
+[02:51] Sahil Padgilwar (Interviewee): And then in the evening we sit and apply for them.
+[02:54] Arpit Singh (Interviewer): Okay.
+[02:55] Sahil Padgilwar (Interviewee): We mark the status like this is applied and this we have reached out over email.
+[02:59] Arpit Singh (Interviewer): Okay.
+[03:00] Sahil Padgilwar (Interviewee): And later for one or two weeks we follow up on them, and after that, if we didn't get any response, we remove that and go for the new cycle.
+[03:07] Arpit Singh (Interviewer): Okay. And how do you keep track of people whom you have reached out to? Do you have a track of that also or not?
+[03:15] Sahil Padgilwar (Interviewee): Yeah, in the tracker which I mentioned, the job posting is there, the person I reached out to—
+[03:21] Arpit Singh (Interviewer): Okay.
+[03:22] Sahil Padgilwar (Interviewee): —the company, and what message we put in for the same, over email or over LinkedIn, and we keep it like that.
+[03:29] Arpit Singh (Interviewer): Okay, that's good. And what is the usual period in which they reply, or what is the conversion rate of referrals for you? Do you find it useful; do you think referrals are good?
+[03:45] Sahil Padgilwar (Interviewee): Currently, due to the market situation, referrals are not working the way they were working earlier.
+[03:52] Arpit Singh (Interviewer): Okay.
+[03:52] Sahil Padgilwar (Interviewee): But yeah, it usually takes four to five days to get a reply from someone.
+[03:56] Arpit Singh (Interviewer): Okay.
+[03:57] Sahil Padgilwar (Interviewee): If it is someone more senior.
+[03:59] Arpit Singh (Interviewer): Okay.
+[03:59] Sahil Padgilwar (Interviewee): But regularly freshers reply within one or two days, as they are also getting new connections.
+[04:05] Arpit Singh (Interviewer): Okay.
+[04:06] Sahil Padgilwar (Interviewee): So conversion-wise, I got converted to only two to three referral calls—two calls—
+[04:13] Arpit Singh (Interviewer): Okay.
+[04:14] Sahil Padgilwar (Interviewee): —from one or two months of rigorously applying.
+[04:19] Arpit Singh (Interviewer): Okay. And are there situations where, let's say, you apply for a job or apply for a referral and you miss out on the context completely—like why did you apply, what that role was, who that person was—and you drop out, just leave that job opening and move on?
+[04:45] Sahil Padgilwar (Interviewee): Yeah, it was happening earlier before building the tracker because I was not able to keep note of whom I had DMed for the referral or applied to over email.
+[04:55] Arpit Singh (Interviewer): Yes.
+[04:55] Sahil Padgilwar (Interviewee): Sometimes later I tried to apply, when I was already waiting for the referral.
+[05:00] Arpit Singh (Interviewer): Okay.
+[05:00] Sahil Padgilwar (Interviewee): Those situations were there earlier, but later when I built a tracker, I keep context now on whom I have reached out to and where I have applied.
+[05:07] Arpit Singh (Interviewer): Okay. Thank you Sahil, that was really helpful.
+[05:11] Sahil Padgilwar (Interviewee): Yeah, thank you.
+[05:12] Arpit Singh (Interviewer): Thanks.
+
+KEY TAKEAWAYS
+1. Combines weekday LinkedIn feed browsing/cold emailing with weekend batch applications (10–15 targeted roles per weekend so follow-ups stay manageable).
+2. Built a custom personal tracker (paired with weekend code to fetch matching jobs) logging the job posting, company, person contacted, outreach message/channel (email vs. LinkedIn), and status, cycling entries out after 1–2 weeks of follow-up.
+3. Notes that before building the tracker, he lost context on whether he had applied or was waiting on a referral; observes senior employees take 4–5 days to reply (vs. 1–2 days for freshers), with low conversion (2–3 referral calls over 1–2 months).
+
+NOTABLE VERBATIM QUOTES
+1. "Manually, I usually target 10 to 15 on Saturday and Sunday, so that it can easily be recoverable and trackable for me for the next week as well." — [01:10]
+2. "It was happening earlier before building the tracker because I was not able to keep note of whom I had DMed for the referral or applied to over email." — [04:45]

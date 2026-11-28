@@ -1,0 +1,60 @@
+DTI GROUP 5 — INTERVIEW 04 TRANSCRIPT
+
+Project: Job-referral outreach through LinkedIn (DTI Empathy Exercise)
+Interviewee: Keshav
+Role / Background: First-year MBA (PGDM Core, majoring in Marketing) student at IMT Ghaziabad; engineering graduate targeting Product Analyst roles
+Interviewer: Arpit Singh
+Source Recording: 01_Recordings/Interview_04_Keshav.m4a
+Duration: 4:01
+
+TRANSCRIPT
+
+[00:00] Arpit Singh (Interviewer): Hello Keshav.
+[00:02] Keshav (Interviewee): Hello.
+[00:03] Arpit Singh (Interviewer): Can you please introduce yourself?
+[00:05] Keshav (Interviewee): My name is Keshav. I am a first-year MBA student at IMT Ghaziabad.
+[00:11] Arpit Singh (Interviewer): Okay Keshav, so what is your profile? Can you tell?
+[00:16] Keshav (Interviewee): I am an engineer by graduation and I am pursuing PGDM Core majoring in marketing here at IMT, and I want to work in product analyst fields in the future.
+[00:28] Arpit Singh (Interviewer): Okay. So have you applied for product analyst internships in the past?
+[00:32] Keshav (Interviewee): Yes, I have applied for product analyst internships in the past.
+[00:36] Arpit Singh (Interviewer): Okay, internships or jobs?
+[00:39] Keshav (Interviewee): Both.
+[00:40] Arpit Singh (Interviewer): Okay. So how do you apply? Do you use LinkedIn or third-party websites?
+[00:52] Keshav (Interviewee): I have tried many things. I have tried LinkedIn also. I enter my details and I try to find the most probable searches or jobs and openings, and I text them. Then I also use third-party websites like Monster and Naukri.com. I have also used direct mailing methods.
+[01:10] Arpit Singh (Interviewer): Okay, cold mails.
+[01:12] Keshav (Interviewee): Cold mails.
+[01:13] Arpit Singh (Interviewer): Okay. So can you describe how you use LinkedIn for this? I mean, if you open LinkedIn, if you are on the home page, how do you go about it?
+[01:25] Keshav (Interviewee): If I'm on the home page, first of all you have to find the job. So you start entering the filters and you may get a number of jobs in which you apply—they ask for a resume.
+[01:34] Arpit Singh (Interviewer): Okay.
+[01:34] Keshav (Interviewee): Then you also search for companies and small startups and places where you think you might be hired easily, or that are geographically nearer to your home and you want to be there.
+[01:45] Arpit Singh (Interviewer): Okay.
+[01:46] Keshav (Interviewee): So you enter the name of the person, you try to request them, connect with them, and follow them.
+[01:52] Arpit Singh (Interviewer): Okay. So usually in a day how many jobs do you apply for? Let's say today if you thought of applying for a job...
+[02:01] Keshav (Interviewee): At my peak I applied for 10 to 15 jobs a day because I was also preparing for interviews.
+[02:08] Arpit Singh (Interviewer): Okay. And how do you keep track of it? Because for example if I am applying for a job, I will also...
+[02:16] Keshav (Interviewee): I had to keep track manually through Excel.
+[02:20] Arpit Singh (Interviewer): Okay.
+[02:21] Keshav (Interviewee): I had to enter each value and data point myself.
+[02:24] Arpit Singh (Interviewer): Okay. And do you also reach out to people when you are applying for jobs?
+[02:32] Keshav (Interviewee): Yes, I reach out to people, but for some of them, the connection might not be allowed on LinkedIn, and sometimes the message limit is reached and I have to draft the message every time on my own, so it takes a lot of time.
+[02:45] Arpit Singh (Interviewer): Okay. And how many referrals have you converted in the past, or how was your experience around asking?
+[02:53] Keshav (Interviewee): It was very hard, and sometimes you don't even get a response for 15–20 days.
+[02:59] Arpit Singh (Interviewer): Okay.
+[02:59] Keshav (Interviewee): Sometimes you get one, and out of 100 requests or mails I send, one or two reply, and I think out of 200, at least I will get one positive reply.
+[03:13] Arpit Singh (Interviewer): Okay. And how do you keep track of that? Because let's say today I applied for four or five jobs and I messaged 10 or 20 people around those jobs, and let's say they connect with me after four or five days. I might not remember for what job role or what kind of job description I texted a person, because every time you have to frame your pitch in a very unique way aligned with the job, right? So do you keep track of that or do you forget?
+[03:45] Keshav (Interviewee): That is really hard, and that's why many times I fail.
+[03:48] Arpit Singh (Interviewer): Okay.
+[03:49] Keshav (Interviewee): And I am looking for a solution actively which can help me solve this issue.
+[03:53] Arpit Singh (Interviewer): Okay Keshav, I think that's it.
+[03:59] Keshav (Interviewee): Thank you, Arpit.
+[04:00] Arpit Singh (Interviewer): Bye.
+
+KEY TAKEAWAYS
+1. Uses multiple channels (LinkedIn job filters, direct outreach at target startups/local firms, Monster, Naukri.com, and cold emails), peaking at 10–15 applications per day while also preparing for interviews.
+2. Tracks applications manually in Excel by entering each data point himself; faces LinkedIn connection restrictions, message limits, and the time cost of drafting each outreach message manually.
+3. Reports low outreach response rates (15–20 day waits, ~1–2 replies per 100 messages, ~1 positive reply per 200) and struggles to recover context on which role/JD prompted an outreach when someone replies days later.
+
+NOTABLE VERBATIM QUOTES
+1. "I had to keep track manually through Excel. I had to enter each value and data point myself." — [02:16]
+2. "Out of 100 requests or mails I send, one or two reply, and I think out of 200, at least I will get one positive reply." — [03:01]
+3. "That is really hard, and that's why many times I fail. And I am looking for a solution actively which can help me solve this issue." — [03:45]
