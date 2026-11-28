@@ -663,6 +663,20 @@ export function registerNetworkMessages(): void {
             }),
             status: `CV saved (${req.text.length.toLocaleString()} characters${req.file ? '' : ', text only'}). ${req.file ? 'The file is kept on this device for application forms.' : 'Upload the file again to use it in application forms.'}`,
           }));
+          /*
+           * A new CV makes the structured AI review obsolete, and that review is the one task that uses ChatGPT's
+           * slow thinking mode. Re-running it automatically would spend the most expensive call there is, open a
+           * tab and take minutes, every time somebody tries another draft of their CV — so it is offered on the
+           * Candidate profile screen instead, and applications read the CV directly until then.
+           *
+           * With an API key it costs no ChatGPT tab, no plan quota and a few seconds, and the person has already
+           * chosen to pay per use, so there it is simply rebuilt. It can never fail the CV save.
+           */
+          void (async () => {
+            if (!(await apiConfig())) return;
+            const { processProfileWithChatGPT } = await import('./workspace');
+            await processProfileWithChatGPT();
+          })().catch(() => undefined);
         }
         if (req.action === 'deleteCv') {
           if (current.active) throw new Error('Pause outreach before deleting your CV.');

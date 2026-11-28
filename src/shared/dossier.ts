@@ -36,3 +36,28 @@ export function validatedDossier(reply: string): string {
     );
   }
 }
+
+/**
+ * Whether the structured AI review still describes the CV and profile it was built from.
+ *
+ * Both paths that replace the evidence — saving a CV and re-reading the LinkedIn profile — clear the dossier
+ * today, so this is not the only thing standing between an application and stale evidence. It is the thing that
+ * cannot be forgotten: a future import, edit or migration that writes a new CV without remembering to clear the
+ * dossier is caught here rather than silently filling forms from last month's résumé. Timestamps are compared
+ * rather than trusted flags, because a flag has to be maintained and a timestamp does not.
+ */
+export function dossierStale(s: {
+  dossier?: string;
+  dossierSavedAt?: number;
+  cv?: { savedAt?: number } | null;
+  profileCapturedAt?: number;
+}): boolean {
+  if (!s.dossier?.trim()) return false; // nothing to be stale
+  const built = s.dossierSavedAt ?? 0;
+  if (!built) return true; // a dossier with no build time cannot be shown to be current
+  const newest = Math.max(s.cv?.savedAt ?? 0, s.profileCapturedAt ?? 0);
+  return newest > built;
+}
+
+/** Whether there is a usable, current structured review to prefer over the raw CV and profile text. */
+export const dossierUsable = (s: Parameters<typeof dossierStale>[0]): boolean => !!s.dossier?.trim() && !dossierStale(s);

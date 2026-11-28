@@ -49,7 +49,7 @@ const sourceLabel: Record<string, string> = {
 const provenance = (p: { source: string; verifiedAt?: number }, approved = false): HTMLElement =>
   p.verifiedAt || approved
     ? pill(p.source === 'user' ? 'You entered this' : 'Verified', 'green')
-    : pill(sourceLabel[p.source] ?? p.source, p.source === 'model' ? 'amber' : 'grey');
+    : pill(sourceLabel[p.source] ?? p.source, 'amber');
 
 /* ---------- education ---------- */
 function educationForm(record: Partial<EducationRecord>, ctx: Ctx): HTMLElement {
@@ -705,24 +705,43 @@ export function profile(ctx: Ctx): HTMLElement {
 
 export const profileHeader = (ctx: Ctx): { title: string; sub: string; status?: HTMLElement; actions: HTMLElement[] } => {
   const reviewStatus = ctx.workspace?.reviewMeta?.status;
+  /*
+   * The approval flag and the AI review are two different records. Replacing a CV or re-reading the LinkedIn
+   * profile throws the review away but leaves the flag saying "approved", so this screen used to promise a
+   * profile was "ready for matching and autofill" when the evidence behind it had been replaced. Where the two
+   * disagree, the evidence wins and the screen says so.
+   */
+  const stale = ctx.workspace?.aiReviewStale === true;
+  const missing = ctx.workspace?.aiReviewMissing === true;
+  const outOfDate = (stale || missing) && isProfileApproved(reviewStatus);
   const actions: HTMLElement[] = [];
+  if (outOfDate)
+    actions.push(button('Re-run AI review', 'btn btn-primary', () => ctx.run({ kind: 'workspace', action: 'processProfileWithChatGPT' })));
   if (isProfilePendingReview(reviewStatus)) {
     actions.push(
       button('Approve Profile & Continue →', 'btn btn-primary', () => ctx.run({ kind: 'workspace', action: 'finalizeProfile' })),
     );
-  } else if (isProfileApproved(reviewStatus)) {
+  } else if (isProfileApproved(reviewStatus) && !outOfDate) {
     actions.push(button('Re-open Review', 'btn', () => ctx.run({ kind: 'workspace', action: 'reopenProfileReview' })));
   }
   actions.push(button('Answer Bank', 'btn', () => ctx.go('answers')));
 
   return {
-    title: 'Profile & Answers',
-    sub: isProfilePendingReview(reviewStatus)
-      ? 'Quick 10s review — verify extracted details below, then click Approve Profile & Continue →.'
-      : isProfileApproved(reviewStatus)
-        ? 'Approved & ready for matching and autofill. You can re-open review or edit records anytime.'
-        : 'Review the information Referral Scout uses before it matches jobs or prepares applications.',
-    ...(isProfilePendingReview(reviewStatus) ? { status: pill('Pending Review', 'amber') } : {}),
+    title: 'Candidate profile',
+    sub: outOfDate
+      ? 'Your CV or LinkedIn profile changed after this review. Applications are reading your CV directly, which is correct but slower. Re-run the review to go back to the quick path.'
+      : isProfilePendingReview(reviewStatus)
+        ? 'Quick 10s review — verify extracted details below, then click Approve Profile & Continue →.'
+        : isProfileApproved(reviewStatus)
+          ? 'Approved & ready for matching and autofill. You can re-open review or edit records anytime.'
+          : 'Review the information Referral Scout uses before it matches jobs or prepares applications.',
+    ...(outOfDate
+      ? { status: pill('Review out of date', 'amber') }
+      : isProfilePendingReview(reviewStatus)
+        ? { status: pill('Pending Review', 'amber') }
+        : isProfileApproved(reviewStatus)
+          ? { status: pill('Approved & Ready ✓', 'green') }
+          : {}),
     actions,
   };
 };
