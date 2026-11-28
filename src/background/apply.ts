@@ -44,6 +44,7 @@ import {
 } from '../shared/apply';
 import { seekerEvidence } from '../shared/seeker';
 import { askLine } from '../shared/ai-budget';
+import { dossierUsable } from '../shared/dossier';
 import { extractJson } from '../parsers/json';
 import { read, write } from '../storage/state';
 import { all, remove } from '../storage/database';
@@ -460,7 +461,9 @@ const aiWords: Record<string, string> = {
 const background = async (): Promise<{ text: string; location: string; name: string; url: string; roles: string[] }> => {
   const s = await getNetwork();
   if (!s.profile) throw new Error('Set up Referral Scout with your LinkedIn profile first.');
-  const structured = (s.dossier ?? '').trim();
+  // Only a review that still matches the CV and profile behind it. A stale one is worse than none: it would
+  // answer this form from a résumé the person has already replaced.
+  const structured = dossierUsable(s) ? (s.dossier ?? '').trim() : '';
   const evidence = structured
     ? structured.slice(0, 9000)
     : seekerEvidence(

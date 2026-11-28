@@ -646,7 +646,15 @@ export async function prepareInvitation(s: NetworkState, p: NetworkContact, limi
     `SENDER: ${JSON.stringify({ name: s.profile.name, exploring: s.target })}`,
     `RECIPIENT: ${JSON.stringify({ name: p.name, headline: p.headline, company: humanizeCompanyName(p.companyName ?? '') })}`,
   ].join('\n');
-  const result = note.parse(extractJson(await askChatGpt(prompt, signal, 'WRITE_INVITATION_NOTE', s.profile.url)));
+  const result = note.parse(
+    extractJson(
+      await askChatGpt(prompt, signal, 'WRITE_INVITATION_NOTE', s.profile.url, '', {
+        thinking: false,
+        startMs: 20_000,
+        totalMs: 45_000,
+      }),
+    ),
+  );
   return verifyMessage(result.text, p, limit);
 }
 export async function prepareIntroduction(s: NetworkState, p: NetworkContact, signal: AbortSignal): Promise<string> {

@@ -62,6 +62,7 @@ import { write } from '../storage/state';
 import type { AiProfileDraft } from '../shared/profile-draft';
 import { askChatGpt, invalidateAiJob, recoverLatestAiReply } from './network-ai';
 import { aiBudget, setAiTier } from './ai-budget-store';
+import { dossierStale } from '../shared/dossier';
 import { type AiTier, TIERS, budgetLine, perContactAllowed } from '../shared/ai-budget';
 import { chatGptMode, saveChatGptMode, type ChatGptMode } from './chatgpt-mode';
 import { updateNetwork } from './network';
@@ -208,6 +209,13 @@ export interface WorkspaceView {
   usageReporting: boolean;
   /** Whether automated ChatGPT tasks use Incognito (Temporary chat) or normal chat history. */
   chatgptMode?: ChatGptMode;
+  /**
+   * True when the CV or LinkedIn profile has changed since the AI review that the profile screen calls approved.
+   * The screen must not keep saying "Approved & Ready" about a review of a résumé that has been replaced.
+   */
+  aiReviewStale: boolean;
+  /** True when there is no structured review at all, so applications read the raw CV instead. */
+  aiReviewMissing: boolean;
   /** Which ChatGPT plan the person told us they have, and how much of this stretch's budget is left. */
   aiTier: AiTier;
   aiBudgetLine: string;
@@ -370,6 +378,8 @@ export async function workspaceView(): Promise<WorkspaceView> {
     ...(await (async () => {
       const b = await aiBudget();
       return {
+        aiReviewStale: dossierStale(network ?? {}),
+        aiReviewMissing: !(network?.dossier ?? '').trim(),
         aiTier: b.tier,
         aiBudgetLine: budgetLine(b),
         perContactAllowed: perContactAllowed(b.tier),
@@ -436,7 +446,7 @@ const projectSchema = z.object({
   links: z.array(z.string().max(300)).max(10).optional(),
 });
 
-async function processProfileWithChatGPT(): Promise<void> {
+export async function processProfileWithChatGPT(): Promise<void> {
   const network = await getNetwork();
   if (!network.profile) throw new Error('Read your LinkedIn profile first.');
   if (!network.cv?.text?.trim()) throw new Error('Add your CV first. The CV is the primary source when details disagree.');

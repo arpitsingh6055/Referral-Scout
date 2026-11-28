@@ -177,3 +177,29 @@ describe('prompt size', () => {
     expect(carried).toBeLessThan(80);
   });
 });
+
+describe('a review that no longer matches the CV behind it', () => {
+  it('is stale once the CV or the profile is newer than the review', async () => {
+    const { dossierStale, dossierUsable } = await import('../src/shared/dossier');
+    const base = { dossier: '{"name":"A"}', dossierSavedAt: 1000 };
+    expect(dossierStale({ ...base, cv: { savedAt: 900 }, profileCapturedAt: 500 })).toBe(false);
+    expect(dossierUsable({ ...base, cv: { savedAt: 900 } })).toBe(true);
+    // A CV saved after the review was built.
+    expect(dossierStale({ ...base, cv: { savedAt: 2000 } })).toBe(true);
+    // A LinkedIn profile re-read after the review was built.
+    expect(dossierStale({ ...base, profileCapturedAt: 2000 })).toBe(true);
+    expect(dossierUsable({ ...base, profileCapturedAt: 2000 })).toBe(false);
+  });
+
+  it('treats a review with no build time as unusable rather than assume it is current', async () => {
+    const { dossierStale } = await import('../src/shared/dossier');
+    expect(dossierStale({ dossier: '{"name":"A"}', cv: { savedAt: 10 } })).toBe(true);
+  });
+
+  it('is not "stale" when there is simply no review', async () => {
+    const { dossierStale, dossierUsable } = await import('../src/shared/dossier');
+    expect(dossierStale({ dossier: '', cv: { savedAt: 2000 } })).toBe(false);
+    expect(dossierUsable({ dossier: '' })).toBe(false);
+    expect(dossierUsable({ dossier: '   ', dossierSavedAt: 5000 })).toBe(false);
+  });
+});
