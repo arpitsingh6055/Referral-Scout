@@ -49,7 +49,7 @@ const sourceLabel: Record<string, string> = {
 const provenance = (p: { source: string; verifiedAt?: number }, approved = false): HTMLElement =>
   p.verifiedAt || approved
     ? pill(p.source === 'user' ? 'You entered this' : 'Verified', 'green')
-    : pill(sourceLabel[p.source] ?? p.source, 'amber');
+    : pill(sourceLabel[p.source] ?? p.source, p.source === 'model' ? 'amber' : 'grey');
 
 /* ---------- education ---------- */
 function educationForm(record: Partial<EducationRecord>, ctx: Ctx): HTMLElement {
@@ -706,9 +706,9 @@ export function profile(ctx: Ctx): HTMLElement {
 export const profileHeader = (ctx: Ctx): { title: string; sub: string; status?: HTMLElement; actions: HTMLElement[] } => {
   const reviewStatus = ctx.workspace?.reviewMeta?.status;
   /*
-   * The approval flag and the AI review are two different records. Replacing a CV or re-reading the LinkedIn
-   * profile throws the review away but leaves the flag saying "approved", so this screen used to promise a
-   * profile was "ready for matching and autofill" when the evidence behind it had been replaced. Where the two
+   * The approval flag and the structured AI review are two different records. Replacing a CV or re-reading the
+   * LinkedIn profile throws the review away but leaves the flag saying "approved", so this screen used to promise
+   * a profile was "ready for matching and autofill" when the evidence behind it had been replaced. Where the two
    * disagree, the evidence wins and the screen says so.
    */
   const stale = ctx.workspace?.aiReviewStale === true;
@@ -727,7 +727,7 @@ export const profileHeader = (ctx: Ctx): { title: string; sub: string; status?: 
   actions.push(button('Answer Bank', 'btn', () => ctx.go('answers')));
 
   return {
-    title: 'Candidate profile',
+    title: 'Profile & Answers',
     sub: outOfDate
       ? 'Your CV or LinkedIn profile changed after this review. Applications are reading your CV directly, which is correct but slower. Re-run the review to go back to the quick path.'
       : isProfilePendingReview(reviewStatus)
@@ -739,9 +739,7 @@ export const profileHeader = (ctx: Ctx): { title: string; sub: string; status?: 
       ? { status: pill('Review out of date', 'amber') }
       : isProfilePendingReview(reviewStatus)
         ? { status: pill('Pending Review', 'amber') }
-        : isProfileApproved(reviewStatus)
-          ? { status: pill('Approved & Ready ✓', 'green') }
-          : {}),
+        : {}),
     actions,
   };
 };
